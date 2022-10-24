@@ -47,7 +47,7 @@ class DatabricksBackend(TextQueryBackend):
     field_quote: ClassVar[str] = "`"
     # Quote field names if this pattern (doesn't) matches, depending on field_quote_pattern_negation. Field name is
     # always quoted if pattern is not set.
-    field_quote_pattern: ClassVar[Pattern] = re.compile("^\\w+$")
+    field_quote_pattern: ClassVar[Pattern] = re.compile("^(\\w|\\.)+$")
     # Negate field_quote_pattern result. Field name is quoted if pattern doesn't matches if set to True (default).
     field_quote_pattern_negation: ClassVar[bool] = True
 

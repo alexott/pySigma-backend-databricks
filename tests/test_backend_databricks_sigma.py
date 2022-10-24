@@ -156,6 +156,23 @@ def test_databricks_sigma_field_name_with_whitespace(databricks_sigma_backend: D
     ) == ["lower(`field name`) = lower('value')"]
 
 
+def test_databricks_sigma_field_name_with_period(databricks_sigma_backend: DatabricksBackend):
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    responseElements.publiclyAccessible:
+                        - value1
+                condition: sel
+        """)
+    ) == ["lower(responseElements.publiclyAccessible) = lower('value1')"]
+
+
 def test_databricks_sigma_detection_yaml_output(databricks_sigma_backend: DatabricksBackend):
     sigma_rules = SigmaCollection.from_yaml("""
             title: Test
