@@ -1,6 +1,6 @@
 import pytest
 from sigma.collection import SigmaCollection
-from sigma.backends.databricks import DatabricksBackend
+from db_sigma.backends.databricks import DatabricksBackend
 
 
 @pytest.fixture
