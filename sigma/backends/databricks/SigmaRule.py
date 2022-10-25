@@ -1,5 +1,5 @@
 from sigma.rule import SigmaRuleTag
-from db_sigma.backends.databricks import DatabricksBackend
+from sigma.backends.databricks import DatabricksBackend
 from sigma.collection import SigmaCollection
 
 

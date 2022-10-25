@@ -6,7 +6,7 @@ authors = ["Alex Ott <alexott@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/alexott/pySigma-backend-databricks"
 packages = [
-    { include = "db_sigma" }
+    { include = "sigma" }
 ]
 
 [tool.poetry.dependencies]

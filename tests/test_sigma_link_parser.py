@@ -1,4 +1,4 @@
-from db_sigma.backends.databricks.SigmaLinkParser import *
+from sigma.backends.databricks.SigmaLinkParser import *
 
 
 def test_databricks_sigma_and_expression():
