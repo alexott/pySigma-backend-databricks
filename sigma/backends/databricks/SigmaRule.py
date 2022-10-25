@@ -13,7 +13,7 @@ class SigmaRule:
             try:
                 exec(f'self.{key} = {eval(str(val))}')
             except:
-                exec(f'self.{key} = "{val}"')
+                exec(f'self.{key} = """{val}"""')
 
     def fields_available(self):
         return list(vars(self).keys())
