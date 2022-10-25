@@ -92,6 +92,14 @@ category = "main"
 optional = false
 python-versions = ">=3.8,<4.0"
 
+[[package]]
+name = "beautifulsoup4"
+version = "4.11.1"
+description = "Web scraper"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+
 [package.dependencies]
 pyparsing = ">=3.0.7,<4.0.0"
 pyyaml = ">=6.0,<7.0"
