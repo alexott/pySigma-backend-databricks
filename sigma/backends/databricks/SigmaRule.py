@@ -11,7 +11,7 @@ class SigmaRule:
 
         for key, val in vars(self.original_object).items():
             try:
-                exec(f'self.{key} = {eval(str(val))}')
+                exec(f'self.{key} = {val}')
             except:
                 exec(f'self.{key} = """{val}"""')
 
