@@ -8,12 +8,7 @@ class SigmaRule:
         from_yaml = SigmaCollection.from_yaml(rule)
         self.filter_expr = DatabricksBackend().convert(from_yaml)[0]
         self.original_object = from_yaml.rules[0]
+        self.fields = {}
 
         for key, val in vars(self.original_object).items():
-            try:
-                exec(f'self.{key} = {val}')
-            except:
-                exec(f'self.{key} = """{val}"""')
-
-    def fields_available(self):
-        return list(vars(self).keys())
+            self.fields[key] = val
