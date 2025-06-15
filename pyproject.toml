@@ -16,7 +16,7 @@ inflection = "^0.5.1"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.4.0"
-pytest-cov = "^6.1.1"
+pytest-cov = "^6.2.1"
 
 [tool.poetry.group.dev.dependencies]
 autopep8 = "^2.3.2"
