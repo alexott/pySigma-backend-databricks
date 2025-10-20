@@ -1,11 +1,37 @@
 import pytest
 from sigma.collection import SigmaCollection
 from sigma.backends.databricks import DatabricksBackend
+from sigma.backends.databricks.sql_validator import verify_databricks_sql
 
 
 @pytest.fixture
 def databricks_sigma_backend():
     return DatabricksBackend()
+
+def test_databricks_sql_validation():
+    # passed on valid SQL
+    sql_1 = """SELECT * FROM test WHERE event_id = 123 AND lower(image) = lower('test.exe') AND lower(test_field) = lower('test')"""
+
+    assert len(verify_databricks_sql(sql_1)) == 0
+
+    # fails when passed invalid function name
+    sql_invalid_function = """SELECT * \
+               FROM test \
+               WHERE event_id = 123 \
+                 AND lowerx(image) = lower('test.exe') \
+                 AND lower(test_field) = lower('test')"""
+
+    assert len(verify_databricks_sql(sql_invalid_function)) > 0
+
+    # passed on partial SQL
+    sql_partial = """event_id = 123 AND lower(image) = lower('test.exe') AND lower(test_field) = lower('test')"""
+
+    assert len(verify_databricks_sql(sql_partial)) == 0
+
+    # passed on partial SQL
+    sql_partial_invalid = """event_id = 123 AND lowerxxx(image) = lower('test.exe') AND lower(test_field) = lower('test')"""
+
+    assert len(verify_databricks_sql(sql_partial_invalid)) > 0
 
 
 # TODO: implement tests for some basic queries and their expected results.

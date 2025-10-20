@@ -13,6 +13,7 @@ packages = [
 python = ">=3.9,<3.14"
 pysigma = "^0.11.23"
 inflection = "^0.5.1"
+sqlglot = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.4.2"

@@ -1,6 +1,19 @@
-![Tests](https://github.com/alexott/databricks-sigma-backend/actions/workflows/test.yml/badge.svg)
-![Coverage Badge](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/alexott/GitHub Gist identifier containing coverage badge JSON expected by shields.io./raw/alexott-databricks-sigma-backend.json)
-![Status](https://img.shields.io/badge/Status-pre--release-orange)
+# Setup
+## Create a venv & activate it
+```
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
+## Update poetry dependencies
+```
+python3 -m pip install poetry
+python3 -m poetry update
+```
+
+## Run testss
+```
+pytest
+```
 
 Status: **experimental**, work in progress:
 
