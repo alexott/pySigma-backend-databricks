@@ -132,6 +132,10 @@ class DatabricksBackend(TextQueryBackend):
     # List element separator
     list_separator: ClassVar[str] = ", "
 
+    # Field equals field comparison expression
+    # Expression for field to field comparison as format string with placeholders {field1} and {field2}
+    field_equals_field_expression: ClassVar[str] = "{field1} = {field2}"
+
     # TODO: think how to handle them? We really can't match them without field...
     # Value not bound to a field
     # Expression for string value not bound to a field as format string with placeholder {value}
@@ -211,7 +215,7 @@ class DatabricksBackend(TextQueryBackend):
 
     @staticmethod
     def finalize_query_dbsql(rule: SigmaRule, query: str, index: int, state: ConversionState) -> Any:
-        rule_status = (rule.status.name or "test").lower()
+        rule_status = (rule.status.name if rule.status else "test").lower()
         title = rule.title.replace('\n', ' ')
         return f"-- title: \"{title}\". status: {rule_status}\n{query}"
 
@@ -224,7 +228,7 @@ class DatabricksBackend(TextQueryBackend):
         statuses = {"experimental": "test", "stable": "release"}
         levels = {SigmaLevel.INFORMATIONAL.name: 0, SigmaLevel.LOW.name: 10, SigmaLevel.MEDIUM.name: 30,
                   SigmaLevel.HIGH.name: 50, SigmaLevel.CRITICAL.name: 90}
-        rule_status = (rule.status.name or "test").lower()
+        rule_status = (rule.status.name if rule.status else "test").lower()
         d = {"name": rule.title,
              "sql": query,
              "status": statuses.get(rule_status, rule_status),

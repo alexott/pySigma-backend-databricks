@@ -254,3 +254,45 @@ def test_databricks_sigma_dbsql_output(databricks_sigma_backend: DatabricksBacke
                      for q in zip(sigma_rules.rules, queries)]
     sql_rules = databricks_sigma_backend.finalize_output_dbsql(final_queries)
     assert sql_rules == "-- title: \"Test\". status: stable\nfieldA rlike 'foo.*bar' AND lower(fieldB) = lower('foo')"
+
+
+def test_databricks_sigma_fieldref(databricks_sigma_backend: DatabricksBackend):
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                selection:
+                    fieldA: valueA
+                filter:
+                    fieldB|fieldref: fieldC
+                condition: selection and not filter
+        """)
+    ) == ["lower(fieldA) = lower('valueA') AND NOT fieldB = fieldC"]
+
+
+def test_databricks_sigma_no_status(databricks_sigma_backend: DatabricksBackend):
+    sigma_rules = SigmaCollection.from_yaml("""
+            title: Test Without Status
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    fieldA: valueA
+                condition: sel
+        """)
+    queries = databricks_sigma_backend.convert(sigma_rules)
+    # Test that finalize_query_detection_yaml handles None status
+    final_query = databricks_sigma_backend.finalize_query_detection_yaml(
+        sigma_rules.rules[0], queries[0], 0, None
+    )
+    assert '"status": "test"' in final_query
+    # Test that finalize_query_dbsql handles None status
+    final_query_dbsql = databricks_sigma_backend.finalize_query_dbsql(
+        sigma_rules.rules[0], queries[0], 0, None
+    )
+    assert "status: test" in final_query_dbsql
