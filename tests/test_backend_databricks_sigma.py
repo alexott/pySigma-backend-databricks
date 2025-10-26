@@ -274,6 +274,292 @@ def test_databricks_sigma_fieldref(databricks_sigma_backend: DatabricksBackend):
     ) == ["lower(fieldA) = lower('valueA') AND NOT fieldB = fieldC"]
 
 
+# Tests for OR optimization as regex (Issue #12)
+
+def test_or_contains_optimization(databricks_sigma_backend: DatabricksBackend):
+    """Test optimization of OR conditions with contains into regex."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    CommandLine|contains:
+                        - 'nessusd'
+                        - 'santad'
+                        - 'falcond'
+                condition: selection
+        """)
+    ) == ["CommandLine rlike '(?i).*(nessusd|santad|falcond).*'"]
+
+
+def test_or_startswith_optimization(databricks_sigma_backend: DatabricksBackend):
+    """Test optimization of OR conditions with startswith into regex."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    UserAgent|startswith:
+                        - 'XMRig '
+                        - 'ccminer'
+                        - 'ethminer'
+                condition: selection
+        """)
+    ) == ["UserAgent rlike '(?i)(XMRig\\ |ccminer|ethminer).*'"]
+
+
+def test_or_endswith_optimization(databricks_sigma_backend: DatabricksBackend):
+    """Test optimization of OR conditions with endswith into regex."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    Image|endswith:
+                        - '/shutdown'
+                        - '/reboot'
+                        - '/halt'
+                condition: selection
+        """)
+    ) == ["Image rlike '(?i).*(/shutdown|/reboot|/halt)'"]
+
+
+def test_or_with_special_regex_chars(databricks_sigma_backend: DatabricksBackend):
+    """Test that special regex characters are properly escaped."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    FileName|contains:
+                        - 'file.txt'
+                        - 'test+'
+                        - '[bracket]'
+                condition: selection
+        """)
+    ) == ["FileName rlike '(?i).*(file\\.txt|test\\+|\\[bracket\\]).*'"]
+
+
+def test_or_with_backslashes(databricks_sigma_backend: DatabricksBackend):
+    """Test proper escaping of backslashes in regex patterns."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    Path|contains:
+                        - 'C:\\Windows'
+                        - 'D:\\Temp'
+                        - 'E:\\Data'
+                condition: selection
+        """)
+    ) == ["Path rlike '(?i).*(C:\\\\Windows|D:\\\\Temp|E:\\\\Data).*'"]
+
+
+def test_or_with_pipes_and_parens(databricks_sigma_backend: DatabricksBackend):
+    """Test proper escaping of pipes and parentheses."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    Value|contains:
+                        - 'a|b'
+                        - '(test)'
+                        - 'c+d'
+                condition: selection
+        """)
+    ) == ["Value rlike '(?i).*(a\\|b|\\(test\\)|c\\+d).*'"]
+
+
+def test_or_mixed_patterns_no_optimization(databricks_sigma_backend: DatabricksBackend):
+    """Test that mixed pattern types (contains + startswith) are not optimized."""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    field:
+                        - 'value1*'
+                        - '*value2'
+                        - '*value3*'
+                condition: selection
+        """)
+    )
+    # Should fall back to individual function calls
+    assert "startswith" in result[0]
+    assert "endswith" in result[0]
+    assert "contains" in result[0]
+    assert "rlike" not in result[0]
+
+
+def test_or_different_fields_no_optimization(databricks_sigma_backend: DatabricksBackend):
+    """Test that OR conditions on different fields are not optimized."""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                sel1:
+                    fieldA|contains: value1
+                sel2:
+                    fieldB|contains: value2
+                sel3:
+                    fieldC|contains: value3
+                condition: 1 of sel*
+        """)
+    )
+    # Should fall back to OR of contains expressions
+    assert result[0].count("contains") == 3
+    assert "rlike" not in result[0]
+
+
+def test_or_below_threshold_no_optimization(databricks_sigma_backend: DatabricksBackend):
+    """Test that OR conditions below threshold (3 terms) are not optimized."""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    field|contains:
+                        - 'value1'
+                        - 'value2'
+                condition: selection
+        """)
+    )
+    # Only 2 values, should not be optimized (threshold is 3)
+    assert result[0].count("contains") == 2
+    assert "rlike" not in result[0]
+
+
+def test_complex_and_or_conditions(databricks_sigma_backend: DatabricksBackend):
+    """Test that complex AND/OR conditions optimize each OR independently."""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection1:
+                    Image: '/usr/bin/grep'
+                selection2:
+                    CommandLine|contains:
+                        - 'nessusd'
+                        - 'santad'
+                        - 'falcond'
+                condition: selection1 and selection2
+        """)
+    )
+    # Should have optimized the contains OR into regex
+    assert "rlike '(?i).*(nessusd|santad|falcond).*'" in result[0]
+    assert "lower(Image) = lower('/usr/bin/grep')" in result[0]
+    assert " AND " in result[0]
+
+
+def test_optimization_disabled(databricks_sigma_backend: DatabricksBackend):
+    """Test that optimization can be disabled via configuration."""
+    # Temporarily disable optimization
+    original_value = databricks_sigma_backend.optimize_or_as_regex
+    databricks_sigma_backend.optimize_or_as_regex = False
+    
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    field|contains:
+                        - 'value1'
+                        - 'value2'
+                        - 'value3'
+                condition: selection
+        """)
+    )
+    
+    # Restore original value
+    databricks_sigma_backend.optimize_or_as_regex = original_value
+    
+    # Should use contains functions instead of regex
+    assert result[0].count("contains") == 3
+    assert "rlike" not in result[0]
+
+
+def test_real_sigma_rule_macos_security(databricks_sigma_backend: DatabricksBackend):
+    """Test with real Sigma rule from issue #12 Example 1."""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Security Software Discovery - MacOs
+            status: test
+            logsource:
+                product: macos
+                category: process_creation
+            detection:
+                image:
+                    Image: '/usr/bin/grep'
+                selection_cli_1:
+                    CommandLine|contains:
+                        - 'nessusd'
+                        - 'santad'
+                        - 'CbDefense'
+                        - 'falcond'
+                        - 'td-agent'
+                        - 'packetbeat'
+                        - 'filebeat'
+                        - 'auditbeat'
+                        - 'osqueryd'
+                        - 'BlockBlock'
+                        - 'LuLu'
+                condition: image and selection_cli_1
+        """)
+    )
+    # Should optimize the 11 contains into a single regex
+    assert "rlike '(?i).*(nessusd|santad|CbDefense|falcond|td\\-agent|packetbeat|filebeat|auditbeat|osqueryd|BlockBlock|LuLu).*'" in result[0]
+    # Should not have individual contains calls
+    assert "contains(" not in result[0]
+    # Should have the AND condition with Image check
+    assert "lower(Image) = lower('/usr/bin/grep')" in result[0]
+
+
 def test_databricks_sigma_no_status(databricks_sigma_backend: DatabricksBackend):
     sigma_rules = SigmaCollection.from_yaml("""
             title: Test Without Status
