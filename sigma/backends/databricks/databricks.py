@@ -136,6 +136,12 @@ class DatabricksBackend(TextQueryBackend):
     # Expression for field to field comparison as format string with placeholders {field1} and {field2}
     field_equals_field_expression: ClassVar[str] = "{field1} = {field2}"
 
+    # OR optimization: Convert repeated OR operations with contains/startswith/endswith into regex
+    # Enable optimization of OR conditions as regex expressions
+    optimize_or_as_regex: ClassVar[bool] = True
+    # Minimum number of OR terms required to trigger regex optimization (set to 3 to avoid micro-optimizations)
+    min_or_terms_for_optimization: ClassVar[int] = 3
+
     # TODO: think how to handle them? We really can't match them without field...
     # Value not bound to a field
     # Expression for string value not bound to a field as format string with placeholder {value}
@@ -209,6 +215,120 @@ class DatabricksBackend(TextQueryBackend):
         except TypeError:  # pragma: no cover
             raise NotImplementedError("Field equals string value expressions with strings are not supported by the "
                                       "backend.")
+
+    def _analyze_or_for_regex_optimization(
+        self, cond: ConditionOR
+    ) -> Union[Tuple[str, str, List[str]], None]:
+        """
+        Analyze an OR condition to determine if it can be optimized as a regex expression.
+        
+        Returns a tuple of (field_name, pattern_type, values) if optimization is possible,
+        where pattern_type is one of: 'contains', 'startswith', 'endswith'.
+        Returns None if optimization is not applicable.
+        """
+        if not self.optimize_or_as_regex:
+            return None
+            
+        # Check if we have enough terms to optimize
+        if len(cond.args) < self.min_or_terms_for_optimization:
+            return None
+        
+        # All args must be ConditionFieldEqualsValueExpression
+        if not all(isinstance(arg, ConditionFieldEqualsValueExpression) for arg in cond.args):
+            return None
+        
+        # Extract field names and check they're all the same
+        fields = [arg.field for arg in cond.args]
+        if len(set(fields)) != 1:
+            return None  # Different fields, can't optimize
+        
+        field_name = fields[0]
+        
+        # Check all values are SigmaString and determine pattern type
+        pattern_type = None
+        values = []
+        
+        for arg in cond.args:
+            if not isinstance(arg.value, SigmaString):
+                return None  # Not a string value, can't optimize
+            
+            value = arg.value
+            
+            # Determine the pattern type based on wildcards
+            if value.startswith(SpecialChars.WILDCARD_MULTI) and value.endswith(SpecialChars.WILDCARD_MULTI):
+                # Contains pattern: *value*
+                current_pattern = 'contains'
+                # Extract the actual value without wildcards
+                actual_value = str(value)[1:-1]
+            elif value.startswith(SpecialChars.WILDCARD_MULTI):
+                # Endswith pattern: *value
+                current_pattern = 'endswith'
+                actual_value = str(value)[1:]
+            elif value.endswith(SpecialChars.WILDCARD_MULTI):
+                # Startswith pattern: value*
+                current_pattern = 'startswith'
+                actual_value = str(value)[:-1]
+            else:
+                # No wildcards, can't optimize as regex
+                return None
+            
+            # Check if pattern type is consistent
+            if pattern_type is None:
+                pattern_type = current_pattern
+            elif pattern_type != current_pattern:
+                # Mixed patterns, can't optimize into single regex
+                return None
+            
+            values.append(actual_value)
+        
+        return (field_name, pattern_type, values)
+
+    def _build_regex_pattern(self, pattern_type: str, values: List[str]) -> str:
+        """
+        Build a case-insensitive regex pattern for the given pattern type and values.
+        
+        Uses (?i) flag for case-insensitivity (Java regex compatible).
+        """
+        # Escape each value for use in regex (Java regex compatible)
+        escaped_values = [re.escape(str(v)) for v in values]
+        
+        # Join values with pipe (OR in regex)
+        alternatives = '|'.join(escaped_values)
+        
+        # Build pattern based on type
+        if pattern_type == 'contains':
+            return f'(?i).*({alternatives}).*'
+        elif pattern_type == 'startswith':
+            return f'(?i)({alternatives}).*'
+        elif pattern_type == 'endswith':
+            return f'(?i).*({alternatives})'
+        else:
+            raise ValueError(f"Unknown pattern type: {pattern_type}")
+
+    def convert_condition_or(
+        self, cond: ConditionOR, state: ConversionState
+    ) -> Union[str, DeferredQueryExpression]:
+        """
+        Conversion of OR conditions with optimization for repeated string matching patterns.
+        
+        If multiple OR conditions match the same field with the same pattern type
+        (contains/startswith/endswith), they are optimized into a single regex expression.
+        """
+        # Try to optimize as regex
+        optimization = self._analyze_or_for_regex_optimization(cond)
+        
+        if optimization:
+            field_name, pattern_type, values = optimization
+            
+            # Build the optimized regex pattern
+            regex_pattern = self._build_regex_pattern(pattern_type, values)
+            
+            # Use the re_expression format with escaped field name
+            field = self.escape_and_quote_field(field_name)
+            return self.re_expression.format(field=field, regex=regex_pattern)
+        
+        # Fall back to default OR conversion
+        return super().convert_condition_or(cond, state)
 
     # TODO: implement custom methods for query elements not covered by the default backend base.
     # Documentation: https://sigmahq-pysigma.readthedocs.io/en/latest/Backends.html
