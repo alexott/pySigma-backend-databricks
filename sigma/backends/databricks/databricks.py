@@ -151,6 +151,9 @@ class DatabricksBackend(TextQueryBackend):
     # Expression for regular expression not bound to a field as format string with placeholder {value}
     unbound_value_re_expression: ClassVar[str] = '_=~{value}'
 
+    # Field name containing the raw/full log line for unbound keyword searches
+    raw_log_field: ClassVar[str] = "raw"
+
     # Query finalization: appending and concatenating deferred query part
     # String used as separator between main query and deferred parts
     deferred_start: ClassVar[str] = "\n| "
@@ -158,6 +161,12 @@ class DatabricksBackend(TextQueryBackend):
     deferred_separator: ClassVar[str] = "\n| "
     # String used as query if final query only contains deferred expression
     deferred_only_query: ClassVar[str] = "*"
+
+    def __init__(self, processing_pipeline=None, collect_errors=False, raw_log_field: str = None, **kwargs):
+        """Initialize Databricks backend with optional raw log field configuration."""
+        super().__init__(processing_pipeline, collect_errors, **kwargs)
+        if raw_log_field:
+            self.raw_log_field = raw_log_field
 
     def make_sql_string(self, s: SigmaString):
         converted = s.convert(
@@ -216,44 +225,101 @@ class DatabricksBackend(TextQueryBackend):
             raise NotImplementedError("Field equals string value expressions with strings are not supported by the "
                                       "backend.")
 
+    def convert_condition_val_str(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
+        """Conversion of unbound string values (keywords without field names)"""
+        if not self.raw_log_field:
+            raise ValueError("Unbound keyword search requires raw_log_field to be configured")
+
+        # Use raw log field for keyword search
+        field = self.escape_and_quote_field(self.raw_log_field)
+        value = cond.value
+
+        # Handle wildcards similar to field-based logic
+        if (self.contains_expression is not None
+            and value.startswith(SpecialChars.WILDCARD_MULTI)
+            and value.endswith(SpecialChars.WILDCARD_MULTI)
+            and not value[1:-1].contains_special()):
+            # *keyword* -> contains()
+            val_str = self.make_sql_string(value[1:-1])
+            return self.contains_expression.format(field=field, value=val_str)
+        elif (self.startswith_expression is not None
+              and value.endswith(SpecialChars.WILDCARD_MULTI)
+              and not value[:-1].contains_special()):
+            # keyword* -> startswith()
+            val_str = self.make_sql_string(value[:-1])
+            return self.startswith_expression.format(field=field, value=val_str)
+        elif (self.endswith_expression is not None
+              and value.startswith(SpecialChars.WILDCARD_MULTI)
+              and not value[1:].contains_special()):
+            # *keyword -> endswith()
+            val_str = self.make_sql_string(value[1:])
+            return self.endswith_expression.format(field=field, value=val_str)
+        elif (self.wildcard_match_expression is not None
+              and value.contains_special()):
+            # Complex wildcards -> regexp
+            val_str = self.convert_value_str(value, state)
+            return self.wildcard_match_expression.format(field=field, value=val_str)
+        else:
+            # Plain keyword -> contains() (most common case)
+            val_str = self.make_sql_string(value)
+            return self.contains_expression.format(field=field, value=val_str)
+
+    def convert_condition_val_re(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
+        """Conversion of unbound regex values"""
+        if not self.raw_log_field:
+            raise ValueError("Unbound regex search requires raw_log_field to be configured")
+
+        field = self.escape_and_quote_field(self.raw_log_field)
+        return self.re_expression.format(field=field, regex=cond.value.regexp)
+
+    def convert_condition_val_num(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
+        """Conversion of unbound numeric values"""
+        if not self.raw_log_field:
+            raise ValueError("Unbound numeric search requires raw_log_field to be configured")
+
+        # Convert number to string search in raw log
+        field = self.escape_and_quote_field(self.raw_log_field)
+        value = self.make_sql_string(SigmaString(str(cond.value)))
+        return self.contains_expression.format(field=field, value=value)
+
     def _analyze_or_for_regex_optimization(
         self, cond: ConditionOR
     ) -> Union[Tuple[str, str, List[str]], None]:
         """
         Analyze an OR condition to determine if it can be optimized as a regex expression.
-        
+
         Returns a tuple of (field_name, pattern_type, values) if optimization is possible,
         where pattern_type is one of: 'contains', 'startswith', 'endswith'.
         Returns None if optimization is not applicable.
         """
         if not self.optimize_or_as_regex:
             return None
-            
+
         # Check if we have enough terms to optimize
         if len(cond.args) < self.min_or_terms_for_optimization:
             return None
-        
+
         # All args must be ConditionFieldEqualsValueExpression
         if not all(isinstance(arg, ConditionFieldEqualsValueExpression) for arg in cond.args):
             return None
-        
+
         # Extract field names and check they're all the same
         fields = [arg.field for arg in cond.args]
         if len(set(fields)) != 1:
             return None  # Different fields, can't optimize
-        
+
         field_name = fields[0]
-        
+
         # Check all values are SigmaString and determine pattern type
         pattern_type = None
         values = []
-        
+
         for arg in cond.args:
             if not isinstance(arg.value, SigmaString):
                 return None  # Not a string value, can't optimize
-            
+
             value = arg.value
-            
+
             # Determine the pattern type based on wildcards
             if value.startswith(SpecialChars.WILDCARD_MULTI) and value.endswith(SpecialChars.WILDCARD_MULTI):
                 # Contains pattern: *value*
