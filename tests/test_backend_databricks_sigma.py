@@ -582,3 +582,197 @@ def test_databricks_sigma_no_status(databricks_sigma_backend: DatabricksBackend)
         sigma_rules.rules[0], queries[0], 0, None
     )
     assert "status: test" in final_query_dbsql
+
+
+# Tests for unbound keyword search
+def test_databricks_sigma_unbound_keywords_or(databricks_sigma_backend: DatabricksBackend):
+    """Test unbound keywords with default OR logic"""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test Unbound Keywords OR
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    - 'keyword1'
+                    - 'keyword2'
+                condition: keywords
+        """)
+    ) == ["contains(lower(raw), lower('keyword1')) OR contains(lower(raw), lower('keyword2'))"]
+
+
+def test_databricks_sigma_unbound_keywords_all(databricks_sigma_backend: DatabricksBackend):
+    """Test unbound keywords with |all modifier (AND logic)"""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test Unbound Keywords AND
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    '|all':
+                        - 'Remove-MailboxExportRequest'
+                        - ' -Identity '
+                        - ' -Confirm "False"'
+                condition: keywords
+        """)
+    ) == ['contains(lower(raw), lower(\'Remove-MailboxExportRequest\')) AND ' +
+          'contains(lower(raw), lower(\' -Identity \')) AND ' +
+          'contains(lower(raw), lower(\' -Confirm "False"\'))']
+
+
+def test_databricks_sigma_mixed_field_and_keywords(databricks_sigma_backend: DatabricksBackend):
+    """Test mixing field-based conditions with unbound keywords"""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test Mixed Conditions
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                selection:
+                    EventID: 4688
+                keywords:
+                    - 'evil'
+                condition: selection and keywords
+        """)
+    ) == ["EventID = 4688 AND contains(lower(raw), lower('evil'))"]
+
+
+def test_databricks_sigma_custom_raw_field():
+    """Test using custom raw log field name"""
+    backend = DatabricksBackend(raw_log_field="message")
+    result = backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test Custom Field
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    - 'test'
+                condition: keywords
+        """)
+    )
+    assert "message" in result[0]
+    assert "contains(lower(message), lower('test'))" in result[0]
+
+
+def test_databricks_sigma_unbound_regex(databricks_sigma_backend: DatabricksBackend):
+    """Test unbound regex patterns"""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test Unbound Regex
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    - '|re': '.*evil(cmd|powershell).*'
+                condition: keywords
+        """)
+    )
+    assert "raw rlike '.*evil(cmd|powershell).*'" in result[0]
+
+
+def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: DatabricksBackend):
+    """Test wildcards in unbound keywords"""
+    # Test contains pattern (*keyword*)
+    result1 = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+            detection:
+                keywords:
+                    - '*evil*'
+                condition: keywords
+        """)
+    )
+    assert "contains(lower(raw), lower('evil'))" in result1[0]
+    
+    # Test startswith pattern (keyword*)
+    result2 = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+            detection:
+                keywords:
+                    - 'cmd.exe*'
+                condition: keywords
+        """)
+    )
+    assert "startswith(lower(raw), lower('cmd.exe'))" in result2[0]
+    
+    # Test endswith pattern (*keyword)
+    result3 = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+            detection:
+                keywords:
+                    - '*.exe'
+                condition: keywords
+        """)
+    )
+    assert "endswith(lower(raw), lower('.exe'))" in result3[0]
+
+
+def test_databricks_sigma_unbound_numeric(databricks_sigma_backend: DatabricksBackend):
+    """Test unbound numeric values"""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test Unbound Numeric
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    - 12345
+                condition: keywords
+        """)
+    )
+    assert "contains(lower(raw), lower('12345'))" in result[0]
+
+
+def test_databricks_sigma_unbound_complex_condition(databricks_sigma_backend: DatabricksBackend):
+    """Test complex conditions with multiple keyword groups"""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test Complex
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords1:
+                    '|all':
+                        - 'mimikatz'
+                        - 'sekurlsa'
+                keywords2:
+                    - 'password'
+                    - 'credential'
+                selection:
+                    EventID: 4688
+                condition: selection and (keywords1 or keywords2)
+        """)
+    )
+    # Verify it contains all the expected parts
+    assert "EventID" in result[0]
+    assert "mimikatz" in result[0]
+    assert "sekurlsa" in result[0]
+    assert "password" in result[0]
+    assert "credential" in result[0]
