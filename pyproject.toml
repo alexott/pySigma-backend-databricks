@@ -22,7 +22,7 @@ pytest-cov = "^7.0.0"
 autopep8 = "^2.3.2"
 pylint = "^3.3.9"
 sigma-cli = "^1.0.6"
-mypy = "^1.18.2"
+mypy = "^1.19.0"
 types-pyyaml = "^6.0.12.20250915"
 pyright = "^1.1.407"
 
