@@ -14,7 +14,7 @@ def snake_case() -> ProcessingPipeline:
         items=[
             ProcessingItem(  # Field mappings
                 identifier="snake_case",
-                transformation=FieldFunctionTransformation(transform_func=inflection.underscore),
+                transformation=FieldFunctionTransformation({}, inflection.underscore),
             )
         ],
     )

@@ -10,8 +10,8 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.14"
-pysigma = "^0.11.23"
+python = ">=3.10,<=3.14"
+pysigma = "^1.0.2"
 inflection = "^0.5.1"
 
 [tool.poetry.group.test.dependencies]

@@ -9,7 +9,7 @@ from sigma.conversion.base import TextQueryBackend
 from sigma.conversion.deferred import DeferredQueryExpression
 from sigma.conversion.state import ConversionState
 from sigma.rule import SigmaRule, SigmaLevel
-from sigma.types import SigmaCompareExpression, SigmaString, SigmaRegularExpression
+from sigma.types import SigmaCompareExpression, SigmaString, SigmaRegularExpression, CompareOperators
 from sigma.types import SpecialChars
 
 
@@ -104,11 +104,11 @@ class DatabricksBackend(TextQueryBackend):
     # Compare operation query as format string with placeholders {field}, {operator} and {value}
     compare_op_expression: ClassVar[Optional[str]] = "{field} {operator} {value}"
     # Mapping between CompareOperators elements and strings used as replacement for {operator} in compare_op_expression
-    compare_operators: ClassVar[Optional[Dict[SigmaCompareExpression.CompareOperators, str]]] = {
-        SigmaCompareExpression.CompareOperators.LT: "<",
-        SigmaCompareExpression.CompareOperators.LTE: "<=",
-        SigmaCompareExpression.CompareOperators.GT: ">",
-        SigmaCompareExpression.CompareOperators.GTE: ">=",
+    compare_operators: ClassVar[Optional[Dict[CompareOperators, str]]] = {
+        CompareOperators.LT: "<",
+        CompareOperators.LTE: "<=",
+        CompareOperators.GT: ">",
+        CompareOperators.GTE: ">=",
     }
 
     # Null/None expressions
