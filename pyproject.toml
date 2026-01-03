@@ -20,7 +20,7 @@ pytest-cov = "^7.0.0"
 
 [tool.poetry.group.dev.dependencies]
 autopep8 = "^2.3.2"
-pylint = "^3.3.9"
+pylint = "^4.0.4"
 sigma-cli = "^2.0.0"
 mypy = "^1.19.1"
 ruff = "^0.14.9"
