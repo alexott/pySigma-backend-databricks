@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pySigma-backend-databricks"
-version = "0.1.4"
+version = "0.1.5"
 description = "pySigma backend for Apache Spark/Databricks"
 authors = ["Alex Ott <alexott@gmail.com>"]
 license = "MIT"
