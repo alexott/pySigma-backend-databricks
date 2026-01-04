@@ -1,13 +1,24 @@
 [tool.poetry]
 name = "pySigma-backend-databricks"
 version = "0.1.4"
-description = "pySigma Databricks backend"
+description = "pySigma backend for Apache Spark/Databricks"
 authors = ["Alex Ott <alexott@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/alexott/pySigma-backend-databricks"
 packages = [
     { include = "sigma" }
 ]
+readme = "README.md"
+keywords = ["cybersecurity", "apache spark", "spark", "sigma", "databricks"]
+
+[project]
+name = "pySigma-backend-databricks"
+license = "Apache-2.0"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Homepage = "https://github.com/alexott/cyber-spark-data-connectors"
+Issues = "https://github.com/alexott/cyber-spark-data-connectors/issues"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<=3.14"
