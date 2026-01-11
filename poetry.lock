@@ -1092,21 +1092,21 @@ files = [
 
 [[package]]
 name = "sigma-cli"
-version = "2.0.0"
+version = "2.0.1"
 description = "Sigma Command Line Interface (conversion, check etc.) based on pySigma"
 optional = false
 python-versions = "<4.0,>=3.10"
 groups = ["dev"]
 files = [
-    {file = "sigma_cli-2.0.0-py3-none-any.whl", hash = "sha256:5d34170bf3643061b2a8971ee5e5c16e5e4cf59270bc23f1c701de70d37ef071"},
-    {file = "sigma_cli-2.0.0.tar.gz", hash = "sha256:cd1de2e7cca39d5d45f3073e543d37594eed38b46b0276932755047cff44e6b3"},
+    {file = "sigma_cli-2.0.1-py3-none-any.whl", hash = "sha256:63ebfe8c0036970090e7d71db5ae0eb572271a26da3bb5ef8cc059125d7d13d1"},
+    {file = "sigma_cli-2.0.1.tar.gz", hash = "sha256:b507993dd6418bd2a0b5a9efac27101c75d0f90ccae59c604e771a5d55bc5375"},
 ]
 
 [package.dependencies]
 click = ">=8.3.1,<9.0.0"
 colorama = ">=0.4.6,<0.5.0"
 prettytable = ">=3.17.0,<4.0.0"
-pysigma = ">=1.0,<2.0"
+pysigma = ">=1,<2"
 
 [[package]]
 name = "tomli"
