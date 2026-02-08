@@ -34,7 +34,7 @@ autopep8 = "^2.3.2"
 pylint = "^4.0.4"
 sigma-cli = "^2.0.0"
 mypy = "^1.19.1"
-ruff = "^0.14.9"
+ruff = ">=0.14.9,<0.16.0"
 types-pyyaml = "^6.0.12.20250915"
 pyright = "^1.1.407"
 
