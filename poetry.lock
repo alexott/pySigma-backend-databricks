@@ -1118,14 +1118,14 @@ files = [
 
 [[package]]
 name = "sigma-cli"
-version = "2.0.1"
+version = "2.0.2"
 description = "Sigma Command Line Interface (conversion, check etc.) based on pySigma"
 optional = false
 python-versions = "<4.0,>=3.10"
 groups = ["dev"]
 files = [
-    {file = "sigma_cli-2.0.1-py3-none-any.whl", hash = "sha256:63ebfe8c0036970090e7d71db5ae0eb572271a26da3bb5ef8cc059125d7d13d1"},
-    {file = "sigma_cli-2.0.1.tar.gz", hash = "sha256:b507993dd6418bd2a0b5a9efac27101c75d0f90ccae59c604e771a5d55bc5375"},
+    {file = "sigma_cli-2.0.2-py3-none-any.whl", hash = "sha256:0172349ed16b518699ca0329ea3c9367e6abfb80efe6e9982d95d39b15004952"},
+    {file = "sigma_cli-2.0.2.tar.gz", hash = "sha256:07af8acfaff61b557155d11b73c067909f5f75fdd2a02c5f953fed5b718d13e3"},
 ]
 
 [package.dependencies]
