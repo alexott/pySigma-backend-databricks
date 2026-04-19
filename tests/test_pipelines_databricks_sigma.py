@@ -1,3 +1,4 @@
+import sigma.pipelines.databricks as databricks_pipelines
 from sigma.backends.databricks import DatabricksBackend
 from sigma.pipelines.databricks import snake_case
 from sigma.collection import SigmaCollection
@@ -30,3 +31,7 @@ def test_snake_case_detection_conversion():
     rule = DatabricksBackend(snake_case()).convert(
         SigmaCollection.from_yaml(YAML_STR))
     assert rule == ["event_id = 123 AND lower(image) = lower('test.exe') AND lower(test_field) = lower('test')"]
+
+
+def test_databricks_pipeline_registration():
+    assert databricks_pipelines.pipelines["snake_case"] is snake_case
