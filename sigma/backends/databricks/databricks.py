@@ -17,6 +17,19 @@ from .lakewatch_maps import (
 )
 
 
+class _LakewatchDumper(yaml.SafeDumper):
+    """YAML dumper that renders multi-line strings as literal block scalars."""
+
+
+def _represent_str_block(dumper: yaml.SafeDumper, data: str):
+    if "\n" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+_LakewatchDumper.add_representer(str, _represent_str_block)
+
+
 class DatabricksBackend(TextQueryBackend):
     """Databricks backend for PySigma."""
     # See the pySigma documentation for further infromation:
@@ -485,6 +498,24 @@ class DatabricksBackend(TextQueryBackend):
             },
         }
         return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
+
+    def finalize_output_lakewatch(self, queries: List[str]) -> Any:
+        """Assemble per-rule Lakewatch documents into one multi-document YAML file."""
+        documents: List[str] = []
+        for query in queries:
+            envelope = json.loads(query)
+            if envelope["status"] in ("deprecated", "unsupported") or not envelope["sql"]:
+                continue
+            documents.append(
+                yaml.dump(
+                    envelope["doc"],
+                    Dumper=_LakewatchDumper,
+                    sort_keys=False,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                )
+            )
+        return "\n---\n".join(documents)
 
     @staticmethod
     def finalize_query_dbsql(rule: SigmaRule, query: str, index: int, state: ConversionState) -> Any:

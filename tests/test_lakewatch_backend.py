@@ -1,5 +1,6 @@
 import json
 import pytest
+import yaml
 from sigma.collection import SigmaCollection
 from sigma.exceptions import SigmaConversionError
 from sigma.backends.databricks import DatabricksBackend
@@ -86,3 +87,79 @@ def test_error_when_no_table_resolvable():
     """
     with pytest.raises(SigmaConversionError):
         _doc(be, rule_yaml)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: finalize_output_lakewatch tests
+# ---------------------------------------------------------------------------
+
+TWO_RULES = """
+title: Rule One
+status: experimental
+level: high
+logsource: {category: test}
+detection:
+    sel: {class_uid: 4003, foo: bar}
+    condition: sel
+---
+title: Rule Two
+status: stable
+level: medium
+logsource: {category: test}
+detection:
+    sel: {class_uid: 3002, baz: qux}
+    condition: sel
+"""
+
+
+def test_multi_document_output():
+    be = DatabricksBackend()
+    out = be.convert(SigmaCollection.from_yaml(TWO_RULES), output_format="lakewatch")
+    docs = list(yaml.safe_load_all(out))
+    assert len(docs) == 2
+    assert docs[0]["metadata"]["displayName"] == "Rule One"
+    assert "FROM dns_activity" in docs[0]["spec"]["input"]["batch"]["sql"]
+    assert "FROM authentication" in docs[1]["spec"]["input"]["batch"]["sql"]
+
+
+def test_sql_rendered_as_block_scalar():
+    be = DatabricksBackend(table_name="t")
+    out = be.convert(
+        SigmaCollection.from_yaml(BASE.replace("type_uid: 100701", "foo: baz")),
+        output_format="lakewatch",
+    )
+    # literal block scalar, not an escaped one-line double-quoted string
+    assert "sql: |-" in out
+    assert "\\n" not in out
+
+
+def test_deprecated_rule_skipped():
+    be = DatabricksBackend(table_name="t")
+    rule_yaml = BASE.replace("status: experimental", "status: deprecated")
+    out = be.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch")
+    assert out.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# Folded coverage: empty-sql is dropped; custom lookback in WHERE
+# ---------------------------------------------------------------------------
+
+def test_empty_sql_dropped_in_output():
+    """finalize_output_lakewatch drops envelopes whose sql field is empty."""
+    be = DatabricksBackend(table_name="t")
+    # One envelope with empty sql, one with real sql.
+    empty = '{"status":"test","sql":"","doc":{"kind":"Rule","a":1}}'
+    real = '{"status":"test","sql":"SELECT * FROM t WHERE x = 1","doc":{"kind":"Rule","b":2}}'
+    result = be.finalize_output_lakewatch([empty, real])
+    # Empty-sql envelope should be absent; real one present.
+    assert result.strip() != ""
+    docs = list(yaml.safe_load_all(result))
+    assert len(docs) == 1
+    assert docs[0]["b"] == 2
+
+
+def test_custom_lookback_in_where():
+    """DatabricksBackend(lookback='48 HOUR') emits INTERVAL 48 HOUR in the batch SQL."""
+    be = DatabricksBackend(table_name="t", lookback="48 HOUR")
+    out = be.convert(SigmaCollection.from_yaml(BASE), output_format="lakewatch")
+    assert "INTERVAL 48 HOUR" in out
