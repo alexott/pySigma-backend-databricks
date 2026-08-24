@@ -78,9 +78,17 @@ Precedence, per rule:
    a detection item whose field is `class_uid`, `type_uid`, or `class_name`:
    - `class_uid` → map directly;
    - `type_uid` → `class_uid = type_uid // 100`, then map;
-   - `class_name` → normalize (lower-case, spaces→`_`, strip "activity"→canonical) and
-     match against the gold-table set;
+   - `class_name` → normalize to snake_case only (lower-case, runs of non-alphanumerics
+     → single `_`, e.g. `"API Activity"` → `api_activity`, `"HTTP Activity"` →
+     `http_activity`, `"Detection Finding"` → `detection_finding`). **Do not strip
+     "activity"** — the gold-table names keep it (`api_activity`, `dns_activity`,
+     `process_activity`, …). Accept the result only if it is in the known gold-table set;
    - resolve via the `OCSF_CLASS_UID_TO_TABLE` map below.
+
+   The gold-table name is the OCSF class name in snake_case, so the normalized
+   `class_name` and the `class_uid`-mapped name agree by construction. When both a
+   `class_uid`/`type_uid` and a `class_name` are present, `class_uid`/`type_uid` wins
+   (numeric, unambiguous); `class_name` is the fallback for pipelines that emit only a name.
 3. Else → raise `SigmaConversionError` naming the rule title and instructing the user to
    pass `-O table_name=…`. (No bogus table is ever emitted.)
 
