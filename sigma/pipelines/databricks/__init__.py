@@ -1,3 +1,5 @@
+"""Databricks processing pipelines for pySigma."""
+
 from .snake_case import snake_case
 
 pipelines = {

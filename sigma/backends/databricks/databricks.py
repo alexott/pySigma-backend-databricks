@@ -1,19 +1,23 @@
+"""Databricks/Apache Spark SQL backend for pySigma, including Lakewatch output format."""
+
 import json
 import re
-from typing import Optional, Pattern, Union, ClassVar, Tuple, List, Dict, Any, Type
+from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple, Type, Union
 
 import yaml
-from sigma.conditions import ConditionItem, ConditionOR, ConditionAND, ConditionNOT, \
-    ConditionFieldEqualsValueExpression
+from sigma.conditions import ConditionAND, ConditionFieldEqualsValueExpression, ConditionItem, ConditionNOT, ConditionOR
 from sigma.conversion.base import TextQueryBackend
 from sigma.conversion.deferred import DeferredQueryExpression
 from sigma.conversion.state import ConversionState
 from sigma.exceptions import SigmaConversionError
-from sigma.rule import SigmaRule, SigmaLevel
-from sigma.types import SigmaCompareExpression, SigmaString, SigmaRegularExpression, CompareOperators
-from sigma.types import SpecialChars
+from sigma.rule import SigmaLevel, SigmaRule
+from sigma.types import CompareOperators, SigmaRegularExpression, SigmaString, SpecialChars
+
 from .lakewatch_maps import (
-    resolve_ocsf_table, build_mitre_mapping, SEVERITY_MAP, FIDELITY_MAP,
+    FIDELITY_MAP,
+    SEVERITY_MAP,
+    build_mitre_mapping,
+    resolve_ocsf_table,
 )
 
 
@@ -32,6 +36,7 @@ _LakewatchDumper.add_representer(str, _represent_str_block)
 
 class DatabricksBackend(TextQueryBackend):
     """Databricks backend for PySigma."""
+
     # See the pySigma documentation for further infromation:
     # https://sigmahq-pysigma.readthedocs.io/en/latest/Backends.html
 
@@ -197,6 +202,7 @@ class DatabricksBackend(TextQueryBackend):
         self.default_category = default_category
 
     def make_sql_string(self, s: SigmaString):
+        """Convert a SigmaString to a quoted SQL string literal."""
         converted = s.convert(
             self.escape_char,
             None,
@@ -208,13 +214,13 @@ class DatabricksBackend(TextQueryBackend):
 
     def convert_condition_field_eq_val_str(self, cond: ConditionFieldEqualsValueExpression,
                                            state: ConversionState) -> Union[str, DeferredQueryExpression]:
-        """Conversion of field = string value expressions"""
+        """Convert field = string value expressions."""
         if not isinstance(cond.value, SigmaString):
             raise TypeError(f"cond.value type isn't SigmaString: {type(cond.value)}")
-        
+
         # Type narrowing for Pylance
         sigma_value: SigmaString = cond.value
-        
+
         try:
             if (  # Check conditions for usage of 'startswith' operator
                 self.startswith_expression is not None  # 'startswith' operator is defined in backend
@@ -254,18 +260,19 @@ class DatabricksBackend(TextQueryBackend):
             return expr.format(field=self.escape_and_quote_field(cond.field),
                                value=value)
         except TypeError:  # pragma: no cover
-            raise NotImplementedError("Field equals string value expressions with strings are not supported by the "
-                                      "backend.")
+            raise NotImplementedError(
+                "Field equals string value expressions with strings are not supported by the backend."
+            ) from None
 
     def convert_condition_val_str(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
-        """Conversion of unbound string values (keywords without field names)"""
+        """Convert unbound string values (keywords without field names)."""
         if not self.raw_log_field:
             raise ValueError("Unbound keyword search requires raw_log_field to be configured")
 
         # Use raw log field for keyword search
         field = self.escape_and_quote_field(self.raw_log_field)
         value = cond.value
-        
+
         # Type narrowing: ensure value is SigmaString
         if not isinstance(value, SigmaString):
             raise TypeError(f"Expected SigmaString, got {type(value)}")
@@ -303,7 +310,7 @@ class DatabricksBackend(TextQueryBackend):
             raise ValueError("contains_expression is not defined")
 
     def convert_condition_val_re(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
-        """Conversion of unbound regex values"""
+        """Convert unbound regex values."""
         if not self.raw_log_field:
             raise ValueError("Unbound regex search requires raw_log_field to be configured")
 
@@ -317,7 +324,7 @@ class DatabricksBackend(TextQueryBackend):
         raise ValueError("re_expression is not defined")
 
     def convert_condition_val_num(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
-        """Conversion of unbound numeric values"""
+        """Convert unbound numeric values."""
         if not self.raw_log_field:
             raise ValueError("Unbound numeric search requires raw_log_field to be configured")
 
@@ -331,8 +338,7 @@ class DatabricksBackend(TextQueryBackend):
     def _analyze_or_for_regex_optimization(
         self, cond: ConditionOR
     ) -> Optional[Tuple[str, str, List[str]]]:
-        """
-        Analyze an OR condition to determine if it can be optimized as a regex expression.
+        """Analyze an OR condition to determine if it can be optimized as a regex expression.
 
         Returns a tuple of (field_name, pattern_type, values) if optimization is possible,
         where pattern_type is one of: 'contains', 'startswith', 'endswith'.
@@ -398,12 +404,11 @@ class DatabricksBackend(TextQueryBackend):
         # Ensure pattern_type is not None before returning
         if pattern_type is None:
             return None
-        
+
         return (field_name, pattern_type, values)
 
     def _build_regex_pattern(self, pattern_type: str, values: List[str]) -> str:
-        """
-        Build a case-insensitive regex pattern for the given pattern type and values.
+        """Build a case-insensitive regex pattern for the given pattern type and values.
 
         Uses (?i) flag for case-insensitivity (Java regex compatible).
         """
@@ -426,8 +431,7 @@ class DatabricksBackend(TextQueryBackend):
     def convert_condition_or(
         self, cond: ConditionOR, state: ConversionState
     ) -> Union[str, DeferredQueryExpression]:
-        """
-        Conversion of OR conditions with optimization for repeated string matching patterns.
+        """Conversion of OR conditions with optimization for repeated string matching patterns.
 
         If multiple OR conditions match the same field with the same pattern type
         (contains/startswith/endswith), they are optimized into a single regex expression.
@@ -519,16 +523,19 @@ class DatabricksBackend(TextQueryBackend):
 
     @staticmethod
     def finalize_query_dbsql(rule: SigmaRule, query: str, index: int, state: ConversionState) -> Any:
+        """Finalize a DBSQL query by prepending rule metadata as a SQL comment."""
         rule_status = (rule.status.name if rule.status else "test").lower()
         title = rule.title.replace('\n', ' ')
         return f"-- title: \"{title}\". status: {rule_status}\n{query}"
 
     @staticmethod
     def finalize_output_dbsql(queries: List[str]) -> Any:
+        """Join DBSQL queries with blank lines."""
         return "\n\n".join(queries)
 
     @staticmethod
     def finalize_query_detection_yaml(rule: SigmaRule, query: str, index: int, state: ConversionState) -> Any:
+        """Serialize a rule query as a detection YAML record."""
         statuses = {"experimental": "test", "stable": "release"}
         levels = {SigmaLevel.INFORMATIONAL.name: 0, SigmaLevel.LOW.name: 10, SigmaLevel.MEDIUM.name: 30,
                   SigmaLevel.HIGH.name: 50, SigmaLevel.CRITICAL.name: 90}
@@ -546,6 +553,7 @@ class DatabricksBackend(TextQueryBackend):
 
     @staticmethod
     def finalize_output_detection_yaml(queries: List[str]) -> Any:
+        """Assemble detection YAML records into a single YAML document."""
         data: Dict[str, Any] = {"description": "Detections generated from Sigma rules"}
         detections: List[Any] = []
         for query in queries:

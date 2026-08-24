@@ -1,7 +1,15 @@
+"""Tests for the Lakewatch OCSF table and MITRE mapping utilities."""
+
 from sigma.rule import SigmaRule
+
 from sigma.backends.databricks.lakewatch_maps import (
-    OCSF_CLASS_UID_TO_TABLE, GOLD_TABLES, SEVERITY_MAP, FIDELITY_MAP, resolve_ocsf_table,
-    MITRE_TECHNIQUES, build_mitre_mapping,
+    FIDELITY_MAP,
+    GOLD_TABLES,
+    MITRE_TECHNIQUES,
+    OCSF_CLASS_UID_TO_TABLE,
+    SEVERITY_MAP,
+    build_mitre_mapping,
+    resolve_ocsf_table,
 )
 
 

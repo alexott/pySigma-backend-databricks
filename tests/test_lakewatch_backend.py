@@ -1,8 +1,12 @@
+"""Tests for the Lakewatch output format of the Databricks backend."""
+
 import json
+
 import pytest
 import yaml
 from sigma.collection import SigmaCollection
 from sigma.exceptions import SigmaConversionError
+
 from sigma.backends.databricks import DatabricksBackend
 
 
@@ -163,3 +167,37 @@ def test_custom_lookback_in_where():
     be = DatabricksBackend(table_name="t", lookback="48 HOUR")
     out = be.convert(SigmaCollection.from_yaml(BASE), output_format="lakewatch")
     assert "INTERVAL 48 HOUR" in out
+
+
+# ---------------------------------------------------------------------------
+# Task 5: End-to-end test with real OCSF pipeline
+# ---------------------------------------------------------------------------
+
+
+def test_end_to_end_with_real_ocsf_pipeline():
+    """End-to-end: OCSF pipeline maps fields and injects type_uid; backend derives table."""
+    ocsf = pytest.importorskip("sigma.pipelines.ocsf")
+    be = DatabricksBackend(processing_pipeline=ocsf.ocsf_pipeline())
+    rule_yaml = """
+        title: Encoded PowerShell
+        status: experimental
+        level: high
+        description: Detects encoded powershell
+        logsource:
+            category: process_creation
+            product: windows
+        detection:
+            sel:
+                Image|endswith: '\\\\powershell.exe'
+                CommandLine|contains: '-enc'
+            condition: sel
+        tags:
+            - attack.execution
+            - attack.t1059.001
+    """
+    out = be.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch")
+    doc = yaml.safe_load(out)
+    sql = doc["spec"]["input"]["batch"]["sql"]
+    assert "FROM process_activity" in sql               # derived from injected type_uid
+    assert "endswith(lower(process.name)" in sql        # OCSF field mapping applied
+    assert doc["spec"]["metadata"]["mitre"][0]["technique"] == "Command and Scripting Interpreter"

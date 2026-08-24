@@ -1,8 +1,11 @@
+"""Tests for Databricks processing pipelines."""
+
+from sigma.collection import SigmaCollection
+from sigma.rule import SigmaRule
+
 import sigma.pipelines.databricks as databricks_pipelines
 from sigma.backends.databricks import DatabricksBackend
 from sigma.pipelines.databricks import snake_case
-from sigma.collection import SigmaCollection
-from sigma.rule import SigmaRule
 
 YAML_STR = """
             title: Test

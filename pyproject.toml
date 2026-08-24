@@ -28,6 +28,7 @@ inflection = "^0.5.1"
 [tool.poetry.group.test.dependencies]
 pytest = "^9.0.2"
 pytest-cov = "^7.0.0"
+pysigma-pipeline-ocsf = "*"
 
 [tool.poetry.group.dev.dependencies]
 autopep8 = "^2.3.2"
