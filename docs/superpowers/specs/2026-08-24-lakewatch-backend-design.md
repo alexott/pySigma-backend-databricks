@@ -58,7 +58,7 @@ the backend produces the boolean predicate as `query`, and `finalize_query_*` wr
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `table_name` | *(none)* | Overrides table resolution for **all** rules in the run. |
-| `lookback` | `24 HOUR` | Batch time-window predicate, in **Spark SQL interval** syntax: `time >= CURRENT_TIMESTAMP() - INTERVAL <lookback>`. |
+| `lookback` | `25 HOUR` | Batch time-window predicate, in **Spark SQL interval** syntax: `time >= CURRENT_TIMESTAMP() - INTERVAL <lookback>`. Default gives a 1h overlap over the 24h schedule so window boundaries don't drop events. |
 | `schedule` | `24h` | `spec.schedule.atLeastEvery`, a **Lakewatch duration** string. Separate knob from `lookback` (different syntaxes on purpose). |
 | `compute_group` | `automatic` | `spec.schedule.computeGroup`. |
 | `default_fidelity` | *(derived from status)* | Fallback / override for `spec.metadata.fidelity`. |
@@ -124,7 +124,7 @@ redundant is noted as future work.
 ```sql
 SELECT *
 FROM <resolved_table>
-WHERE time >= CURRENT_TIMESTAMP() - INTERVAL <lookback>
+WHERE time >= CURRENT_TIMESTAMP() - INTERVAL <lookback>   -- default: 25 HOUR
   AND (<query>)
 ```
 
@@ -204,9 +204,14 @@ Parse `attack.*` tags on the rule:
 - `attack.<tactic>` (e.g. `attack.execution`) → `tactic` (title-cased words).
 - `attack.t1059` → `techniqueId: T1059`; `attack.t1059.001` → `techniqueId: T1059`,
   `subTechniqueId: T1059.001`.
-- Resolve `technique` / `subTechnique` names from a **bundled ID→name table**
-  (`MITRE_TECHNIQUES` in `lakewatch_maps.py`). Unknown IDs → emit the ID with an empty
-  name rather than dropping the mapping.
+- Resolve `technique` / `subTechnique` names from a **bundled static ID→name table**
+  (`MITRE_TECHNIQUES` in `lakewatch_maps.py`), generated from MITRE ATT&CK STIX data as a
+  one-off dev step and committed. Rationale: authoritative names with **zero runtime
+  dependencies** and offline/CI-friendly conversion — the `mitreattack` package was
+  rejected for v1 because it pulls in `stix2`/`taxii2-client`/`pandas` and a ~30 MB STIX
+  bundle for what is a dict lookup. (If names ever need to auto-track new ATT&CK releases,
+  or tactic-from-technique inference is wanted, revisit `mitreattack` then.)
+- Unknown IDs → emit the ID with an empty name rather than dropping the mapping.
 - No `attack.*` tags → omit the `mitre` block entirely (it is optional in Lakewatch).
 
 ## 4. Output assembly
@@ -227,7 +232,7 @@ New tests parallel to the existing backend tests:
 2. Rule run through the local OCSF pipeline (`process_creation`) → table derived as
    `process_activity`; `type_uid // 100` path exercised.
 3. `dns` category (direct `class_uid 4003`) → `dns_activity`.
-4. Batch SQL shape: `SELECT * FROM … WHERE time >= CURRENT_TIMESTAMP() - INTERVAL 24 HOUR AND (…)`.
+4. Batch SQL shape: `SELECT * FROM … WHERE time >= CURRENT_TIMESTAMP() - INTERVAL 25 HOUR AND (…)`.
 5. Severity + fidelity + category mapping (including `-O` overrides).
 6. MITRE mapping from `attack.execution` + `attack.t1059.001`.
 7. No resolvable table and no `-O table_name` → `SigmaConversionError`.
