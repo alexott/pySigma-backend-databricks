@@ -1,7 +1,7 @@
-import pytest
 from sigma.rule import SigmaRule
 from sigma.backends.databricks.lakewatch_maps import (
     OCSF_CLASS_UID_TO_TABLE, GOLD_TABLES, SEVERITY_MAP, FIDELITY_MAP, resolve_ocsf_table,
+    MITRE_TECHNIQUES, build_mitre_mapping,
 )
 
 
@@ -48,3 +48,41 @@ def test_resolve_unmappable_returns_none():
 def test_resolve_no_ocsf_fields_returns_none():
     rule = _rule("            sel:\n                foo: bar")
     assert resolve_ocsf_table(rule) is None
+
+
+def test_mitre_table_has_known_names():
+    assert MITRE_TECHNIQUES["T1059"] == "Command and Scripting Interpreter"
+    assert MITRE_TECHNIQUES["T1059.001"] == "PowerShell"
+
+
+def test_build_mitre_mapping_from_tags():
+    rule = SigmaRule.from_yaml("""
+        title: T
+        logsource: {category: test}
+        detection:
+            sel: {foo: bar}
+            condition: sel
+        tags:
+            - attack.execution
+            - attack.t1059.001
+    """)
+    entries = build_mitre_mapping(rule)
+    assert entries == [{
+        "taxonomy": "Enterprise",
+        "tactic": "Execution",
+        "technique": "Command and Scripting Interpreter",
+        "techniqueId": "T1059",
+        "subTechnique": "PowerShell",
+        "subTechniqueId": "T1059.001",
+    }]
+
+
+def test_build_mitre_mapping_no_tags_is_empty():
+    rule = SigmaRule.from_yaml("""
+        title: T
+        logsource: {category: test}
+        detection:
+            sel: {foo: bar}
+            condition: sel
+    """)
+    assert build_mitre_mapping(rule) == []

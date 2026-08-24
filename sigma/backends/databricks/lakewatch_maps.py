@@ -1,4 +1,6 @@
 """Lookup tables and OCSF table resolution for the Lakewatch output format."""
+import json
+import os
 import re
 from typing import Dict, List, Optional
 
@@ -31,7 +33,7 @@ OCSF_CLASS_UID_TO_TABLE: Dict[int, str] = {
     6005: "file_hosting_activity",
 }
 
-GOLD_TABLES = frozenset(OCSF_CLASS_UID_TO_TABLE.values())
+GOLD_TABLES: frozenset[str] = frozenset(OCSF_CLASS_UID_TO_TABLE.values())
 
 # Sigma level name (lower-case) -> Lakewatch severity.
 SEVERITY_MAP: Dict[str, str] = {
@@ -48,6 +50,42 @@ FIDELITY_MAP: Dict[str, str] = {
     "test": "Medium",
     "experimental": "Investigative",
 }
+
+_MITRE_PATH = os.path.join(os.path.dirname(__file__), "mitre_techniques.json")
+with open(_MITRE_PATH, encoding="utf-8") as _fh:
+    #: MITRE ATT&CK technique/sub-technique ID -> human-readable name.
+    MITRE_TECHNIQUES: Dict[str, str] = json.load(_fh)
+
+
+def build_mitre_mapping(rule: SigmaRule) -> List[dict]:
+    tactics: List[str] = []
+    techniques: Dict[str, Optional[str]] = {}
+    for tag in rule.tags:
+        if tag.namespace != "attack":
+            continue
+        name = tag.name
+        if len(name) > 1 and name[0] == "t" and name[1].isdigit():
+            tid = name.upper()
+            if "." in tid:
+                techniques[tid.split(".")[0]] = tid
+            else:
+                techniques.setdefault(tid, None)
+        else:
+            tactics.append(name.replace("_", " ").title())
+    if not techniques:
+        return []
+    tactic = tactics[0] if tactics else ""
+    entries: List[dict] = []
+    for tid, sub in sorted(techniques.items()):
+        entries.append({
+            "taxonomy": "Enterprise",
+            "tactic": tactic,
+            "technique": MITRE_TECHNIQUES.get(tid, ""),
+            "techniqueId": tid,
+            "subTechnique": MITRE_TECHNIQUES.get(sub, "") if sub else "",
+            "subTechniqueId": sub or "",
+        })
+    return entries
 
 
 def _collect_ocsf_fields(rule: SigmaRule) -> Dict[str, str]:
