@@ -8,9 +8,13 @@ from sigma.conditions import ConditionItem, ConditionOR, ConditionAND, Condition
 from sigma.conversion.base import TextQueryBackend
 from sigma.conversion.deferred import DeferredQueryExpression
 from sigma.conversion.state import ConversionState
+from sigma.exceptions import SigmaConversionError
 from sigma.rule import SigmaRule, SigmaLevel
 from sigma.types import SigmaCompareExpression, SigmaString, SigmaRegularExpression, CompareOperators
 from sigma.types import SpecialChars
+from .lakewatch_maps import (
+    resolve_ocsf_table, build_mitre_mapping, SEVERITY_MAP, FIDELITY_MAP,
+)
 
 
 class DatabricksBackend(TextQueryBackend):
@@ -23,6 +27,7 @@ class DatabricksBackend(TextQueryBackend):
         "default": "Plain Databricks SQL queries",
         "dbsql": "Databricks SQL queries with additional metadata as comments",
         "detection_yaml": "Yaml markup for Alex's own detection framework",
+        "lakewatch": "Lakewatch detection rules (kind: Rule YAML)",
     }
     # TODO: does the backend requires that a processing pipeline is provided? This information can be used by user
     # interface programs like Sigma CLI to warn users about inappropriate usage of the backend.
@@ -162,11 +167,21 @@ class DatabricksBackend(TextQueryBackend):
     # String used as query if final query only contains deferred expression
     deferred_only_query: ClassVar[Optional[str]] = "*"
 
-    def __init__(self, processing_pipeline=None, collect_errors=False, raw_log_field: Optional[str] = None, **kwargs):
-        """Initialize Databricks backend with optional raw log field configuration."""
+    def __init__(self, processing_pipeline=None, collect_errors=False,
+                 raw_log_field: Optional[str] = None, table_name: Optional[str] = None,
+                 lookback: str = "25 HOUR", schedule: str = "24h",
+                 compute_group: str = "automatic", default_fidelity: Optional[str] = None,
+                 default_category: str = "Static Signature", **kwargs):
+        """Initialize Databricks backend with optional Lakewatch and raw-log options."""
         super().__init__(processing_pipeline, collect_errors, **kwargs)
         if raw_log_field:
             self.raw_log_field = raw_log_field
+        self.table_name = table_name
+        self.lookback = lookback
+        self.schedule = schedule
+        self.compute_group = compute_group
+        self.default_fidelity = default_fidelity
+        self.default_category = default_category
 
     def make_sql_string(self, s: SigmaString):
         converted = s.convert(
@@ -424,6 +439,52 @@ class DatabricksBackend(TextQueryBackend):
 
     # TODO: implement custom methods for query elements not covered by the default backend base.
     # Documentation: https://sigmahq-pysigma.readthedocs.io/en/latest/Backends.html
+
+    def finalize_query_lakewatch(self, rule: SigmaRule, query: str, index: int,
+                                 state: ConversionState) -> Any:
+        """Build a Lakewatch batch rule document for a single Sigma query."""
+        table = self.table_name or resolve_ocsf_table(rule)
+        if not table:
+            raise SigmaConversionError(
+                f"Cannot determine Lakewatch table for rule '{rule.title}': no OCSF "
+                "class_uid/type_uid/class_name present and no -O table_name given."
+            )
+        rule_status = (rule.status.name if rule.status else "test").lower()
+        sql = "" if not query.strip() else (
+            f"SELECT *\nFROM {table}\n"
+            f"WHERE time >= CURRENT_TIMESTAMP() - INTERVAL {self.lookback}\n"
+            f"  AND ({query})"
+        )
+        severity = SEVERITY_MAP.get(rule.level.name.lower(), "Medium") if rule.level else "Medium"
+        spec_metadata: Dict[str, Any] = {
+            "objective": rule.description or rule.title,
+            "severity": severity,
+            "fidelity": self.default_fidelity or FIDELITY_MAP.get(rule_status, "Development"),
+            "category": self.default_category,
+        }
+        mitre = build_mitre_mapping(rule)
+        if mitre:
+            spec_metadata["mitre"] = mitre
+        doc: Dict[str, Any] = {
+            "apiVersion": "v1",
+            "kind": "Rule",
+            "metadata": {
+                "displayName": rule.title,
+                "comment": rule.description or rule.title,
+            },
+            "spec": {
+                "input": {"batch": {"sql": sql}},
+                "metadata": spec_metadata,
+                "output": {"summary": rule.title, "defaultContext": True},
+                "schedule": {
+                    "atLeastEvery": self.schedule,
+                    "computeGroup": self.compute_group,
+                    "continuous": False,
+                    "enabled": True,
+                },
+            },
+        }
+        return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
 
     @staticmethod
     def finalize_query_dbsql(rule: SigmaRule, query: str, index: int, state: ConversionState) -> Any:
