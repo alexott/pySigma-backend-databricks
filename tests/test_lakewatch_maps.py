@@ -94,3 +94,71 @@ def test_build_mitre_mapping_no_tags_is_empty():
             condition: sel
     """)
     assert build_mitre_mapping(rule) == []
+
+
+def _tagged_rule(tags: str) -> SigmaRule:
+    return SigmaRule.from_yaml(f"""
+        title: T
+        logsource: {{category: test}}
+        detection:
+            sel: {{foo: bar}}
+            condition: sel
+        tags:
+{tags}
+    """)
+
+
+def test_build_mitre_mapping_technique_only_tag():
+    # A bare technique tag with no sub-technique yields blank sub fields.
+    rule = _tagged_rule("            - attack.execution\n            - attack.t1059")
+    assert build_mitre_mapping(rule) == [{
+        "taxonomy": "Enterprise",
+        "tactic": "Execution",
+        "technique": "Command and Scripting Interpreter",
+        "techniqueId": "T1059",
+        "subTechnique": "",
+        "subTechniqueId": "",
+    }]
+
+
+def test_build_mitre_mapping_multiple_subtechniques_collapse():
+    # Documented behaviour: siblings of one parent collapse, last tag wins.
+    rule = _tagged_rule(
+        "            - attack.execution\n"
+        "            - attack.t1059.001\n"
+        "            - attack.t1059.003"
+    )
+    entries = build_mitre_mapping(rule)
+    assert len(entries) == 1
+    assert entries[0]["techniqueId"] == "T1059"
+    assert entries[0]["subTechniqueId"] == "T1059.003"
+
+
+def test_build_mitre_mapping_multiple_tactics_blank():
+    # Ambiguous tactic (two tactic tags) -> tactic left blank rather than guessed.
+    rule = _tagged_rule(
+        "            - attack.execution\n"
+        "            - attack.persistence\n"
+        "            - attack.t1059"
+    )
+    entries = build_mitre_mapping(rule)
+    assert entries[0]["tactic"] == ""
+    assert entries[0]["techniqueId"] == "T1059"
+
+
+def test_resolve_non_numeric_uid_returns_none():
+    # A non-numeric class_uid must not raise; it resolves to None.
+    rule = _rule("            sel:\n                class_uid: notanumber")
+    assert resolve_ocsf_table(rule) is None
+
+
+def test_resolve_class_uid_falls_back_to_type_uid():
+    # An unmappable class_uid falls through to a usable type_uid.
+    rule = _rule("            sel:\n                class_uid: 9999\n                type_uid: 100701")
+    assert resolve_ocsf_table(rule) == "process_activity"
+
+
+def test_resolve_class_uid_falls_back_to_class_name():
+    # An unmappable class_uid falls through to a usable class_name.
+    rule = _rule("            sel:\n                class_uid: 9999\n                class_name: 'DNS Activity'")
+    assert resolve_ocsf_table(rule) == "dns_activity"

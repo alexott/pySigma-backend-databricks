@@ -144,6 +144,13 @@ def test_deprecated_rule_skipped():
     assert out.strip() == ""
 
 
+def test_unsupported_rule_skipped():
+    be = DatabricksBackend(table_name="t")
+    rule_yaml = BASE.replace("status: experimental", "status: unsupported")
+    out = be.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch")
+    assert out.strip() == ""
+
+
 # ---------------------------------------------------------------------------
 # Folded coverage: empty-sql is dropped; custom lookback in WHERE
 # ---------------------------------------------------------------------------

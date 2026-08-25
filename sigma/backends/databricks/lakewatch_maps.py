@@ -67,6 +67,8 @@ def build_mitre_mapping(rule: SigmaRule) -> List[dict]:
         if len(name) > 1 and name[0] == "t" and name[1].isdigit():
             tid = name.upper()
             if "." in tid:
+                # Sibling sub-techniques of one parent collapse to a single
+                # entry; the last tag encountered wins.
                 techniques[tid.split(".")[0]] = tid
             else:
                 techniques.setdefault(tid, None)
@@ -74,7 +76,11 @@ def build_mitre_mapping(rule: SigmaRule) -> List[dict]:
             tactics.append(name.replace("_", " ").title())
     if not techniques:
         return []
-    tactic = tactics[0] if tactics else ""
+    # Sigma tags do not bind a tactic to a technique. Use the tactic only when
+    # exactly one distinct tactic is tagged; otherwise leave it blank rather
+    # than mislabel every technique with an arbitrary one.
+    unique_tactics = list(dict.fromkeys(tactics))
+    tactic = unique_tactics[0] if len(unique_tactics) == 1 else ""
     entries: List[dict] = []
     for tid, sub in sorted(techniques.items()):
         entries.append({
@@ -105,13 +111,28 @@ def _collect_ocsf_fields(rule: SigmaRule) -> Dict[str, str]:
     return found
 
 
+def _to_int(value: str) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def resolve_ocsf_table(rule: SigmaRule) -> Optional[str]:
+    # Try each OCSF field in priority order and return the first that resolves,
+    # so an unmappable or non-numeric class_uid falls through to type_uid then
+    # class_name rather than short-circuiting to None or raising.
     found = _collect_ocsf_fields(rule)
     if "class_uid" in found:
-        return OCSF_CLASS_UID_TO_TABLE.get(int(found["class_uid"]))
+        uid = _to_int(found["class_uid"])
+        if uid is not None and uid in OCSF_CLASS_UID_TO_TABLE:
+            return OCSF_CLASS_UID_TO_TABLE[uid]
     if "type_uid" in found:
-        return OCSF_CLASS_UID_TO_TABLE.get(int(found["type_uid"]) // 100)
+        uid = _to_int(found["type_uid"])
+        if uid is not None and uid // 100 in OCSF_CLASS_UID_TO_TABLE:
+            return OCSF_CLASS_UID_TO_TABLE[uid // 100]
     if "class_name" in found:
         norm = "_".join(re.findall(r"[a-z0-9]+", found["class_name"].lower()))
-        return norm if norm in GOLD_TABLES else None
+        if norm in GOLD_TABLES:
+            return norm
     return None
