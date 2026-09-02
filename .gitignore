@@ -7,3 +7,4 @@ dist/
 docs/_build
 /.idea/
 /databricks-sigma-backend.iml
+/coverage.xml
