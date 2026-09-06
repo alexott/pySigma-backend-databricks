@@ -1,5 +1,4 @@
-from dataclasses import dataclass, field
-from typing import Union, List, Dict, Callable
+"""Snake case field name conversion pipeline for Databricks."""
 
 import inflection
 from sigma.processing.pipeline import ProcessingItem, ProcessingPipeline

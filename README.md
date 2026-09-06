@@ -19,6 +19,7 @@ It supports the following output formats:
 * default: plain Databricks/Apache Spark SQL queries
 * dbsql: Databricks SQL queries with rules metadata (title, status) embedded as comment
 * detection_yaml: Yaml markup for my own detection framework
+* lakewatch: Lakewatch detection rules (`kind: Rule` YAML), batch by default
 
 ## Unbound Keyword Search
 
@@ -92,6 +93,39 @@ detection:
     condition: keywords
 ```
 Generates: `raw rlike '.*evil(cmd|powershell).*'`
+
+## Lakewatch Output
+
+Generate [Lakewatch](https://docs.databricks.com) detection rules (`kind: Rule` YAML)
+from Sigma rules. Intended to run **after** the
+[OCSF pipeline](https://github.com/SigmaHQ/pySigma-pipeline-ocsf), which normalizes
+fields and injects the OCSF class, so the backend can pick the gold table.
+
+```bash
+sigma convert -t databricks -f lakewatch -p ocsf rules/ -o detections.yaml
+```
+
+Multiple rules are emitted as separate `---` documents in one file.
+
+### Options (`-O key=value`)
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `table_name` | *(derived)* | FROM table. If unset, derived from the OCSF class the pipeline injected; error if neither is available. |
+| `lookback` | `25 HOUR` | Batch window (Spark interval syntax) in the `time >= now - INTERVAL <lookback>` predicate. |
+| `schedule` | `24h` | `spec.schedule.atLeastEvery` (Lakewatch duration). |
+| `compute_group` | `automatic` | `spec.schedule.computeGroup`. |
+| `default_fidelity` | *(from status)* | Override `spec.metadata.fidelity`. |
+| `default_category` | `Static Signature` | `spec.metadata.category`. |
+
+```bash
+sigma convert -t databricks -f lakewatch -p ocsf \
+  -O table_name=main.security.authentication -O lookback="1 DAY" -O schedule=12h rule.yml
+```
+
+Sigma metadata maps to Lakewatch as: `title`→`displayName`, `description`→`comment`/`objective`,
+`level`→`severity`, `status`→`fidelity`, and `attack.*` tags→`mitre`. Only batch rules are
+generated (streaming is future work).
 
 ## Maintainer
 

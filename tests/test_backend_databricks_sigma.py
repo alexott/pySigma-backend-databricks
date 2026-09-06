@@ -1,5 +1,8 @@
+"""Tests for the Databricks SQL backend."""
+
 import pytest
 from sigma.collection import SigmaCollection
+
 from sigma.backends.databricks import DatabricksBackend
 
 
@@ -498,7 +501,7 @@ def test_optimization_disabled(databricks_sigma_backend: DatabricksBackend):
     # Temporarily disable optimization
     original_value = databricks_sigma_backend.optimize_or_as_regex
     databricks_sigma_backend.optimize_or_as_regex = False
-    
+
     result = databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
             title: Test
@@ -515,10 +518,10 @@ def test_optimization_disabled(databricks_sigma_backend: DatabricksBackend):
                 condition: selection
         """)
     )
-    
+
     # Restore original value
     databricks_sigma_backend.optimize_or_as_regex = original_value
-    
+
     # Should use contains functions instead of regex
     assert result[0].count("contains") == 3
     assert "rlike" not in result[0]
@@ -553,7 +556,11 @@ def test_real_sigma_rule_macos_security(databricks_sigma_backend: DatabricksBack
         """)
     )
     # Should optimize the 11 contains into a single regex
-    assert "rlike '(?i).*(nessusd|santad|CbDefense|falcond|td\\-agent|packetbeat|filebeat|auditbeat|osqueryd|BlockBlock|LuLu).*'" in result[0]
+    expected_regex = (
+        "rlike '(?i).*(nessusd|santad|CbDefense|falcond|td\\-agent|"
+        "packetbeat|filebeat|auditbeat|osqueryd|BlockBlock|LuLu).*'"
+    )
+    assert expected_regex in result[0]
     # Should not have individual contains calls
     assert "contains(" not in result[0]
     # Should have the AND condition with Image check
@@ -586,7 +593,7 @@ def test_databricks_sigma_no_status(databricks_sigma_backend: DatabricksBackend)
 
 # Tests for unbound keyword search
 def test_databricks_sigma_unbound_keywords_or(databricks_sigma_backend: DatabricksBackend):
-    """Test unbound keywords with default OR logic"""
+    """Test unbound keywords with default OR logic."""
     assert databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
             title: Test Unbound Keywords OR
@@ -604,7 +611,7 @@ def test_databricks_sigma_unbound_keywords_or(databricks_sigma_backend: Databric
 
 
 def test_databricks_sigma_unbound_keywords_all(databricks_sigma_backend: DatabricksBackend):
-    """Test unbound keywords with |all modifier (AND logic)"""
+    """Test unbound keywords with |all modifier (AND logic)."""
     assert databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
             title: Test Unbound Keywords AND
@@ -626,7 +633,7 @@ def test_databricks_sigma_unbound_keywords_all(databricks_sigma_backend: Databri
 
 
 def test_databricks_sigma_mixed_field_and_keywords(databricks_sigma_backend: DatabricksBackend):
-    """Test mixing field-based conditions with unbound keywords"""
+    """Test mixing field-based conditions with unbound keywords."""
     assert databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
             title: Test Mixed Conditions
@@ -645,7 +652,7 @@ def test_databricks_sigma_mixed_field_and_keywords(databricks_sigma_backend: Dat
 
 
 def test_databricks_sigma_custom_raw_field():
-    """Test using custom raw log field name"""
+    """Test using custom raw log field name."""
     backend = DatabricksBackend(raw_log_field="message")
     result = backend.convert(
         SigmaCollection.from_yaml("""
@@ -665,7 +672,7 @@ def test_databricks_sigma_custom_raw_field():
 
 
 def test_databricks_sigma_unbound_regex(databricks_sigma_backend: DatabricksBackend):
-    """Test unbound regex patterns"""
+    """Test unbound regex patterns."""
     result = databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
             title: Test Unbound Regex
@@ -683,7 +690,7 @@ def test_databricks_sigma_unbound_regex(databricks_sigma_backend: DatabricksBack
 
 
 def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: DatabricksBackend):
-    """Test wildcards in unbound keywords"""
+    """Test wildcards in unbound keywords."""
     # Test contains pattern (*keyword*)
     result1 = databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
@@ -698,7 +705,7 @@ def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: Databricks
         """)
     )
     assert "contains(lower(raw), lower('evil'))" in result1[0]
-    
+
     # Test startswith pattern (keyword*)
     result2 = databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
@@ -713,7 +720,7 @@ def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: Databricks
         """)
     )
     assert "startswith(lower(raw), lower('cmd.exe'))" in result2[0]
-    
+
     # Test endswith pattern (*keyword)
     result3 = databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
@@ -731,7 +738,7 @@ def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: Databricks
 
 
 def test_databricks_sigma_unbound_numeric(databricks_sigma_backend: DatabricksBackend):
-    """Test unbound numeric values"""
+    """Test unbound numeric values."""
     result = databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
             title: Test Unbound Numeric
@@ -749,7 +756,7 @@ def test_databricks_sigma_unbound_numeric(databricks_sigma_backend: DatabricksBa
 
 
 def test_databricks_sigma_unbound_complex_condition(databricks_sigma_backend: DatabricksBackend):
-    """Test complex conditions with multiple keyword groups"""
+    """Test complex conditions with multiple keyword groups."""
     result = databricks_sigma_backend.convert(
         SigmaCollection.from_yaml("""
             title: Test Complex
