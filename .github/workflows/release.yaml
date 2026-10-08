@@ -14,7 +14,7 @@ jobs:
       with:
         persist-credentials: false
     - name: Install uv
-      uses: astral-sh/setup-uv@v9
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         enable-cache: true
     - name: Set up Python
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: release
-      url: https://pypi.org/p/cyber-spark-data-connectors
+      url: https://pypi.org/p/pySigma-backend-databricks
     permissions:
       id-token: write  # IMPORTANT: mandatory for trusted publishing
       contents: write
