@@ -159,7 +159,7 @@ def test_databricks_sigma_regex_query_flags(databricks_sigma_backend: Databricks
                     fieldB: foo
                 condition: sel
         """)
-    ) == ["fieldA rlike '(?i)foo.*bar' AND lower(fieldB) = lower('foo')"]
+    ) == ["fieldA rlike '(?iu)foo.*bar' AND lower(fieldB) = lower('foo')"]
 
 
 def test_databricks_sigma_cidr_query(databricks_sigma_backend: DatabricksBackend):
@@ -296,7 +296,7 @@ def test_or_contains_optimization(databricks_sigma_backend: DatabricksBackend):
                         - 'falcond'
                 condition: selection
         """)
-    ) == ["CommandLine rlike '(?i).*(nessusd|santad|falcond).*'"]
+    ) == ["CommandLine rlike '(?iu).*(nessusd|santad|falcond).*'"]
 
 
 def test_or_startswith_optimization(databricks_sigma_backend: DatabricksBackend):
@@ -316,7 +316,7 @@ def test_or_startswith_optimization(databricks_sigma_backend: DatabricksBackend)
                         - 'ethminer'
                 condition: selection
         """)
-    ) == ["UserAgent rlike '(?i)(XMRig\\ |ccminer|ethminer).*'"]
+    ) == [r"UserAgent rlike '(?iu)^(XMRig\\ |ccminer|ethminer)'"]
 
 
 def test_or_endswith_optimization(databricks_sigma_backend: DatabricksBackend):
@@ -336,7 +336,7 @@ def test_or_endswith_optimization(databricks_sigma_backend: DatabricksBackend):
                         - '/halt'
                 condition: selection
         """)
-    ) == ["Image rlike '(?i).*(/shutdown|/reboot|/halt)'"]
+    ) == ["Image rlike '(?iu)(/shutdown|/reboot|/halt)$'"]
 
 
 def test_or_with_special_regex_chars(databricks_sigma_backend: DatabricksBackend):
@@ -356,7 +356,7 @@ def test_or_with_special_regex_chars(databricks_sigma_backend: DatabricksBackend
                         - '[bracket]'
                 condition: selection
         """)
-    ) == ["FileName rlike '(?i).*(file\\.txt|test\\+|\\[bracket\\]).*'"]
+    ) == [r"FileName rlike '(?iu).*(file\\.txt|test\\+|\\[bracket\\]).*'"]
 
 
 def test_or_with_backslashes(databricks_sigma_backend: DatabricksBackend):
@@ -376,7 +376,7 @@ def test_or_with_backslashes(databricks_sigma_backend: DatabricksBackend):
                         - 'E:\\Data'
                 condition: selection
         """)
-    ) == ["Path rlike '(?i).*(C:\\\\Windows|D:\\\\Temp|E:\\\\Data).*'"]
+    ) == [r"Path rlike '(?iu).*(C:\\\\Windows|D:\\\\Temp|E:\\\\Data).*'"]
 
 
 def test_or_with_pipes_and_parens(databricks_sigma_backend: DatabricksBackend):
@@ -396,7 +396,7 @@ def test_or_with_pipes_and_parens(databricks_sigma_backend: DatabricksBackend):
                         - 'c+d'
                 condition: selection
         """)
-    ) == ["Value rlike '(?i).*(a\\|b|\\(test\\)|c\\+d).*'"]
+    ) == [r"Value rlike '(?iu).*(a\\|b|\\(test\\)|c\\+d).*'"]
 
 
 def test_or_mixed_patterns_no_optimization(databricks_sigma_backend: DatabricksBackend):
@@ -491,7 +491,7 @@ def test_complex_and_or_conditions(databricks_sigma_backend: DatabricksBackend):
         """)
     )
     # Should have optimized the contains OR into regex
-    assert "rlike '(?i).*(nessusd|santad|falcond).*'" in result[0]
+    assert "rlike '(?iu).*(nessusd|santad|falcond).*'" in result[0]
     assert "lower(Image) = lower('/usr/bin/grep')" in result[0]
     assert " AND " in result[0]
 
@@ -557,7 +557,7 @@ def test_real_sigma_rule_macos_security(databricks_sigma_backend: DatabricksBack
     )
     # Should optimize the 11 contains into a single regex
     expected_regex = (
-        "rlike '(?i).*(nessusd|santad|CbDefense|falcond|td\\-agent|"
+        r"rlike '(?iu).*(nessusd|santad|CbDefense|falcond|td\\-agent|"
         "packetbeat|filebeat|auditbeat|osqueryd|BlockBlock|LuLu).*'"
     )
     assert expected_regex in result[0]
@@ -783,3 +783,156 @@ def test_databricks_sigma_unbound_complex_condition(databricks_sigma_backend: Da
     assert "sekurlsa" in result[0]
     assert "password" in result[0]
     assert "credential" in result[0]
+
+
+def test_or_optimization_sql_escaping(databricks_sigma_backend: DatabricksBackend):
+    """Test that the merged regex is escaped for the SQL string literal (backslashes and quotes)."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    CommandLine|contains:
+                        - 'dig +short TXT'
+                        - "o'brien"
+                        - 'nslookup'
+                condition: selection
+        """)
+    ) == [r"CommandLine rlike '(?iu).*(dig\\ \\+short\\ TXT|o\'brien|nslookup).*'"]
+
+
+def test_or_inner_wildcard_no_optimization(databricks_sigma_backend: DatabricksBackend):
+    """Test that values with inner wildcards are not merged into a regex as literal characters."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test
+                product: test
+            detection:
+                selection:
+                    CommandLine|contains:
+                        - 'a*b'
+                        - 'c'
+                        - 'd'
+                condition: selection
+        """)
+    ) == ["CommandLine rlike '(?isu)^.*a.*b.*$' OR contains(lower(CommandLine), lower('c')) OR "
+          "contains(lower(CommandLine), lower('d'))"]
+
+
+def test_databricks_sigma_regex_query_sql_escaping(databricks_sigma_backend: DatabricksBackend):
+    """Test that regex values are escaped for the SQL string literal."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml(r"""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    fieldA|re: 'dig \+short ''x'''
+                condition: sel
+        """)
+    ) == [r"fieldA rlike 'dig \\+short \'x\''"]
+
+
+def test_databricks_sigma_unbound_regex_sql_escaping(databricks_sigma_backend: DatabricksBackend):
+    """Test that unbound regex values are escaped for the SQL string literal."""
+    result = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml(r"""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    - '|re': '\d+ ''x'''
+                condition: keywords
+        """)
+    )
+    assert result == [r"raw rlike '\\d+ \'x\''"]
+
+
+def test_databricks_sigma_exists(databricks_sigma_backend: DatabricksBackend):
+    """Test the exists modifier."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    fieldA|exists: true
+                    fieldB|exists: false
+                condition: sel
+        """)
+    ) == ["fieldA is not null AND fieldB is null"]
+
+
+def test_databricks_sigma_wildcard_regex(databricks_sigma_backend: DatabricksBackend):
+    """Test that inner wildcards produce an anchored regex with escaped literal parts."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml(r"""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    Image: 'C:\Win*a+b?.exe'
+                    CommandLine: "*o'brien*x*"
+                condition: sel
+        """)
+    ) == [r"Image rlike '(?isu)^C:\\\\Win.*a\\+b.\\.exe$' AND CommandLine rlike '(?isu)^.*o\'brien.*x.*$'"]
+
+
+def test_databricks_sigma_unbound_wildcard_regex(databricks_sigma_backend: DatabricksBackend):
+    """Test that unbound keywords with inner wildcards produce an anchored regex."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    - 'evil*cmd.exe'
+                condition: keywords
+        """)
+    ) == [r"raw rlike '(?isu)^evil.*cmd\\.exe$'"]
+
+
+def test_databricks_sigma_unicode_case_insensitive(databricks_sigma_backend: DatabricksBackend):
+    """Test that case-insensitive regexes enable Java's UNICODE_CASE flag."""
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel1:
+                    fieldA|re|i|m: 'привет'
+                    fieldB|re: 'ПРИВЕТ'
+                sel2:
+                    fieldC|contains:
+                        - 'привет'
+                        - 'мир'
+                        - 'ä'
+                condition: sel1 or sel2
+        """)
+    ) == ["fieldA rlike '(?imu)привет' AND fieldB rlike 'ПРИВЕТ' OR "
+          "fieldC rlike '(?iu).*(привет|мир|ä).*'"]
