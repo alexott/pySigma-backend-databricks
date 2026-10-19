@@ -124,10 +124,13 @@ class DatabricksBackend(TextQueryBackend):
     re_flag_prefix: bool = True
 
     # cidr expressions
-    # TODO: fix that
     cidr_wildcard: ClassVar[Optional[str]] = "*"  # Character used as single wildcard
-    # CIDR expression query as format string with placeholders {field} = {value}
-    cidr_expression: ClassVar[Optional[str]] = "cidrmatch({field}, '{value}')"
+    # CIDR expression query as format string with placeholders {field}, {value} (whole CIDR), {network},
+    # {prefixlen} and {netmask}. Uses built-in Databricks functions (DBR 18.2+); try_ip_as_binary turns
+    # invalid IP values into NULL instead of failing the query (TODO: NULL also doesn't match under NOT,
+    # consider wrapping into coalesce(..., false)). Override with the cidr_expression backend
+    # option for other Spark SQL engines, e.g. "cidrmatch({field}, '{value}')" with a custom UDF.
+    cidr_expression: ClassVar[Optional[str]] = "ip_cidr_contains('{value}', try_ip_as_binary({field}))"
     # CIDR expression query as format string with placeholders {field} = in({list})
     cidr_in_list_expression: ClassVar[Optional[str]] = "{field} in ({value})"
 
@@ -200,11 +203,14 @@ class DatabricksBackend(TextQueryBackend):
                  raw_log_field: Optional[str] = None, table_name: Optional[str] = None,
                  lookback: str = "25 HOUR", schedule: str = "24h",
                  compute_group: str = "automatic", default_fidelity: Optional[str] = None,
-                 default_category: str = "Static Signature", **kwargs):
-        """Initialize Databricks backend with optional Lakewatch and raw-log options."""
+                 default_category: str = "Static Signature", cidr_expression: Optional[str] = None,
+                 **kwargs):
+        """Initialize Databricks backend with optional Lakewatch, raw-log and CIDR options."""
         super().__init__(processing_pipeline, collect_errors, **kwargs)
         if raw_log_field:
             self.raw_log_field = raw_log_field
+        if cidr_expression:
+            self.cidr_expression = cidr_expression
         self.table_name = table_name
         self.lookback = lookback
         self.schedule = schedule

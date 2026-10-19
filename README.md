@@ -4,7 +4,6 @@
 
 Status: **experimental**, work in progress:
 
-* Although `cidrmatch` is generated, you still need to provide corresponding function as UDF (I'll add example later)
 * Requires more testing
 
 # pySigma Databricks Backend
@@ -20,6 +19,37 @@ It supports the following output formats:
 * dbsql: Databricks SQL queries with rules metadata (title, status) embedded as comment
 * detection_yaml: Yaml markup for my own detection framework
 * lakewatch: Lakewatch detection rules (`kind: Rule` YAML), batch by default
+
+## CIDR Matching
+
+The `|cidr` modifier is converted using the built-in Databricks IP functions
+[`ip_cidr_contains`](https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_cidr_contains)
+and `try_ip_as_binary` (Databricks Runtime 18.2+, IPv4 and IPv6). Field values that aren't valid
+IP addresses evaluate to `NULL` instead of failing the query. Note that, following SQL `NULL`
+semantics, such rows don't match the negated condition either (e.g. `condition: not sel`), so they
+are excluded from both `sel` and `not sel` results:
+
+```yaml
+detection:
+    sel:
+        src_ip|cidr: 192.168.0.0/16
+    condition: sel
+```
+Generates: `ip_cidr_contains('192.168.0.0/16', try_ip_as_binary(src_ip))`
+
+For other Spark SQL engines (e.g. open source Apache Spark), override the expression with the
+`cidr_expression` option. It's a format string with the placeholders `{field}`, `{value}`
+(whole CIDR), `{network}`, `{prefixlen}` and `{netmask}`:
+
+```bash
+sigma convert -t databricks -O "cidr_expression=cidrmatch({field}, '{value}')" rule.yml
+```
+
+```python
+backend = DatabricksBackend(cidr_expression="cidrmatch({field}, '{value}')")
+```
+
+You need to register the corresponding function (here `cidrmatch`) as a UDF yourself.
 
 ## Unbound Keyword Search
 

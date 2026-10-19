@@ -175,7 +175,44 @@ def test_databricks_sigma_cidr_query(databricks_sigma_backend: DatabricksBackend
                     field|cidr: 192.168.0.0/16
                 condition: sel
         """)
-    ) == ["cidrmatch(field, '192.168.0.0/16')"]
+    ) == ["ip_cidr_contains('192.168.0.0/16', try_ip_as_binary(field))"]
+
+
+def test_databricks_sigma_cidr_ipv6_query(databricks_sigma_backend: DatabricksBackend):
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    field|cidr: 2001:db8::/32
+                condition: sel
+        """)
+    ) == ["ip_cidr_contains('2001:db8::/32', try_ip_as_binary(field))"]
+
+
+def test_databricks_sigma_cidr_custom_expression():
+    backend = DatabricksBackend(cidr_expression="cidrmatch({field}, '{value}')")
+    assert backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    field|cidr:
+                        - 192.168.0.0/16
+                        - 10.0.0.0/8
+                condition: sel
+        """)
+    ) == ["cidrmatch(field, '192.168.0.0/16') OR cidrmatch(field, '10.0.0.0/8')"]
+    # Override is per instance and doesn't leak into the class default
+    assert DatabricksBackend.cidr_expression == "ip_cidr_contains('{value}', try_ip_as_binary({field}))"
 
 
 def test_databricks_sigma_field_name_with_whitespace(databricks_sigma_backend: DatabricksBackend):
