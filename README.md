@@ -57,7 +57,8 @@ The backend supports Sigma rules with unbound keywords (values without field nam
 
 ### Configuration
 
-By default, the backend looks for keywords in a field named `raw`. You can customize this:
+By default, the backend looks for keywords in a field named `raw` (`raw_data` when the
+target is OCSF, see [OCSF field rendering](#ocsf-field-rendering)). You can customize this:
 
 **Command Line:**
 ```bash
@@ -156,6 +157,26 @@ sigma convert -t databricks -f lakewatch -p ocsf \
 Sigma metadata maps to Lakewatch as: `title`→`displayName`, `description`→`comment`/`objective`,
 `level`→`severity`, `status`→`fidelity`, and `attack.*` tags→`mitre`. Only batch rules are
 generated (streaming is future work).
+
+## OCSF field rendering
+
+When the target schema is OCSF, the dotted field names produced by the OCSF pipeline are rendered
+according to the OCSF attribute types (tables bundled from OCSF 1.9.0, refresh them with
+`python scripts/gen_ocsf_attributes.py [VERSION]`):
+
+* Paths through OCSF **array** attributes (`hashes`, `answers`, `evidences`, `resources`, …) are
+  matched against any element:
+  `process.file.hashes.value: abc` → `exists(process.file.hashes, x0 -> lower(x0.value) = lower('abc'))`.
+  Each condition gets its own `exists()`, so two conditions on the same array may match
+  different elements.
+* Paths into **free-form** attributes (`unmapped`, `xattributes` and `json_t` attributes such as
+  `data`) use the Databricks JSON path syntax, which works for VARIANT and JSON string columns:
+  `unmapped.Initiated: 'true'` → `lower(unmapped:Initiated::string) = lower('true')`. Numbers and
+  booleans are compared via `try_cast(... AS DOUBLE)` / `try_cast(... AS BOOLEAN)`.
+* Unbound keywords search the OCSF `raw_data` field unless `raw_log_field` is set explicitly.
+
+This is controlled by the `ocsf` option (`-O ocsf=true|false|auto`). With the default `auto` it is
+enabled for the `lakewatch` format and for rules processed by the OCSF pipeline (`-p ocsf`).
 
 ## Maintainer
 

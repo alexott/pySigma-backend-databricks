@@ -206,5 +206,6 @@ def test_end_to_end_with_real_ocsf_pipeline():
     doc = yaml.safe_load(out)
     sql = doc["spec"]["input"]["batch"]["sql"]
     assert "FROM process_activity" in sql               # derived from injected type_uid
-    assert "endswith(lower(process.name)" in sql        # OCSF field mapping applied
+    # OCSF field mapping applied (process.name in older pipeline releases, process.file.path later)
+    assert "endswith(lower(process." in sql and "lower(Image)" not in sql
     assert doc["spec"]["metadata"]["mitre"][0]["technique"] == "Command and Scripting Interpreter"
