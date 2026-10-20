@@ -7,7 +7,8 @@ from typing import Dict, List, Optional
 from sigma.rule import SigmaDetection, SigmaDetectionItem, SigmaRule
 
 # OCSF class_uid -> Lakewatch gold-table name.
-# Grounded in the Lakewatch gold-table list (OCSF class names in snake_case).
+# Grounded in the Lakewatch gold-table list (OCSF class names in snake_case);
+# class_uids follow the OCSF schema (category_uid * 1000 + class id).
 OCSF_CLASS_UID_TO_TABLE: Dict[int, str] = {
     1001: "file_activity",
     1006: "scheduled_job_activity",
@@ -29,8 +30,8 @@ OCSF_CLASS_UID_TO_TABLE: Dict[int, str] = {
     4007: "ssh_activity",
     4009: "email_activity",
     6003: "api_activity",
-    6004: "datastore_activity",
-    6005: "file_hosting_activity",
+    6005: "datastore_activity",
+    6006: "file_hosting_activity",
 }
 
 GOLD_TABLES: frozenset[str] = frozenset(OCSF_CLASS_UID_TO_TABLE.values())

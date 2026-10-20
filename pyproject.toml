@@ -46,7 +46,7 @@ include = ["sigma*"]
 namespaces = true
 
 [tool.setuptools.package-data]
-"sigma.backends.databricks" = ["mitre_techniques.json"]
+"sigma.backends.databricks" = ["mitre_techniques.json", "ocsf_attributes.json"]
 
 [tool.pylint.'MESSAGES CONTROL']
 disable = "missing-function-docstring,missing-module-docstring,line-too-long,too-many-lines"

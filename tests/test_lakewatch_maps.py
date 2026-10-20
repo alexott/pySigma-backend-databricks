@@ -48,6 +48,15 @@ def test_resolve_from_class_name_keeps_activity_suffix():
     assert resolve_ocsf_table(rule) == "api_activity"
 
 
+def test_application_class_uids_follow_ocsf():
+    # OCSF: 6005 Datastore Activity, 6006 File Hosting Activity (6004 is Web Resource Access).
+    assert OCSF_CLASS_UID_TO_TABLE[6005] == "datastore_activity"
+    assert OCSF_CLASS_UID_TO_TABLE[6006] == "file_hosting_activity"
+    assert 6004 not in OCSF_CLASS_UID_TO_TABLE
+    rule = _rule("            sel:\n                type_uid: 600601")
+    assert resolve_ocsf_table(rule) == "file_hosting_activity"
+
+
 def test_resolve_unmappable_returns_none():
     rule = _rule("            sel:\n                type_uid: 600200")  # class 6002, no gold table
     assert resolve_ocsf_table(rule) is None

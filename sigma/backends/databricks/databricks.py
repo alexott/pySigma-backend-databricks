@@ -1,5 +1,6 @@
 """Databricks/Apache Spark SQL backend for pySigma, including Lakewatch output format."""
 
+import copy
 import json
 import re
 from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple, Type, Union
@@ -13,6 +14,12 @@ from sigma.exceptions import SigmaConversionError
 from sigma.rule import SigmaLevel, SigmaRule
 from sigma.types import (
     CompareOperators,
+    SigmaBool,
+    SigmaCompareExpression,
+    SigmaExists,
+    SigmaFieldReference,
+    SigmaNull,
+    SigmaNumber,
     SigmaRegularExpression,
     SigmaRegularExpressionFlag,
     SigmaString,
@@ -25,6 +32,7 @@ from .lakewatch_maps import (
     build_mitre_mapping,
     resolve_ocsf_table,
 )
+from .ocsf_fields import OcsfPath, split_ocsf_path
 
 
 class _LakewatchDumper(yaml.SafeDumper):
@@ -190,6 +198,10 @@ class DatabricksBackend(TextQueryBackend):
 
     # Field name containing the raw/full log line for unbound keyword searches
     raw_log_field: str = "raw"
+    # Raw event field of OCSF events, used for keyword searches when the target is OCSF
+    ocsf_raw_log_field: ClassVar[str] = "raw_data"
+    # Placeholder field name for the element-level part of an OCSF field rendered by the backend
+    _ocsf_inner_field: ClassVar[str] = "\x00ocsf_inner_field"
 
     # Query finalization: appending and concatenating deferred query part
     # String used as separator between main query and deferred parts
@@ -204,11 +216,19 @@ class DatabricksBackend(TextQueryBackend):
                  lookback: str = "25 HOUR", schedule: str = "24h",
                  compute_group: str = "automatic", default_fidelity: Optional[str] = None,
                  default_category: str = "Static Signature", cidr_expression: Optional[str] = None,
+                 ocsf: Optional[Union[bool, str]] = None,
                  **kwargs):
-        """Initialize Databricks backend with optional Lakewatch, raw-log and CIDR options."""
+        """Initialize Databricks backend with optional Lakewatch, raw-log, CIDR and OCSF options."""
         super().__init__(processing_pipeline, collect_errors, **kwargs)
+        self._raw_log_field_set = bool(raw_log_field)
         if raw_log_field:
             self.raw_log_field = raw_log_field
+        # None: render OCSF array/free-form fields only for the lakewatch format or rules processed
+        # by the OCSF pipeline; True/False force it on/off.
+        self.ocsf = self._parse_bool_option("ocsf", ocsf)
+        self._current_rule: Optional[SigmaRule] = None
+        self._current_format: Optional[str] = None
+        self._field_overrides: Dict[str, str] = {}
         if cidr_expression:
             self.cidr_expression = cidr_expression
         self.table_name = table_name
@@ -217,6 +237,124 @@ class DatabricksBackend(TextQueryBackend):
         self.compute_group = compute_group
         self.default_fidelity = default_fidelity
         self.default_category = default_category
+
+    @staticmethod
+    def _parse_bool_option(name: str, value: Optional[Union[bool, str]]) -> Optional[bool]:
+        """Parse a tri-state backend option given as bool or string (as passed by sigma-cli)."""
+        if value is None or isinstance(value, bool):
+            return value
+        normalized = str(value).strip().lower()
+        if normalized in ("", "auto"):
+            return None
+        if normalized in ("true", "yes", "1"):
+            return True
+        if normalized in ("false", "no", "0"):
+            return False
+        raise ValueError(f"Invalid value for backend option {name}: {value!r} (expected true, false or auto)")
+
+    def convert_rule(self, rule: SigmaRule, *args, **kwargs):
+        """Convert a rule, remembering it and the output format to decide on OCSF field rendering."""
+        output_format = args[0] if args else kwargs.get("output_format")
+        self._current_rule = rule
+        self._current_format = output_format or self.default_format
+        return super().convert_rule(rule, *args, **kwargs)
+
+    def _ocsf_enabled(self) -> bool:
+        """Whether field names are OCSF attribute paths that need array/free-form aware rendering."""
+        if self.ocsf is not None:
+            return self.ocsf
+        if self._current_format == "lakewatch":
+            return True
+        rule = self._current_rule
+        return rule is not None and any(
+            item_id.startswith("ocsf_") for item_id in getattr(rule, "applied_processing_items", ())
+        )
+
+    def _raw_field(self) -> str:
+        """Field used for keyword searches: the explicit option, OCSF raw_data, or the default."""
+        if not self._raw_log_field_set and self._ocsf_enabled():
+            return self.ocsf_raw_log_field
+        return self.raw_log_field
+
+    def _ocsf_path(self, field: Optional[str]) -> Optional[OcsfPath]:
+        if not field or not self._ocsf_enabled():
+            return None
+        return split_ocsf_path(field)
+
+    @staticmethod
+    def _struct_ref(base: Optional[str], segments: Tuple[str, ...]) -> str:
+        """Dotted struct reference, backtick-quoting segments that aren't plain identifiers."""
+        parts = [base] if base else []
+        parts.extend(seg if re.fullmatch(r"\w+", seg) else "`" + seg.replace("`", "``") + "`"
+                     for seg in segments)
+        return ".".join(parts)
+
+    @staticmethod
+    def _json_path(keys: Tuple[str, ...]) -> str:
+        """Databricks JSON path (as used after ':') for keys inside a VARIANT or JSON string column."""
+        path = ""
+        for i, key in enumerate(keys):
+            if re.fullmatch(r"[A-Za-z_]\w*", key):
+                path += key if i == 0 else "." + key
+            else:
+                path += "['" + key.replace("\\", "\\\\").replace("'", "\\'") + "']"
+        return path
+
+    @staticmethod
+    def _json_cast(expr: str, value: Any) -> str:
+        """Cast a free-form (VARIANT/JSON) value to the type the condition compares against."""
+        if isinstance(value, (SigmaNumber, SigmaCompareExpression)):
+            return f"try_cast({expr} AS DOUBLE)"
+        if isinstance(value, SigmaBool):
+            return f"try_cast({expr} AS BOOLEAN)"
+        if isinstance(value, (SigmaNull, SigmaExists)):
+            return expr
+        return f"{expr}::string"
+
+    def _render_ocsf_path(self, path: OcsfPath, value: Any) -> Tuple[List[Tuple[str, str]], str]:
+        """Render an OCSF path as exists() levels (array, lambda variable) and the element expression."""
+        levels: List[Tuple[str, str]] = []
+        base: Optional[str] = None
+        for depth, segments in enumerate(path.arrays):
+            var = f"x{depth}"
+            levels.append((self._struct_ref(base, segments), var))
+            base = var
+        leaf = self._struct_ref(base, path.leaf)
+        if path.json_path:
+            leaf = self._json_cast(f"{leaf}:{self._json_path(path.json_path)}", value)
+        return levels, leaf
+
+    @staticmethod
+    def _wrap_exists(levels: List[Tuple[str, str]], expr: Any) -> Any:
+        """Wrap an element-level expression into nested exists() over the OCSF arrays."""
+        if not isinstance(expr, str):
+            return expr
+        for collection, var in reversed(levels):
+            expr = f"exists({collection}, {var} -> {expr})"
+        return expr
+
+    def escape_and_quote_field(self, field_name: str) -> str:
+        """Escape and quote a field name; element-level OCSF expressions are used as prepared."""
+        override = self._field_overrides.get(field_name)
+        if override is not None:
+            return override
+        return super().escape_and_quote_field(field_name)
+
+    def convert_condition_field_eq_val(self, cond: ConditionFieldEqualsValueExpression,
+                                       state: ConversionState) -> Union[str, DeferredQueryExpression]:
+        """Convert field = value conditions, rendering OCSF array and free-form fields."""
+        path = self._ocsf_path(cond.field)
+        if path is None or isinstance(cond.value, SigmaFieldReference):
+            return super().convert_condition_field_eq_val(cond, state)
+        levels, leaf = self._render_ocsf_path(path, cond.value)
+        inner = copy.copy(cond)
+        inner.field = self._ocsf_inner_field
+        self._field_overrides[self._ocsf_inner_field] = leaf
+        try:
+            expr = super().convert_condition_field_eq_val(inner, state)
+        finally:
+            del self._field_overrides[self._ocsf_inner_field]
+        return self._wrap_exists(levels, expr)
 
     def make_sql_string(self, s: SigmaString):
         """Convert a SigmaString to a quoted SQL string literal."""
@@ -316,11 +454,11 @@ class DatabricksBackend(TextQueryBackend):
 
     def convert_condition_val_str(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
         """Convert unbound string values (keywords without field names)."""
-        if not self.raw_log_field:
+        if not self._raw_field():
             raise ValueError("Unbound keyword search requires raw_log_field to be configured")
 
         # Use raw log field for keyword search
-        field = self.escape_and_quote_field(self.raw_log_field)
+        field = self.escape_and_quote_field(self._raw_field())
         value = cond.value
 
         # Type narrowing: ensure value is SigmaString
@@ -361,25 +499,25 @@ class DatabricksBackend(TextQueryBackend):
 
     def convert_condition_val_re(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
         """Convert unbound regex values."""
-        if not self.raw_log_field:
+        if not self._raw_field():
             raise ValueError("Unbound regex search requires raw_log_field to be configured")
 
         # Type narrowing: ensure value is SigmaRegularExpression
         if not isinstance(cond.value, SigmaRegularExpression):
             raise TypeError(f"Expected SigmaRegularExpression, got {type(cond.value)}")
 
-        field = self.escape_and_quote_field(self.raw_log_field)
+        field = self.escape_and_quote_field(self._raw_field())
         if self.re_expression:
             return self.re_expression.format(field=field, regex=self.convert_value_re(cond.value, state))
         raise ValueError("re_expression is not defined")
 
     def convert_condition_val_num(self, cond, state: ConversionState) -> Union[str, DeferredQueryExpression]:
         """Convert unbound numeric values."""
-        if not self.raw_log_field:
+        if not self._raw_field():
             raise ValueError("Unbound numeric search requires raw_log_field to be configured")
 
         # Convert number to string search in raw log
-        field = self.escape_and_quote_field(self.raw_log_field)
+        field = self.escape_and_quote_field(self._raw_field())
         value = self.make_sql_string(SigmaString(str(cond.value)))
         if self.contains_expression:
             return self.contains_expression.format(field=field, value=value)
@@ -505,10 +643,15 @@ class DatabricksBackend(TextQueryBackend):
             # Build the optimized regex pattern
             regex_pattern = self._build_regex_pattern(pattern_type, values)
 
-            # Use the re_expression format with escaped field name
-            field = self.escape_and_quote_field(field_name)
+            # Use the re_expression format with escaped field name (or OCSF element expression)
+            path = self._ocsf_path(field_name)
+            levels: List[Tuple[str, str]] = []
+            if path is None:
+                field = self.escape_and_quote_field(field_name)
+            else:
+                levels, field = self._render_ocsf_path(path, SigmaString(""))
             if self.re_expression:
-                return self.re_expression.format(field=field, regex=regex_pattern)
+                return self._wrap_exists(levels, self.re_expression.format(field=field, regex=regex_pattern))
             raise ValueError("re_expression is not defined")
 
         # Fall back to default OR conversion
