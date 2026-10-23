@@ -18,7 +18,8 @@ It supports the following output formats:
 * default: plain Databricks/Apache Spark SQL queries
 * dbsql: Databricks SQL queries with rules metadata (title, status) embedded as comment
 * detection_yaml: Yaml markup for my own detection framework
-* lakewatch: Lakewatch detection rules (`kind: Rule` YAML), batch by default
+* lakewatch: Lakewatch detection rules in the v1 format (`kind: Rule` YAML), batch by default
+* lakewatch_v2: Lakewatch detection rules in the v2 (Beta) format, batch by default
 
 ## CIDR Matching
 
@@ -158,6 +159,36 @@ Sigma metadata maps to Lakewatch as: `title`→`displayName`, `description`→`c
 `level`→`severity`, `status`→`fidelity`, and `attack.*` tags→`mitre`. Only batch rules are
 generated (streaming is future work).
 
+### Lakewatch v2 format
+
+The `lakewatch` format generates rules in the v1 format. Use `-f lakewatch_v2` for the v2 (Beta)
+format, where each rule is a Unity Catalog governed resource:
+
+```bash
+sigma convert -t databricks -f lakewatch_v2 -p ocsf \
+  -O catalog_name=main -O schema_name=security -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
+```
+
+The `table_name`, `schedule`, `compute_group`, `default_fidelity` and `default_category` options
+work as for v1. The v2 format has these additional options:
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `catalog_name` | *(required)* | `catalog_name` of the rule, also used as `batch.sql.default_catalog_name` to resolve unqualified tables. Conversion fails if unset or empty. |
+| `schema_name` | *(required)* | `schema_name` of the rule, also used as `batch.sql.default_schema_name`. Conversion fails if unset or empty. |
+| `warehouse_id` | *(none)* | `batch.warehouse_id`: SQL warehouse that runs the rule. |
+| `extend_lookback` | *(none)* | `timerange.extend_lookback`: widens the time window beyond the schedule. |
+
+Differences from v1:
+
+* The SQL filters on `IN_TIMERANGE(time)`, which follows the schedule, instead of a fixed
+  `lookback` interval (the `lookback` option is ignored).
+* `rule_name` is derived from the title in snake_case (e.g. `Encoded PowerShell` →
+  `encoded_powershell`). Duplicate names within one output get `_2`, `_3`, … suffixes.
+* Up to three Sigma `references` (each up to 512 characters) are emitted as `references`.
+* Fidelity values use the v2 enum names (`FIDELITY_INVESTIGATIVE`, …). `default_fidelity` accepts
+  both `Investigative` and `FIDELITY_INVESTIGATIVE`.
+
 ## OCSF field rendering
 
 When the target schema is OCSF, the dotted field names produced by the OCSF pipeline are rendered
@@ -176,7 +207,7 @@ according to the OCSF attribute types (tables bundled from OCSF 1.9.0, refresh t
 * Unbound keywords search the OCSF `raw_data` field unless `raw_log_field` is set explicitly.
 
 This is controlled by the `ocsf` option (`-O ocsf=true|false|auto`). With the default `auto` it is
-enabled for the `lakewatch` format and for rules processed by the OCSF pipeline (`-p ocsf`).
+enabled for the `lakewatch` and `lakewatch_v2` formats and for rules processed by the OCSF pipeline (`-p ocsf`).
 
 ## Maintainer
 

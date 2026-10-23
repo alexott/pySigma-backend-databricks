@@ -137,3 +137,45 @@ def resolve_ocsf_table(rule: SigmaRule) -> Optional[str]:
         if norm in GOLD_TABLES:
             return norm
     return None
+
+
+# Lakewatch v2 limits on the rule name and the references list.
+V2_RULE_NAME_MAX_LEN = 256
+V2_MAX_REFERENCES = 3
+V2_REFERENCE_MAX_LEN = 512
+
+
+def to_v2_fidelity(fidelity: str) -> str:
+    """Convert a v1 fidelity value (``Investigative``) into the v2 enum (``FIDELITY_INVESTIGATIVE``)."""
+    value = fidelity.strip().upper()
+    return value if value.startswith("FIDELITY_") else f"FIDELITY_{value}"
+
+
+def to_v2_mitre(entries: List[dict]) -> List[dict]:
+    """Convert v1 MITRE entries to v2: snake_case keys, empty sub-technique fields dropped."""
+    renames = {
+        "techniqueId": "technique_id",
+        "subTechnique": "sub_technique",
+        "subTechniqueId": "sub_technique_id",
+    }
+    result: List[dict] = []
+    for entry in entries:
+        converted: Dict[str, str] = {}
+        for key, value in entry.items():
+            key = renames.get(key, key)
+            if key.startswith("sub_technique") and not value:
+                continue
+            converted[key] = value
+        result.append(converted)
+    return result
+
+
+def to_v2_rule_name(title: str) -> str:
+    """Derive a Unity Catalog-safe snake_case rule name from a rule title."""
+    name = "_".join(re.findall(r"[a-z0-9]+", title.lower()))[:V2_RULE_NAME_MAX_LEN].strip("_")
+    return name or "sigma_rule"
+
+
+def to_v2_references(references: List[str]) -> List[str]:
+    """Select the references that fit into the v2 limits (at most 3 URLs, 512 chars each)."""
+    return [ref for ref in references if len(ref) <= V2_REFERENCE_MAX_LEN][:V2_MAX_REFERENCES]

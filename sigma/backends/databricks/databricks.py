@@ -29,8 +29,13 @@ from sigma.types import (
 from .lakewatch_maps import (
     FIDELITY_MAP,
     SEVERITY_MAP,
+    V2_RULE_NAME_MAX_LEN,
     build_mitre_mapping,
     resolve_ocsf_table,
+    to_v2_fidelity,
+    to_v2_mitre,
+    to_v2_references,
+    to_v2_rule_name,
 )
 from .ocsf_fields import OcsfPath, split_ocsf_path
 
@@ -59,7 +64,8 @@ class DatabricksBackend(TextQueryBackend):
         "default": "Plain Databricks SQL queries",
         "dbsql": "Databricks SQL queries with additional metadata as comments",
         "detection_yaml": "Yaml markup for Alex's own detection framework",
-        "lakewatch": "Lakewatch detection rules (kind: Rule YAML)",
+        "lakewatch": "Lakewatch detection rules (v1 kind: Rule YAML)",
+        "lakewatch_v2": "Lakewatch detection rules (v2 format, Unity Catalog governed)",
     }
     # TODO: does the backend requires that a processing pipeline is provided? This information can be used by user
     # interface programs like Sigma CLI to warn users about inappropriate usage of the backend.
@@ -217,6 +223,8 @@ class DatabricksBackend(TextQueryBackend):
                  compute_group: str = "automatic", default_fidelity: Optional[str] = None,
                  default_category: str = "Static Signature", cidr_expression: Optional[str] = None,
                  ocsf: Optional[Union[bool, str]] = None,
+                 catalog_name: Optional[str] = None, schema_name: Optional[str] = None,
+                 warehouse_id: Optional[str] = None, extend_lookback: Optional[str] = None,
                  **kwargs):
         """Initialize Databricks backend with optional Lakewatch, raw-log, CIDR and OCSF options."""
         super().__init__(processing_pipeline, collect_errors, **kwargs)
@@ -237,6 +245,10 @@ class DatabricksBackend(TextQueryBackend):
         self.compute_group = compute_group
         self.default_fidelity = default_fidelity
         self.default_category = default_category
+        self.catalog_name = catalog_name
+        self.schema_name = schema_name
+        self.warehouse_id = warehouse_id
+        self.extend_lookback = extend_lookback
 
     @staticmethod
     def _parse_bool_option(name: str, value: Optional[Union[bool, str]]) -> Optional[bool]:
@@ -263,7 +275,7 @@ class DatabricksBackend(TextQueryBackend):
         """Whether field names are OCSF attribute paths that need array/free-form aware rendering."""
         if self.ocsf is not None:
             return self.ocsf
-        if self._current_format == "lakewatch":
+        if self._current_format in ("lakewatch", "lakewatch_v2"):
             return True
         rule = self._current_rule
         return rule is not None and any(
@@ -660,26 +672,41 @@ class DatabricksBackend(TextQueryBackend):
     # TODO: implement custom methods for query elements not covered by the default backend base.
     # Documentation: https://sigmahq-pysigma.readthedocs.io/en/latest/Backends.html
 
-    def finalize_query_lakewatch(self, rule: SigmaRule, query: str, index: int,
-                                 state: ConversionState) -> Any:
-        """Build a Lakewatch batch rule document for a single Sigma query."""
+    def _lakewatch_table(self, rule: SigmaRule) -> str:
+        """FROM table of a Lakewatch rule: the table_name option or the table of the OCSF class."""
         table = self.table_name or resolve_ocsf_table(rule)
         if not table:
             raise SigmaConversionError(
                 f"Cannot determine Lakewatch table for rule '{rule.title}': no OCSF "
                 "class_uid/type_uid/class_name present and no -O table_name given."
             )
-        rule_status = (rule.status.name if rule.status else "test").lower()
+        return table
+
+    @staticmethod
+    def _rule_status(rule: SigmaRule) -> str:
+        return (rule.status.name if rule.status else "test").lower()
+
+    @staticmethod
+    def _lakewatch_severity(rule: SigmaRule) -> str:
+        return SEVERITY_MAP.get(rule.level.name.lower(), "Medium") if rule.level else "Medium"
+
+    def _lakewatch_fidelity(self, rule_status: str) -> str:
+        return self.default_fidelity or FIDELITY_MAP.get(rule_status, "Development")
+
+    def finalize_query_lakewatch(self, rule: SigmaRule, query: str, index: int,
+                                 state: ConversionState) -> Any:
+        """Build a Lakewatch v1 batch rule document for a single Sigma query."""
+        table = self._lakewatch_table(rule)
+        rule_status = self._rule_status(rule)
         sql = "" if not query.strip() else (
             f"SELECT *\nFROM {table}\n"
             f"WHERE time >= CURRENT_TIMESTAMP() - INTERVAL {self.lookback}\n"
             f"  AND ({query})"
         )
-        severity = SEVERITY_MAP.get(rule.level.name.lower(), "Medium") if rule.level else "Medium"
         spec_metadata: Dict[str, Any] = {
             "objective": rule.description or rule.title,
-            "severity": severity,
-            "fidelity": self.default_fidelity or FIDELITY_MAP.get(rule_status, "Development"),
+            "severity": self._lakewatch_severity(rule),
+            "fidelity": self._lakewatch_fidelity(rule_status),
             "category": self.default_category,
         }
         mitre = build_mitre_mapping(rule)
@@ -706,23 +733,105 @@ class DatabricksBackend(TextQueryBackend):
         }
         return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
 
-    def finalize_output_lakewatch(self, queries: List[str]) -> Any:
-        """Assemble per-rule Lakewatch documents into one multi-document YAML file."""
-        documents: List[str] = []
+    @staticmethod
+    def _lakewatch_documents(queries: List[str]) -> List[Dict[str, Any]]:
+        """Rule documents of the per-rule envelopes, without deprecated, unsupported and empty rules."""
+        documents: List[Dict[str, Any]] = []
         for query in queries:
             envelope = json.loads(query)
             if envelope["status"] in ("deprecated", "unsupported") or not envelope["sql"]:
                 continue
-            documents.append(
-                yaml.dump(
-                    envelope["doc"],
-                    Dumper=_LakewatchDumper,
-                    sort_keys=False,
-                    default_flow_style=False,
-                    allow_unicode=True,
-                )
+            documents.append(envelope["doc"])
+        return documents
+
+    @staticmethod
+    def _dump_lakewatch_documents(documents: List[Dict[str, Any]]) -> str:
+        """Render rule documents as one multi-document YAML file."""
+        return "\n---\n".join(
+            yaml.dump(
+                doc,
+                Dumper=_LakewatchDumper,
+                sort_keys=False,
+                default_flow_style=False,
+                allow_unicode=True,
             )
-        return "\n---\n".join(documents)
+            for doc in documents
+        )
+
+    def finalize_output_lakewatch(self, queries: List[str]) -> Any:
+        """Assemble per-rule Lakewatch v1 documents into one multi-document YAML file."""
+        return self._dump_lakewatch_documents(self._lakewatch_documents(queries))
+
+    def finalize_query_lakewatch_v2(self, rule: SigmaRule, query: str, index: int,
+                                    state: ConversionState) -> Any:
+        """Build a Lakewatch v2 batch rule document for a single Sigma query."""
+        catalog_name = (self.catalog_name or "").strip()
+        schema_name = (self.schema_name or "").strip()
+        if not catalog_name or not schema_name:
+            raise SigmaConversionError(
+                "Lakewatch v2 rules require the target Unity Catalog location: "
+                "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
+            )
+        table = self._lakewatch_table(rule)
+        rule_status = self._rule_status(rule)
+        # The rule time window follows the schedule via IN_TIMERANGE(); use the
+        # extend_lookback option to widen it.
+        sql = "" if not query.strip() else (
+            f"SELECT *\nFROM {table}\n"
+            f"WHERE IN_TIMERANGE(time)\n"
+            f"  AND ({query})"
+        )
+        doc: Dict[str, Any] = {
+            "catalog_name": catalog_name,
+            "schema_name": schema_name,
+            "rule_name": to_v2_rule_name(rule.title),
+            "description": rule.description or rule.title,
+            "severity": self._lakewatch_severity(rule),
+            "fidelity": to_v2_fidelity(self._lakewatch_fidelity(rule_status)),
+            "category": self.default_category,
+            "objective": rule.description or rule.title,
+        }
+        references = to_v2_references(rule.references)
+        if references:
+            doc["references"] = references
+        doc["schedule"] = {
+            "at_least_every": self.schedule,
+            "compute_group": self.compute_group,
+            "enabled": True,
+        }
+        if self.extend_lookback:
+            doc["timerange"] = {"extend_lookback": self.extend_lookback}
+        batch: Dict[str, Any] = {}
+        if self.warehouse_id:
+            batch["warehouse_id"] = self.warehouse_id
+        # Unqualified table names resolve against the catalog and schema of the rule.
+        batch["sql"] = {
+            "query": sql,
+            "default_catalog_name": catalog_name,
+            "default_schema_name": schema_name,
+        }
+        doc["batch"] = batch
+        doc["output"] = {"summary": rule.title, "default_context": True}
+        mitre = to_v2_mitre(build_mitre_mapping(rule))
+        if mitre:
+            doc["mitre"] = mitre
+        return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
+
+    def finalize_output_lakewatch_v2(self, queries: List[str]) -> Any:
+        """Assemble per-rule Lakewatch v2 documents into one multi-document YAML file."""
+        documents = self._lakewatch_documents(queries)
+        # rule_name must be unique within the target schema: suffix duplicates.
+        used = set()
+        for doc in documents:
+            name = candidate = doc["rule_name"]
+            count = 1
+            while candidate in used:
+                count += 1
+                suffix = f"_{count}"
+                candidate = name[:V2_RULE_NAME_MAX_LEN - len(suffix)] + suffix
+            used.add(candidate)
+            doc["rule_name"] = candidate
+        return self._dump_lakewatch_documents(documents)
 
     @staticmethod
     def finalize_query_dbsql(rule: SigmaRule, query: str, index: int, state: ConversionState) -> Any:
