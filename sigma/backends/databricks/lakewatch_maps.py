@@ -2,6 +2,7 @@
 import json
 import os
 import re
+from importlib.metadata import PackageNotFoundError, version
 from typing import Dict, List, Optional
 
 from sigma.rule import SigmaDetection, SigmaDetectionItem, SigmaRule
@@ -143,6 +144,57 @@ def resolve_ocsf_table(rule: SigmaRule) -> Optional[str]:
 V2_RULE_NAME_MAX_LEN = 256
 V2_MAX_REFERENCES = 3
 V2_REFERENCE_MAX_LEN = 512
+# Lakewatch v2 limits on the text fields and annotations.
+V2_DESCRIPTION_MAX_LEN = 4096
+V2_OBJECTIVE_MAX_LEN = 65536
+V2_RUNBOOK_MAX_LEN = 4096
+V2_ANNOTATION_VALUE_MAX_LEN = 256
+
+# Sigma status name (lower-case) -> Lakewatch v2 fidelity. Converted rules are untested against the
+# target data, so they start at Investigative at most; everything else is Development.
+V2_FIDELITY_MAP: Dict[str, str] = {
+    "stable": "Investigative",
+}
+
+_ELLIPSIS = "..."
+
+
+def truncate(text: str, limit: int) -> str:
+    """Shorten text to at most ``limit`` characters, marking a cut with ``...``."""
+    return text if len(text) <= limit else text[:limit - len(_ELLIPSIS)] + _ELLIPSIS
+
+
+def _converter_version() -> str:
+    try:
+        return version("pySigma-backend-databricks")
+    except PackageNotFoundError:  # pragma: no cover - running from a source tree without metadata
+        return "unknown"
+
+
+def build_v2_runbook(rule: SigmaRule) -> Optional[str]:
+    """Runbook text listing the Sigma false positives, or None if the rule has none."""
+    falsepositives = [str(fp).strip() for fp in rule.falsepositives or [] if str(fp).strip()]
+    if not falsepositives:
+        return None
+    text = "Known false positives:\n" + "\n".join(f"- {fp}" for fp in falsepositives)
+    return truncate(text, V2_RUNBOOK_MAX_LEN)
+
+
+def build_v2_annotations(rule: SigmaRule) -> Dict[str, str]:
+    """Provenance annotations of a converted rule (Sigma id, status, author, tags, converter)."""
+    tags = [f"{tag.namespace}.{tag.name}" for tag in rule.tags if tag.namespace != "attack"]
+    candidates = {
+        "sigma_id": str(rule.id) if rule.id else "",
+        "sigma_status": rule.status.name.lower() if rule.status else "",
+        "sigma_author": (rule.author or "").strip(),
+        "sigma_tags": ", ".join(tags),
+        "converter_version": _converter_version(),
+    }
+    return {
+        key: truncate(value, V2_ANNOTATION_VALUE_MAX_LEN)
+        for key, value in candidates.items()
+        if value
+    }
 
 
 def to_v2_fidelity(fidelity: str) -> str:
