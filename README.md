@@ -169,15 +169,17 @@ sigma convert -t databricks -f lakewatch_v2 -p ocsf \
   -O catalog_name=main -O schema_name=security -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
 ```
 
-The `table_name`, `schedule`, `compute_group`, `default_fidelity` and `default_category` options
-work as for v1. The v2 format has these additional options:
+The `table_name`, `schedule`, `default_fidelity` and `default_category` options work as for v1.
+`compute_group` is ignored, with a warning, because the v2 API removed `schedule.compute_group`.
+The v2 format has these additional options:
 
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `catalog_name` | *(required)* | `catalog_name` of the rule, also used as `batch.sql.default_catalog_name` to resolve unqualified tables. Conversion fails if unset or empty. |
 | `schema_name` | *(required)* | `schema_name` of the rule, also used as `batch.sql.default_schema_name`. Conversion fails if unset or empty. |
-| `warehouse_id` | *(none)* | `batch.warehouse_id`: SQL warehouse that runs the rule. |
+| `warehouse_id` | *(none)* | `batch.warehouse_id`: SQL warehouse that runs the rule. The server rejects enabled batch rules without one, so conversion warns if it's unset. |
 | `extend_lookback` | *(none)* | `timerange.extend_lookback`: widens the time window beyond the schedule. |
+| `enabled` | `false` | `schedule.enabled`. Converted rules are disabled by default so that they can be reviewed and tested first; set `-O enabled=true` to schedule them immediately. |
 
 Differences from v1:
 
@@ -186,8 +188,17 @@ Differences from v1:
 * `rule_name` is derived from the title in snake_case (e.g. `Encoded PowerShell` →
   `encoded_powershell`). Duplicate names within one output get `_2`, `_3`, … suffixes.
 * Up to three Sigma `references` (each up to 512 characters) are emitted as `references`.
-* Fidelity values use the v2 enum names (`FIDELITY_INVESTIGATIVE`, …). `default_fidelity` accepts
-  both `Investigative` and `FIDELITY_INVESTIGATIVE`.
+* Fidelity values use the v2 enum names. Converted rules haven't been tested against your data, so
+  Sigma `stable` maps to `FIDELITY_INVESTIGATIVE` and every other status to `FIDELITY_DEVELOPMENT`.
+  `default_fidelity` overrides this and accepts both `Investigative` and `FIDELITY_INVESTIGATIVE`.
+* Rules are emitted with `schedule.enabled: false` (see the `enabled` option), and without
+  `schedule.compute_group`.
+* `output.event_time_column` is `time`.
+* `description` is cut to 4096 characters and `objective` to 65536. Cut values end with `...`.
+* Sigma `falsepositives` become the `runbook` ("Known false positives: …", up to 4096 characters).
+* `annotations` record where the rule came from: `sigma_id`, `sigma_status`, `sigma_author`,
+  `sigma_tags` (tags other than ATT&CK) and `converter_version`. Values are cut to 256 characters,
+  and empty values are left out.
 
 ## OCSF field rendering
 
