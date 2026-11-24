@@ -200,6 +200,93 @@ Differences from v1:
   `sigma_tags` (tags other than ATT&CK) and `converter_version`. Values are cut to 256 characters,
   and empty values are left out.
 
+### Lakewatch v2 parsed tables
+
+**Breaking change in the next release (0.2.0).** For `lakewatch_v2`, parsed-table mode is now the
+default. Rules are converted against the columns of a Lakewatch parser's table instead of OCSF
+gold tables. `-f lakewatch_v2` without `-p ocsf` therefore needs `-O parsers=...`. To keep the
+previous OCSF behavior, pass `-O ocsf=true` (or `-p ocsf`, which still selects OCSF).
+
+```bash
+sigma convert -s -t databricks -f lakewatch_v2 -O parsers=aws_cloudtrail \
+  -O table_name=main.sec.aws_cloudtrail -O catalog_name=main -O schema_name=sec \
+  -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
+```
+
+Each selected parser produces one rule per Sigma rule, named `<rule_name>__<profile>`, with
+`sigma_profile: <id>@<version>` in its annotations. Options:
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `parsers` | *(required)* | Comma-separated profile ids, for example `aws_cloudtrail,okta_system_log`. |
+| `table_name` | *(none)* | Table to read from. Use it when exactly one parser is selected. |
+| `table_map` | *(none)* | `profile:table,profile:table` for several parsers. Every selected profile needs a table. |
+| `lakewatch_profiles_dir` | *(none)* | Directory with your own `*.yml` profiles. They are added to the built-in ones, and an id replaces a built-in id. |
+| `lakewatch_schemas` | *(none)* | JSON file with additional parser schemas, in the format of the bundled catalog. |
+| `output_dir` | *(none)* | Write one `<rule_name>.yaml` file per rule into this directory (created if missing) instead of one multi-document YAML file. |
+
+By default all rules go into one multi-document YAML file (`-o file.yaml`, or stdout). With
+`-O output_dir=<dir>` each rule is written to its own `<dir>/<rule_name>.yaml`, and only a
+one-line summary is printed. Files with the same name are overwritten, and other files in the
+directory are left as they are. `output_dir` works only with `lakewatch_v2`. Don't use the
+`--output-dir`/`-od` option of sigma-cli with Lakewatch formats: it writes only the bare SQL condition
+of each rule, not the rule documents.
+
+A profile maps Sigma fields to columns and paths of a parser's schema. Profiles are validated
+against the schema catalog when conversion starts, before any rule is converted, so an unknown
+path or a bad prefix mapping stops the run. This user profile, saved in a directory passed as
+`-O lakewatch_profiles_dir=...`, extends the `aws_cloudtrail` parser. A parser that isn't in the
+bundled catalog also needs `-O lakewatch_schemas=<file>` with its schema.
+
+```yaml
+profile: my_cloudtrail
+version: 1
+parser: aws_cloudtrail
+fields:
+  eventName: eventName                       # exact mapping to a column
+  userIdentity.type: userIdentity.type       # path inside a VARIANT column
+  requestParameters.*: requestParameters.*   # prefix mapping, free-form VARIANT only
+  Principal: [userIdentity.arn, userIdentity.principalId]  # several targets are ORed
+logsources:
+  - match: {product: aws, service: cloudtrail}   # product, category and service
+    conditions:
+      eventType: AwsApiCall                 # added to every rule with this logsource
+    unsupported: [Destination]              # fail with a clear message
+```
+
+VARIANT paths render as `try_variant_get(col, '$.path', 'type')`, and paths through arrays as
+`exists(col, x0 -> ...)`.
+
+Windows event fields are often a list of `{_Name, _VALUE}` entries, for example the `EventData`
+column of the Windows parsers. A target `EventData[Image]` reads the `_VALUE` of the entry whose
+`_Name` is `Image`. It works on a VARIANT column (cast to `ARRAY<STRUCT<_Name, _VALUE>>`) and on
+a top-level `ARRAY<STRUCT>` column with `_Name` and `_VALUE` members, and the value is a STRING:
+
+```yaml
+fields:
+  Image: EventData[Image]
+  # renders as try_element_at(filter(try_variant_get(EventData, '$',
+  #   'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>'), e -> e._Name = 'Image'), 1)._VALUE
+```
+
+Field mapping is strict. A Sigma field that isn't a key of the profile's `fields` fails that
+rule with `field <name> is not mapped by profile <id>`, and keyword (unbound) searches fail as
+well. Use `-s` to skip failed rules when converting a directory.
+
+Current limitations:
+
+* Keyword (unbound) searches aren't supported yet.
+* Comparisons against a whole VARIANT column aren't supported yet, for example
+  `requestParameters|contains`. Use a path such as `requestParameters.bucketName` instead.
+* Rules that use these fail. With `sigma convert -s` they are skipped and reported.
+
+Built-in profiles:
+
+| Profile | Logsource | Parser |
+|---------|-----------|--------|
+| `aws_cloudtrail` | `product: aws`, `service: cloudtrail` | `aws_cloudtrail` |
+| `okta_system_log` | `product: okta`, `service: okta` | `okta_system_log` |
+
 ## OCSF field rendering
 
 When the target schema is OCSF, the dotted field names produced by the OCSF pipeline are rendered
@@ -218,7 +305,9 @@ according to the OCSF attribute types (tables bundled from OCSF 1.9.0, refresh t
 * Unbound keywords search the OCSF `raw_data` field unless `raw_log_field` is set explicitly.
 
 This is controlled by the `ocsf` option (`-O ocsf=true|false|auto`). With the default `auto` it is
-enabled for the `lakewatch` and `lakewatch_v2` formats and for rules processed by the OCSF pipeline (`-p ocsf`).
+enabled for the `lakewatch` format and for rules processed by the OCSF pipeline (`-p ocsf`). For
+`lakewatch_v2` it is enabled only by `-O ocsf=true` or an OCSF pipeline; otherwise
+[parsed tables](#lakewatch-v2-parsed-tables) are used.
 
 ## Maintainer
 

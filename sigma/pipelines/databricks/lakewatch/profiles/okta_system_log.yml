@@ -1,0 +1,24 @@
+# Built-in Lakewatch profile for the okta_system_log parser. Identity mappings only.
+profile: okta_system_log
+version: 1
+parser: okta_system_log
+fields:
+  eventType: eventType
+  legacyEventType: legacyEventType
+  displayMessage: displayMessage
+  actor.alternateId: actor.alternateId
+  actor.displayName: actor.displayName
+  actor.id: actor.id
+  actor.type: actor.type
+  target.displayName: target.displayName
+  target.alternateId: target.alternateId
+  target.type: target.type
+  outcome.result: outcome.result
+  outcome.reason: outcome.reason
+  client.ipAddress: client.ipAddress
+  securityContext.isProxy: securityContext.isProxy
+  debugContext.debugData.*: debugContext.debugData.*
+logsources:
+  - match:
+      product: okta
+      service: okta

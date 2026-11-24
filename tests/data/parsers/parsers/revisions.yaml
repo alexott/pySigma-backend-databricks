@@ -1,0 +1,4 @@
+parsers:
+  - name: "demo"
+    latestVersion: 3
+    contentHash: "abc"

@@ -1,0 +1,37 @@
+fields:
+  - name: eventName
+    type: STRING
+    required: true
+  - name: EventID
+    type: string
+    validate:
+      in: ['1', '7']
+      equals: '1'
+  - name: userIdentity
+    type: VARIANT
+    fields:
+      - name: arn
+        type: STRING
+      - name: sessionContext
+        type: VARIANT
+        fields:
+          - name: attributes
+            type: VARIANT
+            fields:
+              - name: mfaAuthenticated
+                type: STRING
+  - name: actor
+    type: STRUCT
+    fields:
+      - name: alternateId
+        type: STRING
+  - name: resources
+    type: ARRAY
+    element:
+      type: VARIANT
+      fields:
+        - name: arn
+          type: STRING
+  - name: event
+    type: VARIANT
+    copy_event: whole

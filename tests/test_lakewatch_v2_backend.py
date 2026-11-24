@@ -7,7 +7,7 @@ from importlib.metadata import version
 import pytest
 import yaml
 from sigma.collection import SigmaCollection
-from sigma.exceptions import SigmaConversionError
+from sigma.exceptions import SigmaConfigurationError, SigmaConversionError
 
 from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.lakewatch_maps import (
@@ -23,6 +23,7 @@ def _backend(**kwargs):
     """Backend with the required v2 catalog/schema options set."""
     kwargs.setdefault("catalog_name", "cat")
     kwargs.setdefault("schema_name", "sch")
+    kwargs.setdefault("ocsf", True)
     return DatabricksBackend(**kwargs)
 
 
@@ -151,7 +152,7 @@ def test_v2_error_when_no_table_resolvable():
 ])
 def test_v2_error_without_catalog_or_schema(options):
     with pytest.raises(SigmaConversionError, match="catalog_name and schema_name"):
-        _doc(DatabricksBackend(**options), BASE)
+        _doc(DatabricksBackend(ocsf=True, **options), BASE)
 
 
 def test_v2_catalog_and_schema_stripped():
@@ -221,10 +222,27 @@ def test_to_v2_helpers():
     assert to_v2_rule_name("!!!") == "sigma_rule"
     assert len(to_v2_rule_name("a b " * 200)) <= 256
     assert not to_v2_rule_name("a b " * 200).endswith("_")
-    assert to_v2_references(["u1", "x" * 513, "u2", "u3", "u4"]) == ["u1", "u2", "u3"]
-    assert to_v2_mitre([{"techniqueId": "T1", "subTechnique": "", "subTechniqueId": ""}]) == [
-        {"technique_id": "T1"}
+    assert to_v2_references(["https://u1", "https://" + "x" * 505, "https://u2", "https://u3",
+                             "https://u4"]) == ["https://u1", "https://u2", "https://u3"]
+    assert to_v2_mitre([{"techniqueId": "T1", "tactic": "Execution", "subTechnique": "",
+                         "subTechniqueId": ""}]) == [{"technique_id": "T1", "tactic": "Execution"}]
+    # Empty fields are left out; an entry without tactic or technique id is dropped.
+    assert to_v2_mitre([
+        {"taxonomy": "Enterprise", "tactic": "", "technique": "X", "techniqueId": "T1"},
+        {"taxonomy": "Enterprise", "tactic": "Execution", "technique": "", "techniqueId": "T2"},
+    ]) == [{"taxonomy": "Enterprise", "tactic": "Execution", "technique_id": "T2"}]
+    # Only http(s) URLs are references in v2.
+    assert to_v2_references(["Internal Research", "HTTPS://a", "ftp://b", "http://c"]) == [
+        "HTTPS://a", "http://c"
     ]
+
+
+def test_to_v2_rule_name_suffix():
+    assert to_v2_rule_name("a b", "__x") == "a_b__x"
+    assert to_v2_rule_name("!!!", "__x") == "sigma_rule__x"
+    long = to_v2_rule_name("a b " * 200, "__profile")
+    assert len(long) == 256 and long.endswith("__profile")
+    assert "___" not in long
 
 
 def test_v2_end_to_end_with_real_ocsf_pipeline():
@@ -360,3 +378,45 @@ def test_build_v2_annotations_limits():
     assert ann["sigma_author"].endswith("...")
     assert "sigma_tags" not in ann                      # only ATT&CK tags in BASE
     assert all(len(k) <= 64 and isinstance(v, str) and len(v) <= 256 for k, v in ann.items())
+
+
+def test_v2_output_dir_writes_one_file_per_rule(tmp_path):
+    out_dir = tmp_path / "nested" / "rules"                # created when missing
+    collection = SigmaCollection.from_yaml(TWO_RULES)
+    summary = _backend(warehouse_id="wh", output_dir=str(out_dir)).convert(
+        collection, output_format="lakewatch_v2")
+    files = sorted(p.name for p in out_dir.iterdir())
+    assert files == ["rule_one.yaml", "rule_one_2.yaml"]   # deduped names, deprecated skipped
+    single = list(yaml.safe_load_all(_backend(warehouse_id="wh").convert(
+        SigmaCollection.from_yaml(TWO_RULES), output_format="lakewatch_v2")))
+    written = [yaml.safe_load((out_dir / name).read_text(encoding="utf-8")) for name in files]
+    assert written == single                               # same documents as the -o output
+    assert "query: |-" in (out_dir / "rule_one.yaml").read_text(encoding="utf-8")
+    assert summary == f"# Wrote 2 Lakewatch v2 rule(s) to {out_dir}"
+    assert yaml.safe_load(summary) is None                 # harmless if redirected with -o
+
+
+def test_v2_output_dir_overwrites_existing_rule_files(tmp_path):
+    (tmp_path / "suspicious_powershell.yaml").write_text("old", encoding="utf-8")
+    _convert(_backend(warehouse_id="wh", output_dir=str(tmp_path)))
+    doc = yaml.safe_load((tmp_path / "suspicious_powershell.yaml").read_text(encoding="utf-8"))
+    assert doc["rule_name"] == "suspicious_powershell"
+
+
+def test_v2_output_dir_is_a_file(tmp_path):
+    target = tmp_path / "file.yaml"
+    target.write_text("", encoding="utf-8")
+    with pytest.raises(SigmaConfigurationError, match="output_dir"):
+        _convert(_backend(warehouse_id="wh", output_dir=str(target)))
+
+
+def test_v2_output_dir_blank_is_ignored():
+    out = _convert(_backend(warehouse_id="wh", output_dir="  "))
+    assert yaml.safe_load(out)["rule_name"] == "suspicious_powershell"
+
+
+def test_output_dir_warns_for_other_formats(tmp_path):
+    rules = SigmaCollection.from_yaml(BASE)
+    with pytest.warns(UserWarning, match="output_dir"):
+        DatabricksBackend(output_dir=str(tmp_path)).convert(rules, output_format="lakewatch")
+    assert not any(tmp_path.iterdir())

@@ -1,0 +1,290 @@
+"""Lakewatch mapping profiles: model, parsing, loading and validation."""
+import re
+import warnings
+from dataclasses import dataclass, field
+from importlib.resources import files
+from pathlib import Path
+from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+
+import yaml
+from sigma.exceptions import SigmaConfigurationError
+from sigma.rule import SigmaLogSource
+
+from sigma.backends.databricks.field_paths import UnknownFieldError, resolve_schema_path
+from sigma.backends.databricks.schema_catalog import ParserSchema
+
+_TOP_KEYS = {"profile", "version", "parser", "fields", "logsources"}
+_BLOCK_KEYS = {"match", "conditions", "fields", "unsupported"}
+_MATCH_KEYS = ("product", "category", "service")
+_MAPPING_KEYS = {"field"}
+# Profile ids become part of Unity Catalog rule names: keep them short and UC-safe.
+_PROFILE_ID = re.compile(r"[a-z0-9_]+")
+_PROFILE_ID_MAX_LEN = 64
+
+ConditionValue = Union[str, int, List[Union[str, int]]]
+
+
+class ProfileError(SigmaConfigurationError):
+    """An invalid mapping profile. Messages start with ``<source>: ``."""
+
+    def __init__(self, source: str, message: str):
+        """Create the error; ``source`` is the profile file (or ``<dict>``)."""
+        super().__init__(f"{source}: {message}")
+
+
+@dataclass(frozen=True)
+class FieldMapping:
+    """Target schema path(s) of a Sigma field; several targets are ORed."""
+
+    targets: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LogsourceBlock:
+    """A profile block for the logsources it matches, with its conditions and fields."""
+
+    match: Dict[str, str]
+    conditions: Dict[str, ConditionValue] = field(default_factory=dict)
+    fields: Dict[str, FieldMapping] = field(default_factory=dict)
+    unsupported: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Profile:
+    """A mapping profile: Sigma fields of one parser's output and its logsource blocks."""
+
+    profile: str
+    version: int
+    parser: str
+    fields: Dict[str, FieldMapping]
+    logsources: Tuple[LogsourceBlock, ...]
+    source: str = "<dict>"
+
+    def block_for(self, logsource: SigmaLogSource) -> Optional[LogsourceBlock]:
+        """Return the most specific block matching ``logsource`` (first on ties), or None."""
+        best: Optional[LogsourceBlock] = None
+        for block in self.logsources:
+            if all(
+                (actual := getattr(logsource, key, None)) is not None
+                and actual.lower() == value
+                for key, value in block.match.items()
+            ):
+                if best is None or len(block.match) > len(best.match):
+                    best = block
+        return best
+
+    def mappings_for(self, block: LogsourceBlock) -> Dict[str, FieldMapping]:
+        """Return the profile fields overridden by the fields of ``block``."""
+        merged = dict(self.fields)
+        merged.update(block.fields)
+        return merged
+
+
+# --- parsing -----------------------------------------------------------------------------
+
+
+def _check_keys(data: Mapping, allowed: Collection[str], source: str, where: str) -> None:
+    for key in data:
+        if key not in allowed:
+            raise ProfileError(source, f"{where}unknown key '{key}'")
+
+
+def _targets(value: Any, source: str, name: str) -> Tuple[str, ...]:
+    items = value if isinstance(value, list) else [value]
+    if not items or not all(isinstance(i, str) and i for i in items):
+        raise ProfileError(source, f"field '{name}': targets must be non-empty strings")
+    return tuple(items)
+
+
+def _parse_mapping(value: Any, source: str, name: str) -> FieldMapping:
+    if isinstance(value, dict):
+        _check_keys(value, _MAPPING_KEYS, source, f"field '{name}': ")
+        if "field" not in value:
+            raise ProfileError(source, f"field '{name}': missing key 'field'")
+        value = value["field"]
+    targets = _targets(value, source, name)
+    if name.endswith(".*") and not all(t.endswith(".*") for t in targets):
+        raise ProfileError(source, f"field '{name}': prefix mapping targets must end with '.*'")
+    if not name.endswith(".*") and any(t.endswith(".*") for t in targets):
+        raise ProfileError(
+            source, f"field '{name}': a '.*' target requires a prefix key ending with '.*'"
+        )
+    return FieldMapping(targets)
+
+
+def _parse_fields(value: Any, source: str, where: str) -> Dict[str, FieldMapping]:
+    if not isinstance(value, dict):
+        raise ProfileError(source, f"{where}'fields' must be a mapping")
+    return {str(k): _parse_mapping(v, source, str(k)) for k, v in value.items()}
+
+
+def _parse_block(data: Any, source: str) -> LogsourceBlock:
+    if not isinstance(data, dict):
+        raise ProfileError(source, "each 'logsources' entry must be a mapping")
+    _check_keys(data, _BLOCK_KEYS, source, "logsource block: ")
+    match = data.get("match")
+    if not isinstance(match, dict) or not match:
+        raise ProfileError(source, "logsource block: 'match' must be a non-empty mapping")
+    for key, value in match.items():
+        if key not in _MATCH_KEYS:
+            raise ProfileError(source, f"logsource block: match has unknown key '{key}'")
+        if not isinstance(value, str):
+            raise ProfileError(source, f"logsource block: match '{key}' must be a string")
+    conditions = data.get("conditions", {})
+    if not isinstance(conditions, dict):
+        raise ProfileError(source, "logsource block: 'conditions' must be a mapping")
+    for key, value in conditions.items():
+        values = value if isinstance(value, list) else [value]
+        if not values or not all(isinstance(v, (str, int)) and not isinstance(v, bool) for v in values):
+            raise ProfileError(
+                source, f"logsource block: condition '{key}' must be a string, int or list of them"
+            )
+    unsupported = data.get("unsupported", [])
+    if not isinstance(unsupported, list) or not all(isinstance(u, str) for u in unsupported):
+        raise ProfileError(source, "logsource block: 'unsupported' must be a list of strings")
+    return LogsourceBlock(
+        match={k: v.lower() for k, v in match.items()},
+        conditions={str(k): v for k, v in conditions.items()},
+        fields=_parse_fields(data.get("fields", {}), source, "logsource block: "),
+        unsupported=tuple(unsupported),
+    )
+
+
+def parse_profile(data: Any, source: str = "<dict>") -> Profile:
+    if not isinstance(data, dict):
+        raise ProfileError(source, "profile must be a mapping")
+    _check_keys(data, sorted(_TOP_KEYS), source, "")
+    for key in ("profile", "version", "parser", "logsources"):
+        if key not in data:
+            raise ProfileError(source, f"missing required key '{key}'")
+    for key in ("profile", "parser"):
+        if not isinstance(data[key], str) or not data[key]:
+            raise ProfileError(source, f"'{key}' must be a non-empty string")
+    if not _PROFILE_ID.fullmatch(data["profile"]) or len(data["profile"]) > _PROFILE_ID_MAX_LEN:
+        raise ProfileError(
+            source,
+            f"'profile' must match [a-z0-9_]+ and be at most {_PROFILE_ID_MAX_LEN} characters, "
+            f"got '{data['profile']}'",
+        )
+    version = data["version"]
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ProfileError(source, "'version' must be an integer >= 1")
+    raw_blocks = data["logsources"]
+    if not isinstance(raw_blocks, list) or not raw_blocks:
+        raise ProfileError(source, "'logsources' must be a non-empty list")
+    blocks = tuple(_parse_block(b, source) for b in raw_blocks)
+    seen = set()
+    for block in blocks:
+        ident = tuple(sorted(block.match.items()))
+        if ident in seen:
+            raise ProfileError(source, f"duplicate logsource match {block.match}")
+        seen.add(ident)
+    return Profile(
+        profile=data["profile"],
+        version=version,
+        parser=data["parser"],
+        fields=_parse_fields(data.get("fields", {}), source, ""),
+        logsources=blocks,
+        source=source,
+    )
+
+
+# --- loading -----------------------------------------------------------------------------
+
+
+def _read_dir(directory: Path) -> Dict[str, Profile]:
+    result: Dict[str, Profile] = {}
+    for path in sorted(directory.glob("*.yml"), key=lambda p: p.name):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            raise ProfileError(str(path), f"cannot read profile file: {e}") from None
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            raise ProfileError(str(path), f"invalid YAML: {e}") from None
+        if data is None:
+            raise ProfileError(str(path), "profile file is empty")
+        profile = parse_profile(data, str(path))
+        if profile.profile in result:
+            raise ProfileError(
+                str(path),
+                f"profile '{profile.profile}' is already defined in {result[profile.profile].source}",
+            )
+        result[profile.profile] = profile
+    return result
+
+
+def load_profiles(extra_dirs: Sequence[str] = ()) -> Dict[str, Profile]:
+    """Load built-in profiles, then those in ``extra_dirs`` (later ids replace earlier ones)."""
+    builtin = Path(str(files("sigma.pipelines.databricks.lakewatch") / "profiles"))
+    profiles: Dict[str, Profile] = {}
+    if builtin.is_dir():
+        profiles.update(_read_dir(builtin))
+    for extra in extra_dirs:
+        directory = Path(extra)
+        if not directory.is_dir():
+            raise ProfileError(str(extra), "profile directory does not exist")
+        profiles.update(_read_dir(directory))
+    return profiles
+
+
+# --- validation --------------------------------------------------------------------------
+
+
+def _resolve(profile: Profile, schema: ParserSchema, path: str, what: str):
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return resolve_schema_path(schema, path)
+    except UnknownFieldError as e:
+        raise ProfileError(
+            profile.source, f"profile '{profile.profile}': {what} '{path}': {e}"
+        ) from None
+
+
+def _validate_mappings(profile: Profile, schema: ParserSchema, mappings: Dict[str, FieldMapping]):
+    for name, mapping in mappings.items():
+        for target in mapping.targets:
+            if not name.endswith(".*"):
+                _resolve(profile, schema, target, f"field '{name}' target")
+                continue
+            prefix = target[:-2] if target.endswith(".*") else target
+            fp = _resolve(profile, schema, prefix, f"field '{name}' target")
+            info = schema.get(prefix)
+            has_children = any(k.startswith(prefix + ".") for k in schema.paths)
+            if (
+                not target.endswith(".*")
+                or not fp.whole_variant
+                or info is None
+                or has_children
+            ):
+                raise ProfileError(
+                    profile.source,
+                    f"profile '{profile.profile}': field '{name}': prefix mapping requires "
+                    f"a free-form VARIANT target, got '{target}'",
+                )
+
+
+def validate_profile(profile: Profile, schema: ParserSchema) -> None:
+    _validate_mappings(profile, schema, profile.fields)
+    for block in profile.logsources:
+        _validate_mappings(profile, schema, block.fields)
+        for name, value in block.conditions.items():
+            _resolve(profile, schema, name, "condition field")
+            info = schema.get(name)
+            if info is not None and info.allowed is not None:
+                for v in value if isinstance(value, list) else [value]:
+                    if str(v) not in info.allowed:
+                        raise ProfileError(
+                            profile.source,
+                            f"profile '{profile.profile}': condition field '{name}': "
+                            f"'{v}' not in allowed {list(info.allowed)}",
+                        )
+        mapped = profile.mappings_for(block)
+        for name in block.unsupported:
+            if name in mapped:
+                raise ProfileError(
+                    profile.source,
+                    f"profile '{profile.profile}': field '{name}' is both mapped and unsupported",
+                )
