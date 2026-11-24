@@ -3,7 +3,7 @@ import warnings
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import yaml
 from sigma.exceptions import SigmaConfigurationError
@@ -70,7 +70,7 @@ class Profile:
 # --- parsing -----------------------------------------------------------------------------
 
 
-def _check_keys(data: Mapping, allowed: Sequence[str], source: str, where: str) -> None:
+def _check_keys(data: Mapping, allowed: Collection[str], source: str, where: str) -> None:
     for key in data:
         if key not in allowed:
             raise ProfileError(source, f"{where}unknown key '{key}'")

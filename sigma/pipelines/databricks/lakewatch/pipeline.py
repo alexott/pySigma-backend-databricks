@@ -1,6 +1,6 @@
 """Compile one Lakewatch mapping profile logsource block into a pySigma pipeline."""
 from dataclasses import dataclass
-from typing import FrozenSet, List, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Union
 
 from sigma.exceptions import SigmaTransformationError
 from sigma.processing.pipeline import ProcessingItem, ProcessingPipeline
@@ -93,7 +93,7 @@ def build_profile_pipeline(profile: Profile, block: LogsourceBlock) -> Processin
         )
     ]
 
-    exact_map = {
+    exact_map: Dict[Optional[str], Union[str, List[str]]] = {
         k: (v.targets[0] if len(v.targets) == 1 else list(v.targets)) for k, v in exact.items()
     }
     rewrites = tuple(
@@ -109,9 +109,10 @@ def build_profile_pipeline(profile: Profile, block: LogsourceBlock) -> Processin
     )
 
     if block.conditions:
+        conditions: Dict[str, Any] = dict(block.conditions)
         items.append(
             ProcessingItem(
-                transformation=AddConditionTransformation(dict(block.conditions)),
+                transformation=AddConditionTransformation(conditions),
                 identifier=f"lakewatch_{pid}_conditions",
             )
         )

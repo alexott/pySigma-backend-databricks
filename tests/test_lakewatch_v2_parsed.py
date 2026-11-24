@@ -142,9 +142,12 @@ SEL = """    sel:
 
 
 def test_parsed_requires_parsers(env):
-    with pytest.raises(SigmaConfigurationError, match="available: p_ct, p_ct2") as exc:
+    with pytest.raises(SigmaConfigurationError) as exc:
         _sqls(env(table_name="t"), _rule(SEL))
-    assert "-O parsers=... is required for lakewatch_v2 parsed tables" in str(exc.value)
+    msg = str(exc.value)
+    assert msg.startswith("-O parsers=... is required for lakewatch_v2 parsed tables")
+    for pid in ("p_ct", "p_ct2", "aws_cloudtrail", "okta_system_log"):
+        assert pid in msg
 
 
 def test_parsed_requires_parsers_even_with_collect_errors(env):

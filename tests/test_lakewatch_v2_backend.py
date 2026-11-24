@@ -222,6 +222,10 @@ def test_to_v2_helpers():
     assert to_v2_rule_name("!!!") == "sigma_rule"
     assert len(to_v2_rule_name("a b " * 200)) <= 256
     assert not to_v2_rule_name("a b " * 200).endswith("_")
+    assert to_v2_references(["u1", "x" * 513, "u2", "u3", "u4"]) == ["u1", "u2", "u3"]
+    assert to_v2_mitre([{"techniqueId": "T1", "subTechnique": "", "subTechniqueId": ""}]) == [
+        {"technique_id": "T1"}
+    ]
 
 
 def test_to_v2_rule_name_suffix():
@@ -230,10 +234,6 @@ def test_to_v2_rule_name_suffix():
     long = to_v2_rule_name("a b " * 200, "__profile")
     assert len(long) == 256 and long.endswith("__profile")
     assert "___" not in long
-    assert to_v2_references(["u1", "x" * 513, "u2", "u3", "u4"]) == ["u1", "u2", "u3"]
-    assert to_v2_mitre([{"techniqueId": "T1", "subTechnique": "", "subTechniqueId": ""}]) == [
-        {"technique_id": "T1"}
-    ]
 
 
 def test_v2_end_to_end_with_real_ocsf_pipeline():
