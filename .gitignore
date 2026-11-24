@@ -8,3 +8,7 @@ docs/_build
 /.idea/
 /databricks-sigma-backend.iml
 /coverage.xml
+
+# Internal design docs (Lakewatch specs, plans, gap lists): kept locally, not published
+docs/superpowers/
+docs/lakewatch-v2-gaps-for-sigma.md
