@@ -224,23 +224,26 @@ Each selected parser produces one rule per Sigma rule, named `<rule_name>__<prof
 | `lakewatch_profiles_dir` | *(none)* | Directory with your own `*.yml` profiles. They are added to the built-in ones, and an id replaces a built-in id. |
 | `lakewatch_schemas` | *(none)* | JSON file with additional parser schemas, in the format of the bundled catalog. |
 
-A profile maps Sigma fields to columns and paths of the parser's schema. Unknown paths are
-rejected when the profile is loaded:
+A profile maps Sigma fields to columns and paths of a parser's schema. Profiles are validated
+against the schema catalog when conversion starts, before any rule is converted, so an unknown
+path or a bad prefix mapping stops the run. This user profile, saved in a directory passed as
+`-O lakewatch_profiles_dir=...`, extends the `aws_cloudtrail` parser. A parser that isn't in the
+bundled catalog also needs `-O lakewatch_schemas=<file>` with its schema.
 
 ```yaml
-profile: my_proxy
+profile: my_cloudtrail
 version: 1
-parser: my_proxy_parser
+parser: aws_cloudtrail
 fields:
-  eventName: eventName                  # exact mapping to a column
-  userIdentity.type: userIdentity.type  # path inside a VARIANT column
-  requestParameters.*: requestParameters.*  # prefix mapping, free-form VARIANT only
-  src: [src_ip, client_ip]              # several targets are ORed
+  eventName: eventName                       # exact mapping to a column
+  userIdentity.type: userIdentity.type       # path inside a VARIANT column
+  requestParameters.*: requestParameters.*   # prefix mapping, free-form VARIANT only
+  Principal: [userIdentity.arn, userIdentity.principalId]  # several targets are ORed
 logsources:
   - match: {product: aws, service: cloudtrail}   # product, category and service
     conditions:
-      eventType: AwsApiCall             # added to every rule with this logsource
-    unsupported: [Destination]          # fail with a clear message
+      eventType: AwsApiCall                 # added to every rule with this logsource
+    unsupported: [Destination]              # fail with a clear message
 ```
 
 VARIANT paths render as `try_variant_get(col, '$.path', 'type')`, and paths through arrays as
@@ -249,6 +252,13 @@ VARIANT paths render as `try_variant_get(col, '$.path', 'type')`, and paths thro
 Field mapping is strict. A Sigma field that isn't a key of the profile's `fields` fails that
 rule with `field <name> is not mapped by profile <id>`, and keyword (unbound) searches fail as
 well. Use `-s` to skip failed rules when converting a directory.
+
+Current limitations:
+
+* Keyword (unbound) searches aren't supported yet.
+* Comparisons against a whole VARIANT column aren't supported yet, for example
+  `requestParameters|contains`. Use a path such as `requestParameters.bucketName` instead.
+* Rules that use these fail. With `sigma convert -s` they are skipped and reported.
 
 Built-in profiles:
 

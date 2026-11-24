@@ -3,6 +3,9 @@ profile: aws_cloudtrail
 version: 1
 parser: aws_cloudtrail
 fields:
+  requestParameters: requestParameters
+  responseElements: responseElements
+  additionalEventData: additionalEventData
   eventName: eventName
   eventSource: eventSource
   eventType: eventType

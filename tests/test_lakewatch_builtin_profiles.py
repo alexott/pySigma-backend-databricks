@@ -5,7 +5,7 @@ import warnings
 
 import pytest
 from sigma.collection import SigmaCollection
-from sigma.exceptions import SigmaTransformationError
+from sigma.exceptions import SigmaConversionError, SigmaTransformationError
 
 from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.schema_catalog import SchemaCatalog
@@ -119,3 +119,33 @@ def test_okta_bool_vs_struct_boolean():
     condition: sel""",
     )
     assert "securityContext.isProxy = true" in sql
+
+
+def test_cloudtrail_whole_variant_comparison_fails():
+    with pytest.raises(
+        SigmaConversionError,
+        match=r"comparison against the whole VARIANT column requestParameters is not supported "
+        r"yet \(profile aws_cloudtrail\)",
+    ):
+        _sql(
+            "aws_cloudtrail",
+            "aws",
+            "cloudtrail",
+            """    sel:
+        requestParameters|contains: Suspended
+    condition: sel""",
+        )
+
+
+def test_readme_profile_example_validates():
+    import re
+    from pathlib import Path
+
+    from sigma.pipelines.databricks.lakewatch.profile import parse_profile
+    import yaml
+
+    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```yaml\n(profile: my_cloudtrail.*?)```", readme, re.S)
+    assert len(blocks) == 1
+    profile = parse_profile(yaml.safe_load(blocks[0]), "README")
+    validate_profile(profile, SchemaCatalog.load().get(profile.parser))
