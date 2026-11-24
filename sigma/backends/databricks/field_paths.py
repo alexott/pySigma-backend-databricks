@@ -1,4 +1,5 @@
 """Resolve dotted Sigma field names against a Lakewatch parser schema."""
+import re
 import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -15,6 +16,10 @@ class FieldPath:
     the innermost element (ending at the VARIANT, if any), and ``json_path`` the keys inside
     that VARIANT. ``json_type`` is the declared type of the key inside a VARIANT (None if
     undeclared); ``leaf_type`` is the type of a column or STRUCT leaf.
+
+    ``entry`` is set for a named entry ``Field[Name]``: the ``_VALUE`` of the element whose
+    ``_Name`` is ``Name`` in a list of ``{_Name, _VALUE}`` (Windows ``EventData``). ``leaf`` is
+    then the list itself, a VARIANT (``entry_variant``) or an ``ARRAY<STRUCT>``.
     """
 
     arrays: Tuple[Tuple[str, ...], ...]
@@ -22,6 +27,8 @@ class FieldPath:
     json_path: Tuple[str, ...]
     json_type: Optional[str] = None
     leaf_type: Optional[str] = None
+    entry: Optional[str] = None
+    entry_variant: bool = False
 
     @property
     def whole_variant(self) -> bool:
@@ -104,8 +111,36 @@ def _resolve_variant(
     return FieldPath(tuple(arrays), leaf, tuple(json_path), json_type, None)
 
 
+_NAMED_ENTRY = re.compile(r"(?P<base>.+)\[(?P<name>[^\[\]]+)\]")
+
+
+def _resolve_named_entry(schema: ParserSchema, path: str, base: str, name: str) -> FieldPath:
+    """Resolve ``base[name]``: a named entry of a VARIANT or ``ARRAY<STRUCT<_Name, _VALUE>>``."""
+    target = resolve_schema_path(schema, base)
+    if not target.arrays and target.whole_variant:
+        return FieldPath((), target.leaf, (), None, "STRING", entry=name, entry_variant=True)
+    if (
+        len(target.arrays) == 1 and not target.leaf and target.leaf_type == "STRUCT"
+        and not target.arrays[0][:-1]  # a top-level column: struct members are not supported
+    ):
+        column = target.arrays[0]
+        key = _find(schema, "", column[0])
+        if key and all(_find(schema, key + "[]", member) for member in ("_Name", "_VALUE")):
+            return FieldPath((), column, (), None, "STRING", entry=name, entry_variant=False)
+    raise UnknownFieldError(
+        path, schema.name, f"a named entry needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field, "
+        f"'{base}' is not one",
+    )
+
+
 def resolve_schema_path(schema: ParserSchema, path: str) -> FieldPath:
-    """Resolve a dotted field name against ``schema``, or raise UnknownFieldError."""
+    """Resolve a dotted field name against ``schema``, or raise UnknownFieldError.
+
+    ``Field[Name]`` resolves to a named entry of a ``{_Name, _VALUE}`` list (see FieldPath).
+    """
+    named = _NAMED_ENTRY.fullmatch(path)
+    if named:
+        return _resolve_named_entry(schema, path, named["base"], named["name"])
     segments = path.split(".")
     arrays: List[Tuple[str, ...]] = []
     since: List[str] = []

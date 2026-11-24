@@ -5,6 +5,7 @@ from sigma.rule import SigmaRule
 from sigma.backends.databricks.lakewatch_maps import (
     FIDELITY_MAP,
     GOLD_TABLES,
+    MITRE_TECHNIQUE_TACTICS,
     MITRE_TECHNIQUES,
     OCSF_CLASS_UID_TO_TABLE,
     SEVERITY_MAP,
@@ -143,16 +144,43 @@ def test_build_mitre_mapping_multiple_subtechniques_collapse():
     assert entries[0]["subTechniqueId"] == "T1059.003"
 
 
-def test_build_mitre_mapping_multiple_tactics_blank():
-    # Ambiguous tactic (two tactic tags) -> tactic left blank rather than guessed.
+def test_mitre_table_has_tactics():
+    assert MITRE_TECHNIQUE_TACTICS["T1059"] == ["execution"]
+    assert "command-and-control" in MITRE_TECHNIQUE_TACTICS["T1071.004"]
+
+
+def test_build_mitre_mapping_multiple_tactics_picks_tactic_of_technique():
+    # Two tactic tags: each technique gets the tagged tactic that ATT&CK lists for it.
     rule = _tagged_rule(
+        "            - attack.command-and-control\n"
+        "            - attack.t1071.004\n"
         "            - attack.execution\n"
-        "            - attack.persistence\n"
-        "            - attack.t1059"
+        "            - attack.t1059.003"
     )
-    entries = build_mitre_mapping(rule)
-    assert entries[0]["tactic"] == ""
-    assert entries[0]["techniqueId"] == "T1059"
+    tactics = {e["techniqueId"]: e["tactic"] for e in build_mitre_mapping(rule)}
+    assert tactics == {"T1059": "Execution", "T1071": "Command-And-Control"}
+
+
+def test_build_mitre_mapping_tactic_from_attack_when_not_tagged():
+    # No matching tactic tag: the first ATT&CK tactic of the technique is used.
+    rule = _tagged_rule("            - attack.persistence\n            - attack.t1059")
+    assert build_mitre_mapping(rule)[0]["tactic"] == "Execution"
+    rule = _tagged_rule("            - attack.t1059")
+    assert build_mitre_mapping(rule)[0]["tactic"] == "Execution"
+
+
+def test_build_mitre_mapping_ignores_group_and_software_tags():
+    rule = _tagged_rule(
+        "            - attack.g0016\n            - attack.s0002\n            - attack.t9999"
+    )
+    assert build_mitre_mapping(rule)[0]["tactic"] == ""          # unknown technique, no tactic
+
+
+def test_build_mitre_mapping_unknown_technique_uses_single_tactic():
+    rule = _tagged_rule("            - attack.execution\n            - attack.t9999")
+    assert build_mitre_mapping(rule)[0]["tactic"] == "Execution"
+    rule = _tagged_rule("            - attack.command_and_control\n            - attack.t9999")
+    assert build_mitre_mapping(rule)[0]["tactic"] == "Command-And-Control"
 
 
 def test_resolve_non_numeric_uid_returns_none():

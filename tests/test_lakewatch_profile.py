@@ -113,6 +113,12 @@ def test_validate_ok():
     validate_profile(prof({"A": "a", "S": "s.k", "V": "v", "W": "v.deep.er"}), schema())
 
 
+def test_validate_named_entry_target():
+    validate_profile(prof({"Image": "v[Image]"}), schema())
+    with pytest.raises(ProfileError, match="'Image'.*a\\[Image\\].*VARIANT or ARRAY"):
+        validate_profile(prof({"Image": "a[Image]"}), schema())
+
+
 def test_validate_unknown_target():
     with pytest.raises(ProfileError, match="'Q'.*nope"):
         validate_profile(prof({"Q": "nope"}), schema())

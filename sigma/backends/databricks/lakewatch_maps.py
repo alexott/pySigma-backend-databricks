@@ -3,7 +3,7 @@ import json
 import os
 import re
 from importlib.metadata import PackageNotFoundError, version
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from sigma.rule import SigmaDetection, SigmaDetectionItem, SigmaRule
 
@@ -55,8 +55,39 @@ FIDELITY_MAP: Dict[str, str] = {
 
 _MITRE_PATH = os.path.join(os.path.dirname(__file__), "mitre_techniques.json")
 with open(_MITRE_PATH, encoding="utf-8") as _fh:
-    #: MITRE ATT&CK technique/sub-technique ID -> human-readable name.
-    MITRE_TECHNIQUES: Dict[str, str] = json.load(_fh)
+    _MITRE_DATA: Dict[str, dict] = json.load(_fh)
+#: MITRE ATT&CK technique/sub-technique ID -> human-readable name.
+MITRE_TECHNIQUES: Dict[str, str] = {tid: info["name"] for tid, info in _MITRE_DATA.items()}
+#: MITRE ATT&CK technique/sub-technique ID -> its tactics (``command-and-control``, ...).
+MITRE_TECHNIQUE_TACTICS: Dict[str, List[str]] = {
+    tid: list(info["tactics"]) for tid, info in _MITRE_DATA.items()
+}
+# Tactics that ATT&CK replaced, mapped to the tactics that took over their techniques. Sigma
+# rules still use them as tags.
+_LEGACY_TACTICS: Dict[str, Tuple[str, ...]] = {
+    "defense-evasion": ("stealth", "defense-impairment"),
+}
+_MITRE_TACTICS = {t for tactics in MITRE_TECHNIQUE_TACTICS.values() for t in tactics} | set(
+    _LEGACY_TACTICS
+)
+
+
+def _tactic_title(tactic: str) -> str:
+    return tactic.replace("_", " ").title()
+
+
+def _pick_tactic(technique: str, tagged: List[str]) -> str:
+    """Tactic of ``technique``: a tagged one that ATT&CK lists for it, else its first ATT&CK one.
+
+    For a technique missing from the table, the tagged tactic is used when there is exactly one.
+    """
+    known = MITRE_TECHNIQUE_TACTICS.get(technique)
+    if not known:
+        return _tactic_title(tagged[0]) if len(tagged) == 1 else ""
+    for tactic in tagged:
+        if tactic in known or set(_LEGACY_TACTICS.get(tactic, ())) & set(known):
+            return _tactic_title(tactic)
+    return _tactic_title(known[0])
 
 
 def build_mitre_mapping(rule: SigmaRule) -> List[dict]:
@@ -74,20 +105,17 @@ def build_mitre_mapping(rule: SigmaRule) -> List[dict]:
                 techniques[tid.split(".")[0]] = tid
             else:
                 techniques.setdefault(tid, None)
-        else:
-            tactics.append(name.replace("_", " ").title())
+        elif name.replace("_", "-") in _MITRE_TACTICS:  # not groups (g0016) or software (s0002)
+            tactics.append(name.replace("_", "-"))
     if not techniques:
         return []
-    # Sigma tags do not bind a tactic to a technique. Use the tactic only when
-    # exactly one distinct tactic is tagged; otherwise leave it blank rather
-    # than mislabel every technique with an arbitrary one.
-    unique_tactics = list(dict.fromkeys(tactics))
-    tactic = unique_tactics[0] if len(unique_tactics) == 1 else ""
+    # Sigma tags do not bind a tactic to a technique: pick it per technique from ATT&CK.
+    tagged = list(dict.fromkeys(tactics))
     entries: List[dict] = []
     for tid, sub in sorted(techniques.items()):
         entries.append({
             "taxonomy": "Enterprise",
-            "tactic": tactic,
+            "tactic": _pick_tactic(sub or tid, tagged),
             "technique": MITRE_TECHNIQUES.get(tid, ""),
             "techniqueId": tid,
             "subTechnique": MITRE_TECHNIQUES.get(sub, "") if sub else "",
@@ -208,7 +236,10 @@ def to_v2_fidelity(fidelity: str) -> str:
 
 
 def to_v2_mitre(entries: List[dict]) -> List[dict]:
-    """Convert v1 MITRE entries to v2: snake_case keys, empty sub-technique fields dropped."""
+    """Convert v1 MITRE entries to v2: snake_case keys, empty fields left out.
+
+    v2 needs a tactic and a technique id, so an entry without one is dropped.
+    """
     renames = {
         "techniqueId": "technique_id",
         "subTechnique": "sub_technique",
@@ -216,13 +247,9 @@ def to_v2_mitre(entries: List[dict]) -> List[dict]:
     }
     result: List[dict] = []
     for entry in entries:
-        converted: Dict[str, str] = {}
-        for key, value in entry.items():
-            key = renames.get(key, key)
-            if key.startswith("sub_technique") and not value:
-                continue
-            converted[key] = value
-        result.append(converted)
+        converted = {renames.get(key, key): value for key, value in entry.items() if value}
+        if converted.get("tactic") and converted.get("technique_id"):
+            result.append(converted)
     return result
 
 
@@ -238,5 +265,8 @@ def to_v2_rule_name(title: str, suffix: str = "") -> str:
 
 
 def to_v2_references(references: List[str]) -> List[str]:
-    """Select the references that fit into the v2 limits (at most 3 URLs, 512 chars each)."""
-    return [ref for ref in references if len(ref) <= V2_REFERENCE_MAX_LEN][:V2_MAX_REFERENCES]
+    """Select the references v2 accepts: http(s) URLs of at most 512 chars, at most 3."""
+    return [
+        ref for ref in references
+        if len(ref) <= V2_REFERENCE_MAX_LEN and re.match(r"https?://", ref, re.IGNORECASE)
+    ][:V2_MAX_REFERENCES]

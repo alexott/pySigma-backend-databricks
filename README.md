@@ -223,6 +223,14 @@ Each selected parser produces one rule per Sigma rule, named `<rule_name>__<prof
 | `table_map` | *(none)* | `profile:table,profile:table` for several parsers. Every selected profile needs a table. |
 | `lakewatch_profiles_dir` | *(none)* | Directory with your own `*.yml` profiles. They are added to the built-in ones, and an id replaces a built-in id. |
 | `lakewatch_schemas` | *(none)* | JSON file with additional parser schemas, in the format of the bundled catalog. |
+| `output_dir` | *(none)* | Write one `<rule_name>.yaml` file per rule into this directory (created if missing) instead of one multi-document YAML file. |
+
+By default all rules go into one multi-document YAML file (`-o file.yaml`, or stdout). With
+`-O output_dir=<dir>` each rule is written to its own `<dir>/<rule_name>.yaml`, and only a
+one-line summary is printed. Files with the same name are overwritten, and other files in the
+directory are left as they are. `output_dir` works only with `lakewatch_v2`. Don't use the
+`--output-dir`/`-od` option of sigma-cli with Lakewatch formats: it writes only the bare SQL condition
+of each rule, not the rule documents.
 
 A profile maps Sigma fields to columns and paths of a parser's schema. Profiles are validated
 against the schema catalog when conversion starts, before any rule is converted, so an unknown
@@ -248,6 +256,18 @@ logsources:
 
 VARIANT paths render as `try_variant_get(col, '$.path', 'type')`, and paths through arrays as
 `exists(col, x0 -> ...)`.
+
+Windows event fields are often a list of `{_Name, _VALUE}` entries, for example the `EventData`
+column of the Windows parsers. A target `EventData[Image]` reads the `_VALUE` of the entry whose
+`_Name` is `Image`. It works on a VARIANT column (cast to `ARRAY<STRUCT<_Name, _VALUE>>`) and on
+a top-level `ARRAY<STRUCT>` column with `_Name` and `_VALUE` members, and the value is a STRING:
+
+```yaml
+fields:
+  Image: EventData[Image]
+  # renders as try_element_at(filter(try_variant_get(EventData, '$',
+  #   'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>'), e -> e._Name = 'Image'), 1)._VALUE
+```
 
 Field mapping is strict. A Sigma field that isn't a key of the profile's `fields` fails that
 rule with `field <name> is not mapped by profile <id>`, and keyword (unbound) searches fail as

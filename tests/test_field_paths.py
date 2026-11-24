@@ -1,5 +1,7 @@
 """Tests for resolving Sigma field names against parser schemas."""
 
+import re
+
 import pytest
 
 from sigma.backends.databricks.field_paths import (
@@ -32,6 +34,10 @@ SCHEMA = ParserSchema("p1", "u-1", 2, {
     "target[].displayName": _p("STRING", "struct"),
     "debugContext": _p("STRUCT", "column"),
     "debugContext.debugData": _p("VARIANT", "struct"),
+    "EventData": _p("VARIANT", "column"),
+    "Data": _p("ARRAY", "column", "STRUCT"),
+    "Data[]._Name": _p("STRING", "struct"),
+    "Data[]._VALUE": _p("STRING", "struct"),
 })
 
 
@@ -120,6 +126,29 @@ def test_resolve_whole_variant():
 def test_resolve_array_inside_variant_fails():
     with pytest.raises(UnknownFieldError, match="arrays inside VARIANT are not supported"):
         resolve_schema_path(SCHEMA, "userIdentity.tags")
+
+
+def test_resolve_named_entry_of_variant():
+    r = resolve_schema_path(SCHEMA, "EventData[Image]")
+    assert r == FieldPath((), ("EventData",), (), None, "STRING", entry="Image", entry_variant=True)
+    assert r.whole_variant is False
+
+
+def test_resolve_named_entry_of_array_of_struct():
+    r = resolve_schema_path(SCHEMA, "data[QueryName]")      # column name ignores case
+    assert r == FieldPath((), ("Data",), (), None, "STRING", entry="QueryName", entry_variant=False)
+
+
+@pytest.mark.parametrize("path, reason", [
+    ("eventName[Image]", "needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field"),
+    ("userIdentity.arn[Image]", "needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field"),
+    ("target[Image]", "needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field"),
+    ("resources[Image]", "needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field"),
+    ("nosuch[Image]", "'nosuch' is not a declared field"),
+])
+def test_resolve_named_entry_fails(path, reason):
+    with pytest.raises(UnknownFieldError, match=re.escape(reason)):
+        resolve_schema_path(SCHEMA, path)
 
 
 def test_ocsf_path_is_field_path():

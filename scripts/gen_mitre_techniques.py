@@ -1,6 +1,7 @@
 """Generate mitre_techniques.json from the official MITRE ATT&CK STIX bundle.
 
-Dev-only, run manually to refresh the bundled technique-name table:
+Maps each technique id to its name and ATT&CK tactics (kill chain phase names, for example
+``command-and-control``). Dev-only, run manually to refresh the bundled table:
     python scripts/gen_mitre_techniques.py
 Requires internet access. Uses only the standard library.
 """
@@ -35,7 +36,11 @@ def main() -> None:
             None,
         )
         if ext:
-            mapping[ext["external_id"]] = obj["name"]
+            tactics = [
+                p["phase_name"] for p in obj.get("kill_chain_phases", [])
+                if p.get("kill_chain_name") == "mitre-attack"
+            ]
+            mapping[ext["external_id"]] = {"name": obj["name"], "tactics": tactics}
     with open(OUT, "w", encoding="utf-8") as fh:
         json.dump(dict(sorted(mapping.items())), fh, indent=2, ensure_ascii=False)
         fh.write("\n")

@@ -4,6 +4,7 @@ import copy
 import json
 import re
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Pattern, Sequence, Tuple, Type, Union
 
 import yaml
@@ -53,6 +54,9 @@ if TYPE_CHECKING:  # pragma: no cover
     # Imported lazily at runtime: the profile module imports this package (import cycle).
     from sigma.pipelines.databricks.lakewatch.profile import Profile
 
+
+# Type of a Windows EventData-style VARIANT: a list of {_Name, _VALUE} elements.
+_NAMED_ENTRY_TYPE = "ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>"
 
 class LakewatchConversionError(SigmaConversionError):
     """Conversion error of the Lakewatch v2 parsed-table mode.
@@ -268,6 +272,7 @@ class DatabricksBackend(TextQueryBackend):
                  lakewatch_profiles_dir: Optional[Union[str, Sequence[str]]] = None,
                  lakewatch_schemas: Optional[Union[str, Sequence[str]]] = None,
                  table_map: Optional[Union[str, Sequence[str]]] = None,
+                 output_dir: Optional[str] = None,
                  **kwargs):
         """Initialize Databricks backend with optional Lakewatch, raw-log, CIDR and OCSF options.
 
@@ -275,6 +280,9 @@ class DatabricksBackend(TextQueryBackend):
         ``parsers`` (profile ids to convert for), ``lakewatch_profiles_dir`` (extra profile
         directories), ``lakewatch_schemas`` (extra parser schema files) and ``table_map``
         (``profile:table`` pairs).
+
+        ``output_dir`` makes ``lakewatch_v2`` write one ``<rule_name>.yaml`` file per rule into
+        that directory instead of returning a multi-document YAML file.
         """
         super().__init__(processing_pipeline, collect_errors, **kwargs)
         self._raw_log_field_set = bool(raw_log_field)
@@ -304,6 +312,7 @@ class DatabricksBackend(TextQueryBackend):
         self.lakewatch_profiles_dir = self._split_list_option(lakewatch_profiles_dir)
         self.lakewatch_schemas = self._split_list_option(lakewatch_schemas)
         self.table_map = self._split_list_option(table_map)
+        self.output_dir = (output_dir or "").strip() or None
         # Parsed-table mode state: the selected (profile, schema, table) triples, set up lazily
         # on the first parsed-mode rule, and the one the current rule is converted for.
         self._selected: Optional[List[Tuple["Profile", ParserSchema, str]]] = None
@@ -403,8 +412,11 @@ class DatabricksBackend(TextQueryBackend):
         """Render a field path as exists() levels (array, lambda variable) and the element expression.
 
         VARIANT keys are extracted with try_variant_get() in parsed-table mode and with the
-        ``col:path`` syntax plus a cast in OCSF mode.
+        ``col:path`` syntax plus a cast in OCSF mode. A named entry ``Field[Name]`` is the
+        ``_VALUE`` of the first ``{_Name, _VALUE}`` element with that name.
         """
+        if path.entry is not None:
+            return [], self._named_entry(path)
         levels: List[Tuple[str, str]] = []
         base: Optional[str] = None
         for depth, segments in enumerate(path.arrays):
@@ -418,6 +430,14 @@ class DatabricksBackend(TextQueryBackend):
             else:
                 leaf = self._json_cast(f"{leaf}:{self._json_path(path.json_path)}", value)
         return levels, leaf
+
+    def _named_entry(self, path: FieldPath) -> str:
+        """Value of a named entry of a ``{_Name, _VALUE}`` list (VARIANT or ARRAY<STRUCT>)."""
+        source = self._struct_ref(None, path.leaf)
+        if path.entry_variant:
+            source = f"try_variant_get({source}, '$', '{_NAMED_ENTRY_TYPE}')"
+        name = self.sql_quote_regex(path.entry or "")
+        return f"try_element_at(filter({source}, e -> e._Name = '{name}'), 1)._VALUE"
 
     @staticmethod
     def _wrap_exists(levels: List[Tuple[str, str]], expr: Any) -> Any:
@@ -1016,7 +1036,7 @@ class DatabricksBackend(TextQueryBackend):
         """Field references are only supported between plain columns and STRUCT members."""
         assert self._current_profile is not None
         ref_path = self._resolve_parsed_field(ref.field)
-        if path.arrays or path.json_path or ref_path.arrays or ref_path.json_path:
+        if any(p.arrays or p.json_path or p.entry is not None for p in (path, ref_path)):
             raise self._parsed_error(
                 "field references to nested ARRAY/VARIANT fields are not supported "
                 f"(profile {self._current_profile[0].profile})"
@@ -1250,7 +1270,36 @@ class DatabricksBackend(TextQueryBackend):
                 candidate = name[:V2_RULE_NAME_MAX_LEN - len(suffix)] + suffix
             used.add(candidate)
             doc["rule_name"] = candidate
+        if self.output_dir:
+            return self._write_lakewatch_v2_files(documents, self.output_dir)
         return self._dump_lakewatch_documents(documents)
+
+    @classmethod
+    def _write_lakewatch_v2_files(cls, documents: List[Dict[str, Any]], output_dir: str) -> str:
+        """Write each document to ``<output_dir>/<rule_name>.yaml`` and return a summary comment.
+
+        Rule names are unique and contain only ``[a-z0-9_]``, so they are safe file names.
+        Existing files with the same name are overwritten; other files are left alone.
+        """
+        directory = Path(output_dir).expanduser()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            for doc in documents:
+                (directory / f"{doc['rule_name']}.yaml").write_text(
+                    cls._dump_lakewatch_documents([doc]), encoding="utf-8")
+        except OSError as e:
+            raise SigmaConfigurationError(f"cannot write rules to output_dir {directory}: {e}") from None
+        return f"# Wrote {len(documents)} Lakewatch v2 rule(s) to {directory}"
+
+    def finalize(self, queries: List[Any], output_format: str) -> Any:
+        """Finalize the output, warning when ``output_dir`` is set for a format that ignores it."""
+        if self.output_dir and output_format != "lakewatch_v2":
+            warnings.warn(
+                f"The output_dir option is supported only by the lakewatch_v2 format and is "
+                f"ignored for {output_format}.",
+                UserWarning, stacklevel=2,
+            )
+        return super().finalize(queries, output_format)
 
     def _warn_lakewatch_v2_options(self) -> None:
         """Warn once per conversion about options that make the v2 rules fail or are ignored."""

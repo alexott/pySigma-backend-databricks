@@ -38,6 +38,10 @@ SCHEMA = {
                 "tlsDetails.tls-version": {"type": "STRING", "storage": "struct"},
                 "items": {"type": "ARRAY", "storage": "column", "element": "STRUCT"},
                 "items[].name": {"type": "STRING", "storage": "struct"},
+                "EventData": {"type": "VARIANT", "storage": "column"},
+                "Data": {"type": "ARRAY", "storage": "column", "element": "STRUCT"},
+                "Data[]._Name": {"type": "STRING", "storage": "struct"},
+                "Data[]._VALUE": {"type": "STRING", "storage": "struct"},
             },
         }
     }
@@ -59,6 +63,9 @@ EXTRA_FIELDS = {
     "Src": "eventsource",
     "Tls": "tlsDetails",
     "Items": "items",
+    "Image": "EventData[Image]",
+    "QueryName": ["EventData[QueryName]", "Data[QueryName]"],
+    "Quote": "EventData[O'Brien]",
 }
 
 
@@ -402,10 +409,59 @@ def test_parsed_fieldref_nested_fails(env, field, ref):
     condition: sel""")
 
 
+EVENT_DATA = "try_variant_get(EventData, '$', 'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>')"
+
+
+def _entry(source, name):
+    return f"try_element_at(filter({source}, e -> e._Name = '{name}'), 1)._VALUE"
+
+
+def test_parsed_named_entry_variant(env):
+    sql = _one(env, """    sel:
+        Image|endswith: '\\cmd.exe'
+    condition: sel""")
+    assert f"endswith(lower({_entry(EVENT_DATA, 'Image')}), lower('\\\\cmd.exe'))" in sql
+
+
+def test_parsed_named_entry_targets_ored(env):
+    sql = _one(env, """    sel:
+        QueryName: evil.com
+    condition: sel""")
+    assert (f"lower({_entry(EVENT_DATA, 'QueryName')}) = lower('evil.com') OR "
+            f"lower({_entry('Data', 'QueryName')}) = lower('evil.com')") in sql
+
+
+def test_parsed_named_entry_regex_or_number_and_null(env):
+    sql = _one(env, """    sel:
+        Image|contains: [a, b, c]
+    num:
+        Image: 22
+    nul:
+        Image: null
+    condition: sel or num or nul""")
+    assert f"{_entry(EVENT_DATA, 'Image')} rlike '(?iu).*(a|b|c).*'" in sql
+    assert f"lower({_entry(EVENT_DATA, 'Image')}) = lower('22')" in sql   # STRING value
+    assert f"{_entry(EVENT_DATA, 'Image')} is null" in sql
+
+
+def test_parsed_named_entry_quotes_name(env):
+    sql = _one(env, """    sel:
+        Quote: x
+    condition: sel""")
+    assert _entry(EVENT_DATA, "O\\'Brien") in sql
+
+
+def test_parsed_named_entry_fieldref_fails(env):
+    with pytest.raises(SigmaConversionError, match="field references to nested ARRAY/VARIANT"):
+        _one(env, """    sel:
+        Image|fieldref: eventName
+    condition: sel""")
+
+
 def test_parsed_unmapped_field_fails(env):
     with pytest.raises(SigmaTransformationError, match="not mapped by profile p_ct"):
         _one(env, """    sel:
-        Image: x
+        Unmapped: x
     condition: sel""")
 
 
@@ -472,7 +528,7 @@ def test_parsed_no_matching_profile_collect_errors(env):
 def test_parsed_profile_error_collected_with_original_rule(env):
     backend = env(parsers="p_ct", table_name="t", collect_errors=True)
     rule = _rule("""    sel:
-        Image: x
+        Unmapped: x
     condition: sel""")
     assert backend.convert_rule(rule, "lakewatch_v2") == []
     assert len(backend.errors) == 1
