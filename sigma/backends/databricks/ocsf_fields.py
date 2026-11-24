@@ -1,8 +1,9 @@
 """OCSF attribute metadata used to render nested OCSF field paths in Databricks SQL."""
 import json
 import os
-from dataclasses import dataclass
 from typing import Optional, Tuple
+
+from .field_paths import FieldPath
 
 _ATTRIBUTES_PATH = os.path.join(os.path.dirname(__file__), "ocsf_attributes.json")
 with open(_ATTRIBUTES_PATH, encoding="utf-8") as _fh:
@@ -17,19 +18,7 @@ ARRAY_ATTRIBUTES: frozenset[str] = frozenset(_ATTRIBUTES["arrays"])
 FREE_FORM_ATTRIBUTES: frozenset[str] = frozenset(_ATTRIBUTES["free_form"])
 
 
-@dataclass(frozen=True)
-class OcsfPath:
-    """A dotted OCSF field name split at array and free-form attribute boundaries.
-
-    ``arrays`` holds one segment tuple per array level, relative to the previous level's
-    element (the first one is relative to the row). ``leaf`` is the struct path inside the
-    innermost element (empty if the path ends at an array of scalars), and ``json_path`` the
-    keys inside a free-form attribute that ends ``leaf`` (empty if there is none).
-    """
-
-    arrays: Tuple[Tuple[str, ...], ...]
-    leaf: Tuple[str, ...]
-    json_path: Tuple[str, ...]
+OcsfPath = FieldPath
 
 
 def split_ocsf_path(field: str) -> Optional[OcsfPath]:
