@@ -23,6 +23,7 @@ def _backend(**kwargs):
     """Backend with the required v2 catalog/schema options set."""
     kwargs.setdefault("catalog_name", "cat")
     kwargs.setdefault("schema_name", "sch")
+    kwargs.setdefault("ocsf", True)
     return DatabricksBackend(**kwargs)
 
 
@@ -151,7 +152,7 @@ def test_v2_error_when_no_table_resolvable():
 ])
 def test_v2_error_without_catalog_or_schema(options):
     with pytest.raises(SigmaConversionError, match="catalog_name and schema_name"):
-        _doc(DatabricksBackend(**options), BASE)
+        _doc(DatabricksBackend(ocsf=True, **options), BASE)
 
 
 def test_v2_catalog_and_schema_stripped():

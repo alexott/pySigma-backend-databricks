@@ -4,14 +4,15 @@ import copy
 import json
 import re
 import warnings
-from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple, Type, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Pattern, Sequence, Tuple, Type, Union
 
 import yaml
 from sigma.conditions import ConditionAND, ConditionFieldEqualsValueExpression, ConditionItem, ConditionNOT, ConditionOR
 from sigma.conversion.base import TextQueryBackend
 from sigma.conversion.deferred import DeferredQueryExpression
 from sigma.conversion.state import ConversionState
-from sigma.exceptions import SigmaConversionError
+from sigma.exceptions import SigmaConfigurationError, SigmaConversionError
+from sigma.processing.pipeline import ProcessingPipeline
 from sigma.rule import SigmaLevel, SigmaRule
 from sigma.types import (
     CompareOperators,
@@ -27,6 +28,7 @@ from sigma.types import (
     SpecialChars,
 )
 
+from .field_paths import FieldPath, UnknownFieldError, resolve_schema_path
 from .lakewatch_maps import (
     FIDELITY_MAP,
     SEVERITY_MAP,
@@ -44,7 +46,12 @@ from .lakewatch_maps import (
     to_v2_rule_name,
     truncate,
 )
-from .ocsf_fields import OcsfPath, split_ocsf_path
+from .ocsf_fields import split_ocsf_path
+from .schema_catalog import ParserSchema, SchemaCatalog
+
+if TYPE_CHECKING:  # pragma: no cover
+    # Imported lazily at runtime: the profile module imports this package (import cycle).
+    from sigma.pipelines.databricks.lakewatch.profile import Profile
 
 
 class _LakewatchDumper(yaml.SafeDumper):
@@ -233,8 +240,18 @@ class DatabricksBackend(TextQueryBackend):
                  catalog_name: Optional[str] = None, schema_name: Optional[str] = None,
                  warehouse_id: Optional[str] = None, extend_lookback: Optional[str] = None,
                  enabled: Optional[Union[bool, str]] = None,
+                 parsers: Optional[Union[str, Sequence[str]]] = None,
+                 lakewatch_profiles_dir: Optional[Union[str, Sequence[str]]] = None,
+                 lakewatch_schemas: Optional[Union[str, Sequence[str]]] = None,
+                 table_map: Optional[Union[str, Sequence[str]]] = None,
                  **kwargs):
-        """Initialize Databricks backend with optional Lakewatch, raw-log, CIDR and OCSF options."""
+        """Initialize Databricks backend with optional Lakewatch, raw-log, CIDR and OCSF options.
+
+        Lakewatch v2 parsed-table options (comma-separated strings, as passed by sigma-cli):
+        ``parsers`` (profile ids to convert for), ``lakewatch_profiles_dir`` (extra profile
+        directories), ``lakewatch_schemas`` (extra parser schema files) and ``table_map``
+        (``profile:table`` pairs).
+        """
         super().__init__(processing_pipeline, collect_errors, **kwargs)
         self._raw_log_field_set = bool(raw_log_field)
         if raw_log_field:
@@ -259,6 +276,14 @@ class DatabricksBackend(TextQueryBackend):
         self.extend_lookback = extend_lookback
         # Lakewatch v2 rules are emitted disabled unless enabled=true: review before scheduling.
         self.enabled = bool(self._parse_bool_option("enabled", enabled))
+        self.parsers = self._split_list_option(parsers)
+        self.lakewatch_profiles_dir = self._split_list_option(lakewatch_profiles_dir)
+        self.lakewatch_schemas = self._split_list_option(lakewatch_schemas)
+        self.table_map = self._split_list_option(table_map)
+        # Parsed-table mode state: the selected (profile, schema, table) triples, set up lazily
+        # on the first parsed-mode rule, and the one the current rule is converted for.
+        self._selected: Optional[List[Tuple["Profile", ParserSchema, str]]] = None
+        self._current_profile: Optional[Tuple["Profile", ParserSchema, str]] = None
 
     @staticmethod
     def _parse_bool_option(name: str, value: Optional[Union[bool, str]]) -> Optional[bool]:
@@ -275,18 +300,26 @@ class DatabricksBackend(TextQueryBackend):
         raise ValueError(f"Invalid value for backend option {name}: {value!r} (expected true, false or auto)")
 
     def convert_rule(self, rule: SigmaRule, *args, **kwargs):
-        """Convert a rule, remembering it and the output format to decide on OCSF field rendering."""
+        """Convert a rule, remembering it and the output format to decide on OCSF field rendering.
+
+        In Lakewatch v2 parsed-table mode the rule is converted once per selected parser
+        profile that matches its logsource (see ``_convert_rule_parsed``).
+        """
         output_format = args[0] if args else kwargs.get("output_format")
         self._current_rule = rule
         self._current_format = output_format or self.default_format
+        if self._parsed_mode(self._current_format):
+            return self._convert_rule_parsed(rule, self._current_format, args, kwargs)
         return super().convert_rule(rule, *args, **kwargs)
 
     def _ocsf_enabled(self) -> bool:
         """Whether field names are OCSF attribute paths that need array/free-form aware rendering."""
         if self.ocsf is not None:
             return self.ocsf
-        if self._current_format in ("lakewatch", "lakewatch_v2"):
+        if self._current_format == "lakewatch":
             return True
+        if self._current_format == "lakewatch_v2":
+            return not self._parsed_mode(self._current_format)
         rule = self._current_rule
         return rule is not None and any(
             item_id.startswith("ocsf_") for item_id in getattr(rule, "applied_processing_items", ())
@@ -298,8 +331,17 @@ class DatabricksBackend(TextQueryBackend):
             return self.ocsf_raw_log_field
         return self.raw_log_field
 
-    def _ocsf_path(self, field: Optional[str]) -> Optional[OcsfPath]:
-        if not field or not self._ocsf_enabled():
+    def _field_path(self, field: Optional[str]) -> Optional[FieldPath]:
+        """Path of a field that needs backend rendering, or None to render it as a plain name.
+
+        In parsed-table mode every field is resolved against the current profile's parser
+        schema; otherwise OCSF paths with arrays or free-form attributes are split.
+        """
+        if not field:
+            return None
+        if self._current_profile is not None:
+            return self._resolve_parsed_field(field)
+        if not self._ocsf_enabled():
             return None
         return split_ocsf_path(field)
 
@@ -333,8 +375,12 @@ class DatabricksBackend(TextQueryBackend):
             return expr
         return f"{expr}::string"
 
-    def _render_ocsf_path(self, path: OcsfPath, value: Any) -> Tuple[List[Tuple[str, str]], str]:
-        """Render an OCSF path as exists() levels (array, lambda variable) and the element expression."""
+    def _render_path(self, path: FieldPath, value: Any) -> Tuple[List[Tuple[str, str]], str]:
+        """Render a field path as exists() levels (array, lambda variable) and the element expression.
+
+        VARIANT keys are extracted with try_variant_get() in parsed-table mode and with the
+        ``col:path`` syntax plus a cast in OCSF mode.
+        """
         levels: List[Tuple[str, str]] = []
         base: Optional[str] = None
         for depth, segments in enumerate(path.arrays):
@@ -343,7 +389,10 @@ class DatabricksBackend(TextQueryBackend):
             base = var
         leaf = self._struct_ref(base, path.leaf)
         if path.json_path:
-            leaf = self._json_cast(f"{leaf}:{self._json_path(path.json_path)}", value)
+            if self._current_profile is not None:
+                leaf = self._variant_get(leaf, path, value)
+            else:
+                leaf = self._json_cast(f"{leaf}:{self._json_path(path.json_path)}", value)
         return levels, leaf
 
     @staticmethod
@@ -364,11 +413,16 @@ class DatabricksBackend(TextQueryBackend):
 
     def convert_condition_field_eq_val(self, cond: ConditionFieldEqualsValueExpression,
                                        state: ConversionState) -> Union[str, DeferredQueryExpression]:
-        """Convert field = value conditions, rendering OCSF array and free-form fields."""
-        path = self._ocsf_path(cond.field)
+        """Convert field = value conditions, rendering array, STRUCT and VARIANT/free-form fields."""
+        path = self._field_path(cond.field)
+        if path is not None and self._current_profile is not None:
+            if isinstance(cond.value, SigmaFieldReference):
+                self._check_parsed_field_reference(path, cond.value)
+                return super().convert_condition_field_eq_val(cond, state)
+            cond = self._coerce_parsed_value(path, cond)
         if path is None or isinstance(cond.value, SigmaFieldReference):
             return super().convert_condition_field_eq_val(cond, state)
-        levels, leaf = self._render_ocsf_path(path, cond.value)
+        levels, leaf = self._render_path(path, cond.value)
         inner = copy.copy(cond)
         inner.field = self._ocsf_inner_field
         self._field_overrides[self._ocsf_inner_field] = leaf
@@ -377,6 +431,18 @@ class DatabricksBackend(TextQueryBackend):
         finally:
             del self._field_overrides[self._ocsf_inner_field]
         return self._wrap_exists(levels, expr)
+
+    def convert_condition_field_eq_val_cidr(self, cond: ConditionFieldEqualsValueExpression,
+                                            state: ConversionState) -> Union[str, DeferredQueryExpression]:
+        """Convert CIDR matches, substituting a prepared element-level expression for the field.
+
+        pySigma formats cidr_expression with the raw field name instead of escape_and_quote_field().
+        """
+        override = self._field_overrides.get(cond.field) if cond.field else None
+        if override is not None:
+            cond = copy.copy(cond)
+            cond.field = override
+        return super().convert_condition_field_eq_val_cidr(cond, state)
 
     def make_sql_string(self, s: SigmaString):
         """Convert a SigmaString to a quoted SQL string literal."""
@@ -665,13 +731,13 @@ class DatabricksBackend(TextQueryBackend):
             # Build the optimized regex pattern
             regex_pattern = self._build_regex_pattern(pattern_type, values)
 
-            # Use the re_expression format with escaped field name (or OCSF element expression)
-            path = self._ocsf_path(field_name)
+            # Use the re_expression format with escaped field name (or rendered element expression)
+            path = self._field_path(field_name)
             levels: List[Tuple[str, str]] = []
             if path is None:
                 field = self.escape_and_quote_field(field_name)
             else:
-                levels, field = self._render_ocsf_path(path, SigmaString(""))
+                levels, field = self._render_path(path, SigmaString(""))
             if self.re_expression:
                 return self._wrap_exists(levels, self.re_expression.format(field=field, regex=regex_pattern))
             raise ValueError("re_expression is not defined")
@@ -679,11 +745,265 @@ class DatabricksBackend(TextQueryBackend):
         # Fall back to default OR conversion
         return super().convert_condition_or(cond, state)
 
+    # --- Lakewatch v2 parsed-table mode ---------------------------------------------------
+    # Rules are converted against the output tables of Lakewatch parsers. Each selected mapping
+    # profile (-O parsers=...) that matches the rule's logsource gets its own copy of the rule,
+    # processed by the user pipeline followed by the profile pipeline, and fields are rendered
+    # from the parser schema (STRUCT dot access, try_variant_get() for VARIANT keys, exists()
+    # over arrays).
+
+    @staticmethod
+    def _parsed_error(message: str) -> SigmaConversionError:
+        """SigmaConversionError with just a message, like the other errors of this backend."""
+        return SigmaConversionError(message)  # type: ignore[arg-type]
+
+    @staticmethod
+    def _split_list_option(value: Optional[Union[str, Sequence[str]]]) -> List[str]:
+        """Split a comma-separated option (or a list of them), stripping blanks and empty items."""
+        if value is None:
+            return []
+        items = [value] if isinstance(value, str) else list(value)
+        return [part.strip() for item in items for part in str(item).split(",") if part.strip()]
+
+    def _ocsf_pipeline_selected(self) -> bool:
+        """Whether the processing pipeline contains OCSF items (identifier prefix ``ocsf_``)."""
+        pipeline = self.processing_pipeline
+        return pipeline is not None and any(
+            (item.identifier or "").startswith("ocsf_") for item in pipeline.items
+        )
+
+    def _parsed_mode(self, output_format: Optional[str]) -> bool:
+        """Whether rules are converted for Lakewatch parser tables (the lakewatch_v2 default).
+
+        OCSF mode is used instead with ``-O ocsf=true`` or a pipeline with ``ocsf_`` items.
+        ``-O parsers`` with any other format, or together with OCSF mode, is an error.
+        """
+        if output_format != "lakewatch_v2":
+            if self.parsers:
+                raise SigmaConfigurationError(
+                    f"-O parsers=... is only supported by the lakewatch_v2 format, not {output_format}"
+                )
+            return False
+        if self.ocsf is True or self._ocsf_pipeline_selected():
+            if self.parsers:
+                raise SigmaConfigurationError(
+                    "-O parsers=... selects Lakewatch parsed tables and cannot be combined with "
+                    "OCSF mode (-O ocsf=true or an ocsf_ processing pipeline)"
+                )
+            return False
+        return True
+
+    def _parse_table_map(self) -> Dict[str, str]:
+        """Parse ``table_map`` items (``profile:table``, split on the first ':')."""
+        tables: Dict[str, str] = {}
+        for item in self.table_map:
+            pid, sep, table = (part.strip() for part in item.partition(":"))
+            if not sep or not pid or not table:
+                raise SigmaConfigurationError(
+                    f"malformed -O table_map entry '{item}': expected <profile>:<table>"
+                )
+            if pid in tables:
+                raise SigmaConfigurationError(f"duplicate -O table_map entry for profile {pid}")
+            tables[pid] = table
+        return tables
+
+    def _parsed_setup(self) -> None:
+        """Load schemas and profiles and resolve the selected profiles and their tables (once).
+
+        Raises SigmaConfigurationError for missing or unknown parsers, invalid profiles and
+        missing or ambiguous tables. Stores ``self._selected`` in ``-O parsers`` order.
+        """
+        if self._selected is not None:
+            return
+        from sigma.pipelines.databricks.lakewatch.profile import load_profiles, validate_profile
+
+        catalog = SchemaCatalog.load(self.lakewatch_schemas)
+        profiles = load_profiles(self.lakewatch_profiles_dir)
+        available = ", ".join(sorted(profiles))
+        if not self.parsers:
+            raise SigmaConfigurationError(
+                f"-O parsers=... is required for lakewatch_v2 parsed tables; available: {available}"
+            )
+        duplicates = sorted({pid for pid in self.parsers if self.parsers.count(pid) > 1})
+        if duplicates:
+            raise SigmaConfigurationError(
+                f"duplicate Lakewatch parser profiles in -O parsers: {', '.join(duplicates)}"
+            )
+        unknown = [pid for pid in self.parsers if pid not in profiles]
+        if unknown:
+            raise SigmaConfigurationError(
+                f"unknown Lakewatch parser profiles in -O parsers: {', '.join(unknown)}; "
+                f"available: {available}"
+            )
+        tables = self._parse_table_map()
+        unselected = [pid for pid in tables if pid not in self.parsers]
+        if unselected:
+            raise SigmaConfigurationError(
+                f"-O table_map names profiles that are not selected in -O parsers: {', '.join(unselected)}"
+            )
+        table_name = (self.table_name or "").strip()
+        if table_name and len(self.parsers) > 1:
+            raise SigmaConfigurationError(
+                "-O table_name can only be used with exactly one parser; "
+                "use -O table_map=<profile>:<table>,... for several parsers"
+            )
+        selected: List[Tuple["Profile", ParserSchema, str]] = []
+        missing: List[str] = []
+        for pid in self.parsers:
+            profile = profiles[pid]
+            schema = catalog.get(profile.parser)
+            validate_profile(profile, schema)
+            table = tables.get(pid) or table_name
+            if not table:
+                missing.append(pid)
+                continue
+            selected.append((profile, schema, table))
+        if missing:
+            raise SigmaConfigurationError(
+                f"no table for Lakewatch parser profiles {', '.join(missing)}: set "
+                "-O table_map=<profile>:<table>,... (or -O table_name=... with exactly one parser)"
+            )
+        self._selected = selected
+
+    def _convert_rule_parsed(self, rule: SigmaRule, output_format: str,
+                             args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> List[Any]:
+        """Convert a rule once per selected profile matching its logsource, concatenating results."""
+        self._parsed_setup()
+        assert self._selected is not None
+        matches = [
+            (profile, schema, table, block)
+            for profile, schema, table in self._selected
+            if (block := profile.block_for(rule.logsource)) is not None
+        ]
+        if not matches:
+            ls = rule.logsource
+            error = self._parsed_error(
+                f"no selected Lakewatch parser profile matches logsource "
+                f"{ls.product}/{ls.category}/{ls.service}; "
+                f"selected: {', '.join(p.profile for p, _, _ in self._selected)}"
+            )
+            if self.collect_errors:
+                self.errors.append((rule, error))
+                return []
+            raise error
+        # Restore the pipeline set up by convert() (needed by finalize()); None otherwise, so
+        # that conversions to other formats initialize their pipeline normally.
+        previous: Any = getattr(self, "last_processing_pipeline", None)
+        results: List[Any] = []
+        try:
+            for profile, schema, table, block in matches:
+                results.extend(self._convert_one_profile(
+                    rule, output_format, (profile, schema, table), block, args, kwargs))
+        finally:
+            self.last_processing_pipeline = previous
+            self._current_profile = None
+            self._current_rule = rule
+        return results
+
+    def _convert_one_profile(self, rule: SigmaRule, output_format: str,
+                             selected: Tuple["Profile", ParserSchema, str], block: Any,
+                             args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> List[Any]:
+        """Convert a copy of the rule with the user pipeline followed by the profile pipeline."""
+        from sigma.pipelines.databricks.lakewatch import build_profile_pipeline
+
+        pipeline = (
+            self.backend_processing_pipeline
+            + (self.processing_pipeline if self.processing_pipeline is not None else ProcessingPipeline())
+            + self.output_format_processing_pipeline[output_format]
+            + build_profile_pipeline(selected[0], block)
+        )
+        # Same variables as Backend.init_processing_pipeline().
+        pipeline.vars.update({"backend_" + key: value for key, value in self.backend_options.items()})
+        pipeline.vars["backend"] = self.name
+        pipeline.vars["output_format"] = output_format
+        self.last_processing_pipeline = pipeline
+        self._current_profile = selected
+        rule_copy = copy.deepcopy(rule)
+        self._current_rule = rule_copy
+        first_error = len(self.errors)
+        try:
+            return super().convert_rule(rule_copy, *args, **kwargs)
+        finally:
+            # Report collected errors against the rule that was passed in, not its copy.
+            self.errors[first_error:] = [
+                (rule if failed is rule_copy else failed, error)
+                for failed, error in self.errors[first_error:]
+            ]
+
+    def _resolve_parsed_field(self, field: str) -> FieldPath:
+        """Resolve a field against the current profile's parser schema, failing closed."""
+        assert self._current_profile is not None
+        profile, schema, _ = self._current_profile
+        try:
+            path = resolve_schema_path(schema, field)
+        except UnknownFieldError as e:
+            raise self._parsed_error(f"{e} (profile {profile.profile})") from None
+        if path.whole_variant:
+            raise self._parsed_error(
+                f"comparison against the whole VARIANT column {field} is not supported yet "
+                f"(profile {profile.profile})"
+            )
+        return path
+
+    def _check_parsed_field_reference(self, path: FieldPath, ref: SigmaFieldReference) -> None:
+        """Field references are only supported between plain columns and STRUCT members."""
+        assert self._current_profile is not None
+        ref_path = self._resolve_parsed_field(ref.field)
+        if path.arrays or path.json_path or ref_path.arrays or ref_path.json_path:
+            raise self._parsed_error(
+                "field references to nested ARRAY/VARIANT fields are not supported "
+                f"(profile {self._current_profile[0].profile})"
+            )
+
+    def convert_condition_field_eq_field_escape_and_quote(self, field1: str, field2: str) -> Tuple[str, str]:
+        """Render both fields of a field reference from the parser schema in parsed-table mode."""
+        if self._current_profile is None:
+            return super().convert_condition_field_eq_field_escape_and_quote(field1, field2)
+        return (
+            self._struct_ref(None, self._resolve_parsed_field(field1).leaf),
+            self._struct_ref(None, self._resolve_parsed_field(field2).leaf),
+        )
+
+    @staticmethod
+    def _coerce_parsed_value(path: FieldPath, cond: ConditionFieldEqualsValueExpression
+                             ) -> ConditionFieldEqualsValueExpression:
+        """Compare numbers and booleans against STRING fields as string literals (on a copy)."""
+        value = cond.value
+        if (path.json_type or path.leaf_type) != "STRING" or not isinstance(value, (SigmaNumber, SigmaBool)):
+            return cond
+        coerced = copy.copy(cond)
+        if isinstance(value, SigmaBool):
+            coerced.value = SigmaString("true" if value.boolean else "false")
+        else:
+            coerced.value = SigmaString(str(value))
+        return coerced
+
+    def _variant_get(self, expr: str, path: FieldPath, value: Any) -> str:
+        """try_variant_get() of a key inside a VARIANT, typed by the schema or the compared value."""
+        json_path = self._json_path(path.json_path)
+        json_path = ("$" if json_path.startswith("[") else "$.") + json_path
+        if path.json_type and path.json_type not in ("VARIANT", "STRUCT"):
+            type_name = path.json_type.lower()
+        elif isinstance(value, (SigmaNumber, SigmaCompareExpression)):
+            type_name = "double"
+        elif isinstance(value, SigmaBool):
+            type_name = "boolean"
+        else:
+            type_name = "string"
+        return f"try_variant_get({expr}, '{self.sql_quote_regex(json_path)}', '{type_name}')"
+
+    # --- end of Lakewatch v2 parsed-table mode ---------------------------------------------
+
     # TODO: implement custom methods for query elements not covered by the default backend base.
     # Documentation: https://sigmahq-pysigma.readthedocs.io/en/latest/Backends.html
 
     def _lakewatch_table(self, rule: SigmaRule) -> str:
-        """FROM table of a Lakewatch rule: the table_name option or the table of the OCSF class."""
+        """FROM table of a Lakewatch rule.
+
+        The parsed-mode profile table, the table_name option or the table of the OCSF class.
+        """
+        if self._current_profile is not None:
+            return self._current_profile[2]
         table = self.table_name or resolve_ocsf_table(rule)
         if not table:
             raise SigmaConversionError(
