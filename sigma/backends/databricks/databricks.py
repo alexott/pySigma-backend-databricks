@@ -54,6 +54,30 @@ if TYPE_CHECKING:  # pragma: no cover
     from sigma.pipelines.databricks.lakewatch.profile import Profile
 
 
+class LakewatchConversionError(SigmaConversionError):
+    """Conversion error of the Lakewatch v2 parsed-table mode.
+
+    Constructed with pySigma's ``SigmaConversionError(rule, source, message)`` signature, but
+    rendered as ``<reason> (rule '<title>', <location>)``: the base class appends the
+    ``repr()`` of the whole rule. The location is omitted if the rule has no source.
+    """
+
+    def __init__(self, rule: Optional[SigmaRule], reason: str):
+        """Create the error for ``rule`` (its source is used as the location)."""
+        super().__init__(rule, getattr(rule, "source", None), reason)  # type: ignore[arg-type]
+        self.reason = reason
+
+    def __str__(self) -> str:
+        """Return the reason followed by the rule title and location, when known."""
+        details = []
+        title = getattr(self.rule, "title", None)
+        if title:
+            details.append(f"rule '{title}'")
+        if self.source is not None:
+            details.append(str(self.source))
+        return f"{self.reason} ({', '.join(details)})" if details else self.reason
+
+
 class _LakewatchDumper(yaml.SafeDumper):
     """YAML dumper that renders multi-line strings as literal block scalars."""
 
@@ -424,6 +448,13 @@ class DatabricksBackend(TextQueryBackend):
         if path is None or isinstance(cond.value, SigmaFieldReference):
             return super().convert_condition_field_eq_val(cond, state)
         levels, leaf = self._render_path(path, cond.value)
+        if (
+            self._current_profile is not None
+            and isinstance(cond.value, SigmaCompareExpression)
+            and (path.json_type or path.leaf_type) == "STRING"
+        ):
+            # Ordering comparisons on STRING values: compare numerically, NULL if not a number.
+            leaf = f"try_cast({leaf} AS DOUBLE)"
         inner = copy.copy(cond)
         inner.field = self._ocsf_inner_field
         self._field_overrides[self._ocsf_inner_field] = leaf
@@ -755,10 +786,9 @@ class DatabricksBackend(TextQueryBackend):
     # from the parser schema (STRUCT dot access, try_variant_get() for VARIANT keys, exists()
     # over arrays).
 
-    @staticmethod
-    def _parsed_error(message: str) -> SigmaConversionError:
-        """SigmaConversionError with just a message, like the other errors of this backend."""
-        return SigmaConversionError(message)  # type: ignore[arg-type]
+    def _parsed_error(self, message: str) -> SigmaConversionError:
+        """Conversion error for the current rule; ``str()`` starts with ``message``."""
+        return LakewatchConversionError(self._current_rule, message)
 
     @staticmethod
     def _split_list_option(value: Optional[Union[str, Sequence[str]]]) -> List[str]:
@@ -819,6 +849,12 @@ class DatabricksBackend(TextQueryBackend):
         if self._selected is not None:
             return
         from sigma.pipelines.databricks.lakewatch.profile import load_profiles, validate_profile
+
+        if not (self.catalog_name or "").strip() or not (self.schema_name or "").strip():
+            raise SigmaConfigurationError(
+                "Lakewatch v2 rules require the target Unity Catalog location: "
+                "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
+            )
 
         catalog = SchemaCatalog.load(self.lakewatch_schemas)
         profiles = load_profiles(self.lakewatch_profiles_dir)
@@ -926,12 +962,19 @@ class DatabricksBackend(TextQueryBackend):
         first_error = len(self.errors)
         try:
             return super().convert_rule(rule_copy, *args, **kwargs)
+        except LakewatchConversionError as error:
+            if error.rule is rule_copy:
+                error.rule = rule
+            raise
         finally:
             # Report collected errors against the rule that was passed in, not its copy.
             self.errors[first_error:] = [
                 (rule if failed is rule_copy else failed, error)
                 for failed, error in self.errors[first_error:]
             ]
+            for _, error in self.errors[first_error:]:
+                if isinstance(error, LakewatchConversionError) and error.rule is rule_copy:
+                    error.rule = rule
 
     def _resolve_parsed_field(self, field: str) -> FieldPath:
         """Resolve a field against the current profile's parser schema, failing closed."""
@@ -949,12 +992,20 @@ class DatabricksBackend(TextQueryBackend):
         return path
 
     def _check_parsed_struct(self, path: FieldPath, field: str, value: Any) -> None:
-        """Values can't be compared against a whole STRUCT (also the element of ARRAY<STRUCT>).
+        """Values can't be compared against a whole STRUCT (also the element of ARRAY<STRUCT>)
+        or against a declared VARIANT/STRUCT object nested inside a VARIANT.
 
         Null and exists checks remain valid SQL and are allowed.
         """
         assert self._current_profile is not None
-        if path.json_path or path.leaf_type != "STRUCT" or isinstance(value, (SigmaNull, SigmaExists)):
+        if isinstance(value, (SigmaNull, SigmaExists)):
+            return
+        if path.json_path and path.json_type in ("VARIANT", "STRUCT"):
+            raise self._parsed_error(
+                f"comparison against the whole VARIANT column {field} is not supported yet "
+                f"(profile {self._current_profile[0].profile})"
+            )
+        if path.json_path or path.leaf_type != "STRUCT":
             return
         raise self._parsed_error(
             f"comparison against the whole STRUCT field {field} is not supported "

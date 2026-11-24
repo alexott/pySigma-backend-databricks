@@ -25,7 +25,11 @@ SCHEMA = {
                 "userIdentity": {"type": "VARIANT", "storage": "column"},
                 "userIdentity.arn": {"type": "STRING", "storage": "variant"},
                 "userIdentity.type": {"type": "STRING", "storage": "variant"},
+                "userIdentity.sessionContext": {"type": "VARIANT", "storage": "variant"},
+                "userIdentity.webIdFederationData": {"type": "STRUCT", "storage": "variant"},
+                "userIdentity.webIdFederationData.provider": {"type": "STRING", "storage": "variant"},
                 "requestParameters": {"type": "VARIANT", "storage": "column"},
+                "responseElements": {"type": "VARIANT", "storage": "column"},
                 "resources": {"type": "ARRAY", "storage": "column", "element": "VARIANT"},
                 "resources[].arn": {"type": "STRING", "storage": "variant"},
                 "readOnly": {"type": "BOOLEAN", "storage": "column"},
@@ -652,3 +656,152 @@ def test_v2_parsed_rule_name_suffix_kept_when_truncated(env):
     assert names[0].endswith("__p_ct") and names[1].endswith("__p_ct2")
     assert all(len(n) <= 256 for n in names)
     assert names[0] != names[1]
+
+
+# --- final review fixes ----------------------------------------------------------------------
+
+
+def test_parsed_multi_target_prefix_ors_all_targets(env):
+    sql = _one(env, """    sel:
+        params.bucketName: b
+    condition: sel""", extra_fields={"params.*": ["requestParameters.*", "responseElements.*"]})
+    assert (
+        "(lower(try_variant_get(requestParameters, '$.bucketName', 'string')) = lower('b') OR "
+        "lower(try_variant_get(responseElements, '$.bucketName', 'string')) = lower('b'))"
+    ) in sql
+
+
+WHOLE_VARIANT_REASON = (
+    "comparison against the whole VARIANT column requestParameters is not supported yet "
+    "(profile p_ct)"
+)
+
+
+def test_parsed_error_message_starts_with_reason(env):
+    with pytest.raises(SigmaConversionError) as exc:
+        _one(env, """    sel:
+        requestParameters|contains: x
+    condition: sel""", extra_fields={"requestParameters": "requestParameters"})
+    msg = str(exc.value)
+    assert msg.startswith(WHOLE_VARIANT_REASON)
+    assert " in rule " not in msg.split(WHOLE_VARIANT_REASON)[0]
+    assert "CT Rule" in msg
+
+
+def test_parsed_error_message_includes_rule_location(env, tmp_path):
+    from sigma.exceptions import SigmaRuleLocation
+
+    rule_file = tmp_path / "r.yml"
+    rule = SigmaCollection.from_yaml("""
+title: Located
+status: test
+logsource: {product: aws, service: cloudtrail}
+detection:
+    sel:
+        requestParameters|contains: x
+    condition: sel
+""", source=SigmaRuleLocation(rule_file)).rules[0]
+    backend = env(parsers="p_ct", table_name="t", extra_fields={"requestParameters": "requestParameters"},
+                  collect_errors=True)
+    assert backend.convert_rule(rule, "lakewatch_v2") == []
+    (failed, error), = backend.errors
+    assert failed is rule
+    msg = str(error)
+    assert msg.startswith(WHOLE_VARIANT_REASON)
+    assert str(rule_file.resolve()) in msg
+    assert error.source == rule.source
+    assert error.rule is rule
+
+
+@pytest.mark.parametrize("detection, extra, reason", [
+    ("    sel:\n        Tls: x\n    condition: sel", None,
+     "comparison against the whole STRUCT field tlsDetails is not supported (profile p_ct)"),
+    ("    sel:\n        eventName|fieldref: resources.arn\n    condition: sel", None,
+     "field references to nested ARRAY/VARIANT fields are not supported (profile p_ct)"),
+])
+def test_parsed_error_messages_start_with_reason(env, detection, extra, reason):
+    with pytest.raises(SigmaConversionError) as exc:
+        _one(env, detection, extra_fields=extra)
+    assert str(exc.value).startswith(reason)
+
+
+def test_parsed_unknown_field_error_starts_with_reason(env):
+    backend = env(parsers="p_ct", table_name="t")
+    backend._parsed_setup()
+    backend._current_profile = backend._selected[0]
+    backend._current_rule = _rule(SEL)
+    with pytest.raises(SigmaConversionError) as exc:
+        backend._field_path("nosuch")
+    assert str(exc.value).startswith("fx_ct: field 'nosuch' is not usable")
+    assert str(exc.value).endswith("(profile p_ct) (rule 'CT Rule')")
+
+
+def test_parsed_no_match_error_starts_with_reason(env):
+    backend = env(parsers="p_ct", table_name="t")
+    with pytest.raises(SigmaConversionError) as exc:
+        _sqls(backend, _rule(SEL, product="okta", service="okta"))
+    assert str(exc.value).startswith("no selected Lakewatch parser profile matches logsource okta/None/okta")
+
+
+@pytest.mark.parametrize("field", ["userIdentity.sessionContext", "userIdentity.webIdFederationData"])
+def test_parsed_nested_variant_object_comparison_fails(env, field):
+    with pytest.raises(SigmaConversionError) as exc:
+        _one(env, f"""    sel:
+        {field}|contains: x
+    condition: sel""", extra_fields={field: field})
+    assert str(exc.value).startswith(
+        f"comparison against the whole VARIANT column {field} is not supported yet (profile p_ct)"
+    )
+
+
+def test_parsed_nested_variant_object_regex_or_fails(env):
+    with pytest.raises(SigmaConversionError, match="whole VARIANT column userIdentity.sessionContext"):
+        _one(env, """    sel:
+        userIdentity.sessionContext|contains: [a, b, c]
+    condition: sel""", extra_fields={"userIdentity.sessionContext": "userIdentity.sessionContext"})
+
+
+def test_parsed_nested_variant_object_null_and_exists_allowed(env):
+    sql = _one(env, """    sel:
+        userIdentity.sessionContext: null
+        userIdentity.webIdFederationData|exists: true
+    condition: sel""", extra_fields={
+        "userIdentity.sessionContext": "userIdentity.sessionContext",
+        "userIdentity.webIdFederationData": "userIdentity.webIdFederationData",
+    })
+    assert "try_variant_get(userIdentity, '$.sessionContext', 'string') is null" in sql
+    assert "try_variant_get(userIdentity, '$.webIdFederationData', 'string') is not null" in sql
+
+
+def test_parsed_compare_string_column_casts_to_double(env):
+    sql = _one(env, """    sel:
+        eventName|gt: 5
+    condition: sel""")
+    assert "try_cast(eventName AS DOUBLE) > 5" in sql
+
+
+def test_parsed_compare_declared_string_variant_key_casts_to_double(env):
+    sql = _one(env, """    sel:
+        userIdentity.arn|lte: 5
+    condition: sel""")
+    assert "try_cast(try_variant_get(userIdentity, '$.arn', 'string') AS DOUBLE) <= 5" in sql
+
+
+def test_parsed_compare_freeform_variant_key_uses_double(env):
+    sql = _one(env, """    sel:
+        requestParameters.maxResults|gte: 5
+    condition: sel""")
+    assert "try_variant_get(requestParameters, '$.maxResults', 'double') >= 5" in sql
+    assert "try_cast(try_variant_get" not in sql
+
+
+@pytest.mark.parametrize("options", [
+    {"catalog_name": ""},
+    {"schema_name": "  "},
+    {"catalog_name": None, "schema_name": None},
+])
+def test_parsed_missing_catalog_or_schema_is_configuration_error(env, options):
+    backend = env(parsers="p_ct", table_name="t", collect_errors=True, **options)
+    with pytest.raises(SigmaConfigurationError, match="catalog_name and schema_name"):
+        backend.convert(SigmaCollection([_rule(SEL)]), "lakewatch_v2")
+    assert backend.errors == []
