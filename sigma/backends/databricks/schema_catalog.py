@@ -38,25 +38,52 @@ class ParserSchema:
         return self.paths.get(path)
 
 
-def _parse_path(info: Mapping) -> PathInfo:
+class _ShapeError(ValueError):
+    """A schema file whose JSON does not have the catalog shape."""
+
+
+def _parse_path(info: object, where: str) -> PathInfo:
+    if not isinstance(info, dict):
+        raise _ShapeError(f"{where} must be an object")
+    for key in ("type", "storage"):
+        if not isinstance(info.get(key), str):
+            raise _ShapeError(f"{where}: missing '{key}' (a string)")
     allowed = info.get("allowed")
+    if allowed is not None and (
+        not isinstance(allowed, list) or not all(isinstance(a, str) for a in allowed)
+    ):
+        raise _ShapeError(f"{where}: 'allowed' must be a list of strings")
+    element = info.get("element")
+    if element is not None and not isinstance(element, str):
+        raise _ShapeError(f"{where}: 'element' must be a string")
     return PathInfo(
         type=info["type"],
         storage=info["storage"],
         required=bool(info.get("required", False)),
         allowed=tuple(allowed) if allowed is not None else None,
-        element=info.get("element"),
+        element=element,
     )
 
 
-def _parse_catalog(data: Mapping) -> Dict[str, ParserSchema]:
+def _parse_catalog(data: object) -> Dict[str, ParserSchema]:
+    """Parse a catalog document, raising _ShapeError if it is not shaped like one."""
+    if not isinstance(data, dict):
+        raise _ShapeError("top level must be a JSON object")
+    parsers = data.get("parsers", {})
+    if not isinstance(parsers, dict):
+        raise _ShapeError("'parsers' must be an object")
     result = {}
-    for name, parser in data.get("parsers", {}).items():
+    for name, parser in parsers.items():
+        if not isinstance(parser, dict):
+            raise _ShapeError(f"parser '{name}' must be an object")
+        paths = parser.get("paths", {})
+        if not isinstance(paths, dict):
+            raise _ShapeError(f"parser '{name}': 'paths' must be an object")
         result[name] = ParserSchema(
             name=name,
             uuid=parser.get("uuid"),
             version=parser.get("version"),
-            paths={p: _parse_path(i) for p, i in parser.get("paths", {}).items()},
+            paths={p: _parse_path(i, f"parser '{name}': path '{p}'") for p, i in paths.items()},
         )
     return result
 
@@ -87,6 +114,8 @@ class SchemaCatalog:
             try:
                 with open(extra, encoding="utf-8") as fh:
                     schemas.update(_parse_catalog(json.load(fh)))
-            except (OSError, ValueError, KeyError) as exc:
+            except _ShapeError as exc:
+                raise SigmaConfigurationError(f"Invalid parser schema file '{extra}': {exc}") from None
+            except (OSError, ValueError) as exc:
                 raise SigmaConfigurationError(f"Cannot load parser schema file '{extra}': {exc}") from exc
         return cls(schemas)

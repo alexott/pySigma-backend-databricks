@@ -1,4 +1,5 @@
 """Lakewatch mapping profiles: model, parsing, loading and validation."""
+import re
 import warnings
 from dataclasses import dataclass, field
 from importlib.resources import files
@@ -16,6 +17,9 @@ _TOP_KEYS = {"profile", "version", "parser", "fields", "logsources"}
 _BLOCK_KEYS = {"match", "conditions", "fields", "unsupported"}
 _MATCH_KEYS = ("product", "category", "service")
 _MAPPING_KEYS = {"field"}
+# Profile ids become part of Unity Catalog rule names: keep them short and UC-safe.
+_PROFILE_ID = re.compile(r"[a-z0-9_]+")
+_PROFILE_ID_MAX_LEN = 64
 
 ConditionValue = Union[str, int, List[Union[str, int]]]
 
@@ -92,6 +96,10 @@ def _parse_mapping(value: Any, source: str, name: str) -> FieldMapping:
     targets = _targets(value, source, name)
     if name.endswith(".*") and not all(t.endswith(".*") for t in targets):
         raise ProfileError(source, f"field '{name}': prefix mapping targets must end with '.*'")
+    if not name.endswith(".*") and any(t.endswith(".*") for t in targets):
+        raise ProfileError(
+            source, f"field '{name}': a '.*' target requires a prefix key ending with '.*'"
+        )
     return FieldMapping(targets)
 
 
@@ -143,6 +151,12 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
     for key in ("profile", "parser"):
         if not isinstance(data[key], str) or not data[key]:
             raise ProfileError(source, f"'{key}' must be a non-empty string")
+    if not _PROFILE_ID.fullmatch(data["profile"]) or len(data["profile"]) > _PROFILE_ID_MAX_LEN:
+        raise ProfileError(
+            source,
+            f"'profile' must match [a-z0-9_]+ and be at most {_PROFILE_ID_MAX_LEN} characters, "
+            f"got '{data['profile']}'",
+        )
     version = data["version"]
     if isinstance(version, bool) or not isinstance(version, int) or version < 1:
         raise ProfileError(source, "'version' must be an integer >= 1")
@@ -173,9 +187,15 @@ def _read_dir(directory: Path) -> Dict[str, Profile]:
     result: Dict[str, Profile] = {}
     for path in sorted(directory.glob("*.yml"), key=lambda p: p.name):
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            raise ProfileError(str(path), f"cannot read profile file: {e}") from None
+        try:
+            data = yaml.safe_load(text)
         except yaml.YAMLError as e:
             raise ProfileError(str(path), f"invalid YAML: {e}") from None
+        if data is None:
+            raise ProfileError(str(path), "profile file is empty")
         profile = parse_profile(data, str(path))
         if profile.profile in result:
             raise ProfileError(

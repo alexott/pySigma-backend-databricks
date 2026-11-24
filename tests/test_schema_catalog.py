@@ -54,3 +54,35 @@ def test_unknown_parser_lists_names(tmp_path):
 def test_builtin_catalog_loads():
     cat = SchemaCatalog.load()
     assert cat.get("aws_cloudtrail").uuid == "9fd018c6-a47f-499e-af80-f12f3db6f4fa"
+
+
+@pytest.mark.parametrize("data, match", [
+    ([], "top level must be a JSON object"),
+    ({"parsers": []}, "'parsers' must be an object"),
+    ({"parsers": {"p1": []}}, "parser 'p1' must be an object"),
+    ({"parsers": {"p1": {"paths": []}}}, "parser 'p1': 'paths' must be an object"),
+    ({"parsers": {"p1": {"paths": {"a": "STRING"}}}}, "parser 'p1': path 'a' must be an object"),
+    ({"parsers": {"p1": {"paths": {"a": {"storage": "column"}}}}},
+     "parser 'p1': path 'a': missing 'type'"),
+    ({"parsers": {"p1": {"paths": {"a": {"type": "STRING", "storage": "column", "allowed": "x"}}}}},
+     "parser 'p1': path 'a': 'allowed' must be a list"),
+])
+def test_malformed_schema_file(tmp_path, data, match):
+    path = _write(tmp_path, "bad.json", data)
+    with pytest.raises(SigmaConfigurationError, match=match) as exc:
+        SchemaCatalog.load([path])
+    assert path in str(exc.value)
+
+
+def test_missing_schema_file(tmp_path):
+    path = str(tmp_path / "missing.json")
+    with pytest.raises(SigmaConfigurationError, match="Cannot load parser schema file") as exc:
+        SchemaCatalog.load([path])
+    assert path in str(exc.value)
+
+
+def test_invalid_json_schema_file(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(SigmaConfigurationError, match="Cannot load parser schema file"):
+        SchemaCatalog.load([str(path)])

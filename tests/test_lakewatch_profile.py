@@ -198,3 +198,50 @@ def test_load_profiles_errors(tmp_path):
     write(tmp_path, "b.yml", "dup", "y")
     with pytest.raises(ProfileError, match="dup"):
         load_profiles([str(tmp_path)])
+
+
+def test_star_target_requires_prefix_key():
+    with pytest.raises(ProfileError, match=r"f.yml: field 'star': .*'\.\*'.*prefix key"):
+        parse_profile(base(fields={"star": "requestParameters.*"}), "f.yml")
+    with pytest.raises(ProfileError, match="field 'star'"):
+        parse_profile(base(fields={"star": ["a", "requestParameters.*"]}), "f.yml")
+
+
+@pytest.mark.parametrize("pid", ["My-CT", "UPPER", "with space", "dash-ed", "a.b", "x" * 65, "ü"])
+def test_profile_id_must_be_uc_safe(pid):
+    with pytest.raises(ProfileError, match=r"f.yml: 'profile' must match"):
+        parse_profile(base(profile=pid), "f.yml")
+
+
+@pytest.mark.parametrize("pid", ["aws_cloudtrail", "p1", "x" * 64])
+def test_profile_id_accepted(pid):
+    assert parse_profile(base(profile=pid), "f.yml").profile == pid
+
+
+@pytest.mark.parametrize("content, match", [
+    ("profile: [unclosed\n", "invalid YAML"),
+    ("", "profile file is empty"),
+    ("# only a comment\n", "profile file is empty"),
+])
+def test_load_profiles_bad_file_content(tmp_path, content, match):
+    path = tmp_path / "bad.yml"
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(ProfileError, match=match) as exc:
+        load_profiles([str(tmp_path)])
+    assert str(exc.value).startswith(f"{path}: ")
+
+
+def test_load_profiles_undecodable_file(tmp_path):
+    path = tmp_path / "bad.yml"
+    path.write_bytes(b"profile: \xff\xfe\n")
+    with pytest.raises(ProfileError, match="cannot read profile file") as exc:
+        load_profiles([str(tmp_path)])
+    assert str(exc.value).startswith(f"{path}: ")
+
+
+def test_load_profiles_unreadable_file(tmp_path):
+    path = tmp_path / "dir.yml"
+    path.mkdir()  # reading a directory raises an OSError on every platform
+    with pytest.raises(ProfileError, match="cannot read profile file") as exc:
+        load_profiles([str(tmp_path)])
+    assert str(exc.value).startswith(f"{path}: ")
