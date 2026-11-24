@@ -1,6 +1,6 @@
 """Lakewatch parsed-table mapping profiles."""
 
-from .pipeline import (  # noqa: E402
+from .pipeline import (
     STATE_PARSER,
     STATE_PROFILE,
     STATE_PROFILE_VERSION,

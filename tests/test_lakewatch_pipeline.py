@@ -128,3 +128,46 @@ def test_nested_detection_checked_and_mapped():
     assert all(
         isinstance(d, SigmaDetection) and d.detection_items[0].field == "eventName" for d in sub
     )
+
+
+def test_fieldref_unmapped_fails():
+    profile, block = make({"A": "a"})
+    with pytest.raises(SigmaTransformationError, match="field Zzz is not mapped by profile p1"):
+        run(profile, block, "    sel:\n        A|fieldref: Zzz\n    condition: sel")
+
+
+def test_fieldref_unsupported_fails():
+    profile, block = make({"A": "a"}, {"unsupported": ["Bad"]})
+    with pytest.raises(SigmaTransformationError, match="field Bad is not supported by profile p1"):
+        run(profile, block, "    sel:\n        A|fieldref: Bad\n    condition: sel")
+
+
+def test_fieldref_mapped_is_renamed():
+    profile, block = make({"A": "a", "B": "b"})
+    _, r = run(profile, block, "    sel:\n        A|fieldref: B\n    condition: sel")
+    item = r.detection.detections["sel"].detection_items[0]
+    assert item.field == "a"
+    assert item.value[0].field == "b"
+
+
+def test_raw_field_matching_exact_target_still_gets_prefix_rewrite():
+    profile, block = make({"A": "props.x", "props.*": "req.*"})
+    _, r = run(
+        profile, block, "    sel:\n        props.x: 1\n        A: 2\n    condition: sel"
+    )
+    fields = [i.field for i in r.detection.detections["sel"].detection_items]
+    assert fields == ["req.x", "props.x"]
+
+
+def test_exact_multi_target_or_with_prefix_present():
+    profile, block = make({"A": ["props.x", "b"], "props.*": "req.*"})
+    _, r = run(profile, block, "    sel:\n        A: 1\n    condition: sel")
+    item = r.detection.detections["sel"].detection_items[0]
+    assert [i.field for i in item.detection_items] == ["props.x", "b"]
+
+
+@pytest.mark.parametrize("name", ["requestParameters.", "requestParameters"])
+def test_bare_prefix_and_root_rejected(name):
+    profile, block = make({"requestParameters.*": "requestParameters.*"})
+    with pytest.raises(SigmaTransformationError, match="is not mapped by profile p1"):
+        run(profile, block, f"    sel:\n        {name}: x\n    condition: sel")
