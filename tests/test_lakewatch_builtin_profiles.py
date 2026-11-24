@@ -141,8 +141,9 @@ def test_readme_profile_example_validates():
     import re
     from pathlib import Path
 
-    from sigma.pipelines.databricks.lakewatch.profile import parse_profile
     import yaml
+
+    from sigma.pipelines.databricks.lakewatch.profile import parse_profile
 
     readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```yaml\n(profile: my_cloudtrail.*?)```", readme, re.S)
