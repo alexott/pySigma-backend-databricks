@@ -46,7 +46,8 @@ include = ["sigma*"]
 namespaces = true
 
 [tool.setuptools.package-data]
-"sigma.backends.databricks" = ["mitre_techniques.json", "ocsf_attributes.json"]
+"sigma.backends.databricks" = ["mitre_techniques.json", "ocsf_attributes.json", "lakewatch_schemas/*.json"]
+"sigma.pipelines.databricks" = ["lakewatch/profiles/*.yml"]
 
 [tool.pylint.'MESSAGES CONTROL']
 disable = "missing-function-docstring,missing-module-docstring,line-too-long,too-many-lines"
