@@ -180,14 +180,18 @@ def build_v2_runbook(rule: SigmaRule) -> Optional[str]:
     return truncate(text, V2_RUNBOOK_MAX_LEN)
 
 
-def build_v2_annotations(rule: SigmaRule) -> Dict[str, str]:
-    """Provenance annotations of a converted rule (Sigma id, status, author, tags, converter)."""
+def build_v2_annotations(rule: SigmaRule, profile: Optional[str] = None) -> Dict[str, str]:
+    """Provenance annotations of a converted rule (Sigma id, status, author, tags, profile, converter).
+
+    ``profile`` is the parser profile reference ``<id>@<version>`` (parsed mode only).
+    """
     tags = [f"{tag.namespace}.{tag.name}" for tag in rule.tags if tag.namespace != "attack"]
     candidates = {
         "sigma_id": str(rule.id) if rule.id else "",
         "sigma_status": rule.status.name.lower() if rule.status else "",
         "sigma_author": (rule.author or "").strip(),
         "sigma_tags": ", ".join(tags),
+        "sigma_profile": profile or "",
         "converter_version": _converter_version(),
     }
     return {
@@ -222,10 +226,15 @@ def to_v2_mitre(entries: List[dict]) -> List[dict]:
     return result
 
 
-def to_v2_rule_name(title: str) -> str:
-    """Derive a Unity Catalog-safe snake_case rule name from a rule title."""
-    name = "_".join(re.findall(r"[a-z0-9]+", title.lower()))[:V2_RULE_NAME_MAX_LEN].strip("_")
-    return name or "sigma_rule"
+def to_v2_rule_name(title: str, suffix: str = "") -> str:
+    """Derive a Unity Catalog-safe snake_case rule name from a rule title.
+
+    The title part is cut so that title part plus ``suffix`` fits the name limit;
+    the suffix itself is never cut.
+    """
+    limit = max(V2_RULE_NAME_MAX_LEN - len(suffix), 0)
+    name = "_".join(re.findall(r"[a-z0-9]+", title.lower()))[:limit].strip("_")
+    return (name or "sigma_rule") + suffix
 
 
 def to_v2_references(references: List[str]) -> List[str]:

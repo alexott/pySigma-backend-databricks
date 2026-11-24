@@ -1122,6 +1122,12 @@ class DatabricksBackend(TextQueryBackend):
                 "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
             )
         table = self._lakewatch_table(rule)
+        rule_name_suffix = ""
+        profile_ref: Optional[str] = None
+        if self._current_profile is not None:
+            current = self._current_profile[0]
+            rule_name_suffix = f"__{current.profile}"
+            profile_ref = f"{current.profile}@{current.version}"
         rule_status = self._rule_status(rule)
         # The rule time window follows the schedule via IN_TIMERANGE(); use the
         # extend_lookback option to widen it.
@@ -1134,7 +1140,7 @@ class DatabricksBackend(TextQueryBackend):
         doc: Dict[str, Any] = {
             "catalog_name": catalog_name,
             "schema_name": schema_name,
-            "rule_name": to_v2_rule_name(rule.title),
+            "rule_name": to_v2_rule_name(rule.title, rule_name_suffix),
             "description": truncate(description, V2_DESCRIPTION_MAX_LEN),
             "severity": self._lakewatch_severity(rule),
             "fidelity": self._lakewatch_v2_fidelity(rule_status),
@@ -1147,7 +1153,7 @@ class DatabricksBackend(TextQueryBackend):
         runbook = build_v2_runbook(rule)
         if runbook:
             doc["runbook"] = runbook
-        annotations = build_v2_annotations(rule)
+        annotations = build_v2_annotations(rule, profile_ref)
         if annotations:
             doc["annotations"] = annotations
         # schedule.compute_group was removed from the v2 API (rules run on dedicated compute).

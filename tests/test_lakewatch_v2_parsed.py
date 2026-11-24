@@ -611,3 +611,41 @@ def test_parsed_array_of_struct_member(env):
         Items.name: n
     condition: sel""", extra_fields={"Items.name": "items.name"})
     assert "exists(items, x0 -> lower(x0.name) = lower('n'))" in sql
+
+
+# --- finalizer -----------------------------------------------------------------------------
+
+
+def _docs(backend, rule):
+    return [json.loads(q)["doc"] for q in backend.convert_rule(rule, "lakewatch_v2")]
+
+
+def test_v2_parsed_document(env):
+    detection = """    sel:
+        eventName: ConsoleLogin
+    condition: sel"""
+    backend = env(parsers="p_ct", table_name="main.sec.cloudtrail")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        (doc,) = _docs(backend, _rule(detection))
+    assert doc["rule_name"] == "ct_rule__p_ct"
+    sql = doc["batch"]["sql"]["query"]
+    assert sql.startswith("SELECT *\nFROM main.sec.cloudtrail\nWHERE IN_TIMERANGE(time)\n  AND (")
+    assert "lower(eventtype) = lower('awsapicall')" in sql.lower()
+    assert doc["annotations"]["sigma_profile"] == "p_ct@1"
+    keys = list(doc["annotations"])
+    assert keys.index("sigma_profile") == keys.index("converter_version") - 1
+
+
+def test_v2_parsed_rule_name_suffix_kept_when_truncated(env):
+    rule = _rule(SEL)
+    # pySigma rejects titles over 256 characters at parse time; set it afterwards.
+    rule.title = "word " * 60
+    assert len(rule.title) == 300
+    backend = env(parsers="p_ct,p_ct2", table_map="p_ct:t1,p_ct2:t2")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        names = [d["rule_name"] for d in _docs(backend, rule)]
+    assert names[0].endswith("__p_ct") and names[1].endswith("__p_ct2")
+    assert all(len(n) <= 256 for n in names)
+    assert names[0] != names[1]
