@@ -32,6 +32,8 @@ SCHEMA = {
                 "tlsDetails": {"type": "STRUCT", "storage": "column"},
                 "tlsDetails.clientProvidedHostHeader": {"type": "STRING", "storage": "struct"},
                 "tlsDetails.tls-version": {"type": "STRING", "storage": "struct"},
+                "items": {"type": "ARRAY", "storage": "column", "element": "STRUCT"},
+                "items[].name": {"type": "STRING", "storage": "struct"},
             },
         }
     }
@@ -51,6 +53,8 @@ EXTRA_FIELDS = {
     "Host": "tlsDetails.clientProvidedHostHeader",
     "TlsVersion": "tlsDetails.tls-version",
     "Src": "eventsource",
+    "Tls": "tlsDetails",
+    "Items": "items",
 }
 
 
@@ -577,3 +581,33 @@ detection:
 """).rules[0]
     sql = json.loads(backend.convert_rule(rule, "lakewatch_v2")[0])["sql"]
     assert "FROM process_activity" in sql
+
+
+@pytest.mark.parametrize("detection, field", [
+    ("Tls|contains: x", "tlsDetails"),
+    ("Tls: 5", "tlsDetails"),
+    ("Items: x", "items"),
+    ("Tls|contains: [a, b, c]", "tlsDetails"),
+])
+def test_parsed_whole_struct_fails(env, detection, field):
+    with pytest.raises(SigmaConversionError, match=f"whole STRUCT field {field} is not supported") as exc:
+        _one(env, f"""    sel:
+        {detection}
+    condition: sel""")
+    assert "(profile p_ct)" in str(exc.value)
+
+
+def test_parsed_whole_struct_null_and_exists_allowed(env):
+    sql = _one(env, """    sel:
+        Tls: null
+        Items|exists: true
+    condition: sel""")
+    assert "tlsDetails is null" in sql
+    assert "exists(items, x0 -> x0 is not null)" in sql
+
+
+def test_parsed_array_of_struct_member(env):
+    sql = _one(env, """    sel:
+        Items.name: n
+    condition: sel""", extra_fields={"Items.name": "items.name"})
+    assert "exists(items, x0 -> lower(x0.name) = lower('n'))" in sql

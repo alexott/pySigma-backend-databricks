@@ -419,6 +419,7 @@ class DatabricksBackend(TextQueryBackend):
             if isinstance(cond.value, SigmaFieldReference):
                 self._check_parsed_field_reference(path, cond.value)
                 return super().convert_condition_field_eq_val(cond, state)
+            self._check_parsed_struct(path, cond.field, cond.value)
             cond = self._coerce_parsed_value(path, cond)
         if path is None or isinstance(cond.value, SigmaFieldReference):
             return super().convert_condition_field_eq_val(cond, state)
@@ -737,6 +738,8 @@ class DatabricksBackend(TextQueryBackend):
             if path is None:
                 field = self.escape_and_quote_field(field_name)
             else:
+                if self._current_profile is not None:
+                    self._check_parsed_struct(path, field_name, SigmaString(""))
                 levels, field = self._render_path(path, SigmaString(""))
             if self.re_expression:
                 return self._wrap_exists(levels, self.re_expression.format(field=field, regex=regex_pattern))
@@ -944,6 +947,19 @@ class DatabricksBackend(TextQueryBackend):
                 f"(profile {profile.profile})"
             )
         return path
+
+    def _check_parsed_struct(self, path: FieldPath, field: str, value: Any) -> None:
+        """Values can't be compared against a whole STRUCT (also the element of ARRAY<STRUCT>).
+
+        Null and exists checks remain valid SQL and are allowed.
+        """
+        assert self._current_profile is not None
+        if path.json_path or path.leaf_type != "STRUCT" or isinstance(value, (SigmaNull, SigmaExists)):
+            return
+        raise self._parsed_error(
+            f"comparison against the whole STRUCT field {field} is not supported "
+            f"(profile {self._current_profile[0].profile})"
+        )
 
     def _check_parsed_field_reference(self, path: FieldPath, ref: SigmaFieldReference) -> None:
         """Field references are only supported between plain columns and STRUCT members."""
