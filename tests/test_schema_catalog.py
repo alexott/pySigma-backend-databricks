@@ -1,8 +1,9 @@
-import json
+"""Tests for the Lakewatch parser schema catalog."""
 
-import pytest
+import json
 from importlib.resources import files
 
+import pytest
 from sigma.exceptions import SigmaConfigurationError
 
 from sigma.backends.databricks.schema_catalog import PathInfo, SchemaCatalog

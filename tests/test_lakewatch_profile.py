@@ -1,3 +1,5 @@
+"""Tests for Lakewatch mapping profile parsing, loading and validation."""
+
 import warnings
 
 import pytest
@@ -6,7 +8,6 @@ from sigma.rule import SigmaLogSource
 from sigma.backends.databricks.schema_catalog import ParserSchema, PathInfo, SchemaCatalog
 from sigma.pipelines.databricks.lakewatch.profile import (
     FieldMapping,
-    Profile,
     ProfileError,
     load_profiles,
     parse_profile,

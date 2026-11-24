@@ -35,6 +35,7 @@ class ParserSchema:
     paths: Mapping[str, PathInfo] = field(default_factory=dict)
 
     def get(self, path: str) -> Optional[PathInfo]:
+        """Return the declared path (exact spelling), or None."""
         return self.paths.get(path)
 
 
@@ -90,9 +91,12 @@ def _parse_catalog(data: object) -> Dict[str, ParserSchema]:
 
 @dataclass
 class SchemaCatalog:
+    """Parser output schemas by parser name."""
+
     schemas: Dict[str, ParserSchema]
 
     def get(self, parser: str) -> ParserSchema:
+        """Return the schema of ``parser``; SigmaConfigurationError if it is unknown."""
         try:
             return self.schemas[parser]
         except KeyError:
@@ -101,6 +105,7 @@ class SchemaCatalog:
             ) from None
 
     def names(self) -> List[str]:
+        """Return the sorted names of all known parsers."""
         return sorted(self.schemas)
 
     @classmethod

@@ -1,3 +1,5 @@
+"""Tests for the Lakewatch v2 parser schema generator script."""
+
 import importlib.util
 from pathlib import Path
 

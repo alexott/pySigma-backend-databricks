@@ -972,9 +972,9 @@ class DatabricksBackend(TextQueryBackend):
                 (rule if failed is rule_copy else failed, error)
                 for failed, error in self.errors[first_error:]
             ]
-            for _, error in self.errors[first_error:]:
-                if isinstance(error, LakewatchConversionError) and error.rule is rule_copy:
-                    error.rule = rule
+            for _, collected in self.errors[first_error:]:
+                if isinstance(collected, LakewatchConversionError) and collected.rule is rule_copy:
+                    collected.rule = rule
 
     def _resolve_parsed_field(self, field: str) -> FieldPath:
         """Resolve a field against the current profile's parser schema, failing closed."""
@@ -992,10 +992,10 @@ class DatabricksBackend(TextQueryBackend):
         return path
 
     def _check_parsed_struct(self, path: FieldPath, field: str, value: Any) -> None:
-        """Values can't be compared against a whole STRUCT (also the element of ARRAY<STRUCT>)
-        or against a declared VARIANT/STRUCT object nested inside a VARIANT.
+        """Fail on comparisons against a whole STRUCT or an object nested inside a VARIANT.
 
-        Null and exists checks remain valid SQL and are allowed.
+        This covers a STRUCT column or member (also the element of ARRAY<STRUCT>) and a
+        VARIANT/STRUCT key declared inside a VARIANT. Null and exists checks remain valid SQL and are allowed.
         """
         assert self._current_profile is not None
         if isinstance(value, (SigmaNull, SigmaExists)):

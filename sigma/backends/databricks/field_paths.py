@@ -25,6 +25,7 @@ class FieldPath:
 
     @property
     def whole_variant(self) -> bool:
+        """Whether the path ends at a VARIANT column or member itself (no key inside it)."""
         return not self.json_path and self.leaf_type == "VARIANT"
 
 
@@ -32,6 +33,7 @@ class UnknownFieldError(ValueError):
     """A field path that is not part of a parser's output schema."""
 
     def __init__(self, path: str, parser: str, reason: str):
+        """Create the error for ``path`` of ``parser`` with a human-readable ``reason``."""
         self.path = path
         self.parser = parser
         super().__init__(f"{parser}: field '{path}' is not usable: {reason}")

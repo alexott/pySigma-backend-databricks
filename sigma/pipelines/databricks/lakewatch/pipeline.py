@@ -41,6 +41,7 @@ class StrictFieldsTransformation(DetectionItemTransformation):
             )
 
     def apply_detection_item(self, detection_item):
+        """Check the item's field and field-reference values; the item is left unchanged."""
         field = detection_item.field
         if field is None:
             raise SigmaTransformationError(
@@ -80,6 +81,7 @@ class ProfileFieldMapping(FieldMappingTransformation):
 
 
 def build_profile_pipeline(profile: Profile, block: LogsourceBlock) -> ProcessingPipeline:
+    """Build the pipeline for one profile block: strict fields, mapping, conditions, state."""
     pid = profile.profile
     mappings = profile.mappings_for(block)
     exact = {k: v for k, v in mappings.items() if not k.endswith(".*")}

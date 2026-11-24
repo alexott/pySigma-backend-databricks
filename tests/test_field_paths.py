@@ -1,3 +1,5 @@
+"""Tests for resolving Sigma field names against parser schemas."""
+
 import pytest
 
 from sigma.backends.databricks.field_paths import (

@@ -28,16 +28,21 @@ class ProfileError(SigmaConfigurationError):
     """An invalid mapping profile. Messages start with ``<source>: ``."""
 
     def __init__(self, source: str, message: str):
+        """Create the error; ``source`` is the profile file (or ``<dict>``)."""
         super().__init__(f"{source}: {message}")
 
 
 @dataclass(frozen=True)
 class FieldMapping:
+    """Target schema path(s) of a Sigma field; several targets are ORed."""
+
     targets: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class LogsourceBlock:
+    """A profile block for the logsources it matches, with its conditions and fields."""
+
     match: Dict[str, str]
     conditions: Dict[str, ConditionValue] = field(default_factory=dict)
     fields: Dict[str, FieldMapping] = field(default_factory=dict)
@@ -46,6 +51,8 @@ class LogsourceBlock:
 
 @dataclass(frozen=True)
 class Profile:
+    """A mapping profile: Sigma fields of one parser's output and its logsource blocks."""
+
     profile: str
     version: int
     parser: str
@@ -54,6 +61,7 @@ class Profile:
     source: str = "<dict>"
 
     def block_for(self, logsource: SigmaLogSource) -> Optional[LogsourceBlock]:
+        """Return the most specific block matching ``logsource`` (first on ties), or None."""
         best: Optional[LogsourceBlock] = None
         for block in self.logsources:
             if all(
@@ -66,6 +74,7 @@ class Profile:
         return best
 
     def mappings_for(self, block: LogsourceBlock) -> Dict[str, FieldMapping]:
+        """Return the profile fields overridden by the fields of ``block``."""
         merged = dict(self.fields)
         merged.update(block.fields)
         return merged

@@ -1,7 +1,9 @@
+"""Tests for the per-profile Lakewatch processing pipeline."""
+
 import pytest
 from sigma.collection import SigmaCollection
 from sigma.exceptions import SigmaTransformationError
-from sigma.rule import SigmaDetection, SigmaDetectionItem
+from sigma.rule import SigmaDetection
 
 from sigma.pipelines.databricks.lakewatch.pipeline import (
     STATE_PARSER,
