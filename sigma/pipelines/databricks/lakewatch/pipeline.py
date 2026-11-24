@@ -62,16 +62,20 @@ class ProfileFieldMapping(FieldMappingTransformation):
     field-reference values as well, so references are mapped the same way.
     """
 
-    prefix_rewrites: Tuple[Tuple[str, str], ...] = ()
+    prefix_rewrites: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
 
     def apply_field_name(self, field):
+        """Return the mapped name(s) of ``field``; several names are ORed by pySigma."""
         if field is None:
             return None
         if field in self.mapping:
             return self.mapping[field]
-        for src, dst in self.prefix_rewrites:
+        for src, dsts in self.prefix_rewrites:
             if field.startswith(src) and len(field) > len(src):
-                return dst + field[len(src):]
+                rest = field[len(src):]
+                if len(dsts) == 1:
+                    return dsts[0] + rest
+                return [dst + rest for dst in dsts]
         return None
 
 
@@ -96,10 +100,12 @@ def build_profile_pipeline(profile: Profile, block: LogsourceBlock) -> Processin
     exact_map: Dict[Optional[str], Union[str, List[str]]] = {
         k: (v.targets[0] if len(v.targets) == 1 else list(v.targets)) for k, v in exact.items()
     }
+    # Every target of a prefix mapping is kept: several targets become an OR. An identity
+    # rewrite (one target equal to the source prefix) is a no-op and is skipped.
     rewrites = tuple(
-        (src, v.targets[0][:-1])
+        (src, tuple(t[:-1] for t in v.targets))
         for src, v in prefix_maps.items()
-        if v.targets[0][:-1] != src
+        if tuple(t[:-1] for t in v.targets) != (src,)
     )
     items.append(
         ProcessingItem(

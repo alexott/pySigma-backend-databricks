@@ -171,3 +171,16 @@ def test_bare_prefix_and_root_rejected(name):
     profile, block = make({"requestParameters.*": "requestParameters.*"})
     with pytest.raises(SigmaTransformationError, match="is not mapped by profile p1"):
         run(profile, block, f"    sel:\n        {name}: x\n    condition: sel")
+
+
+@pytest.mark.parametrize("targets, expected", [
+    (["requestParameters.*", "responseElements.*"],
+     ["requestParameters.bucketName", "responseElements.bucketName"]),
+    (["params.*", "responseElements.*"], ["params.bucketName", "responseElements.bucketName"]),
+])
+def test_multi_target_prefix_mapping_keeps_every_target(targets, expected):
+    profile, block = make({"params.*": targets})
+    _, r = run(profile, block, "    sel:\n        params.bucketName: b\n    condition: sel")
+    item = r.detection.detections["sel"].detection_items[0]
+    assert isinstance(item, SigmaDetection)
+    assert [i.field for i in item.detection_items] == expected
