@@ -200,6 +200,63 @@ Differences from v1:
   `sigma_tags` (tags other than ATT&CK) and `converter_version`. Values are cut to 256 characters,
   and empty values are left out.
 
+### Lakewatch v2 parsed tables
+
+**Breaking change in the next release (0.2.0).** For `lakewatch_v2`, parsed-table mode is now the
+default. Rules are converted against the columns of a Lakewatch parser's table instead of OCSF
+gold tables. `-f lakewatch_v2` without `-p ocsf` therefore needs `-O parsers=...`. To keep the
+previous OCSF behavior, pass `-O ocsf=true` (or `-p ocsf`, which still selects OCSF).
+
+```bash
+sigma convert -s -t databricks -f lakewatch_v2 -O parsers=aws_cloudtrail \
+  -O table_name=main.sec.aws_cloudtrail -O catalog_name=main -O schema_name=sec \
+  -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
+```
+
+Each selected parser produces one rule per Sigma rule, named `<rule_name>__<profile>`, with
+`sigma_profile: <id>@<version>` in its annotations. Options:
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `parsers` | *(required)* | Comma-separated profile ids, for example `aws_cloudtrail,okta_system_log`. |
+| `table_name` | *(none)* | Table to read from. Use it when exactly one parser is selected. |
+| `table_map` | *(none)* | `profile:table,profile:table` for several parsers. Every selected profile needs a table. |
+| `lakewatch_profiles_dir` | *(none)* | Directory with your own `*.yml` profiles. They are added to the built-in ones, and an id replaces a built-in id. |
+| `lakewatch_schemas` | *(none)* | JSON file with additional parser schemas, in the format of the bundled catalog. |
+
+A profile maps Sigma fields to columns and paths of the parser's schema. Unknown paths are
+rejected when the profile is loaded:
+
+```yaml
+profile: my_proxy
+version: 1
+parser: my_proxy_parser
+fields:
+  eventName: eventName                  # exact mapping to a column
+  userIdentity.type: userIdentity.type  # path inside a VARIANT column
+  requestParameters.*: requestParameters.*  # prefix mapping, free-form VARIANT only
+  src: [src_ip, client_ip]              # several targets are ORed
+logsources:
+  - match: {product: aws, service: cloudtrail}   # product, category and service
+    conditions:
+      eventType: AwsApiCall             # added to every rule with this logsource
+    unsupported: [Destination]          # fail with a clear message
+```
+
+VARIANT paths render as `try_variant_get(col, '$.path', 'type')`, and paths through arrays as
+`exists(col, x0 -> ...)`.
+
+Field mapping is strict. A Sigma field that isn't a key of the profile's `fields` fails that
+rule with `field <name> is not mapped by profile <id>`, and keyword (unbound) searches fail as
+well. Use `-s` to skip failed rules when converting a directory.
+
+Built-in profiles:
+
+| Profile | Logsource | Parser |
+|---------|-----------|--------|
+| `aws_cloudtrail` | `product: aws`, `service: cloudtrail` | `aws_cloudtrail` |
+| `okta_system_log` | `product: okta`, `service: okta` | `okta_system_log` |
+
 ## OCSF field rendering
 
 When the target schema is OCSF, the dotted field names produced by the OCSF pipeline are rendered
@@ -218,7 +275,9 @@ according to the OCSF attribute types (tables bundled from OCSF 1.9.0, refresh t
 * Unbound keywords search the OCSF `raw_data` field unless `raw_log_field` is set explicitly.
 
 This is controlled by the `ocsf` option (`-O ocsf=true|false|auto`). With the default `auto` it is
-enabled for the `lakewatch` and `lakewatch_v2` formats and for rules processed by the OCSF pipeline (`-p ocsf`).
+enabled for the `lakewatch` format and for rules processed by the OCSF pipeline (`-p ocsf`). For
+`lakewatch_v2` it is enabled only by `-O ocsf=true` or an OCSF pipeline; otherwise
+[parsed tables](#lakewatch-v2-parsed-tables) are used.
 
 ## Maintainer
 

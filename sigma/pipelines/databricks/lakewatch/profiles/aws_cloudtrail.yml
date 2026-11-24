@@ -1,0 +1,34 @@
+# Built-in Lakewatch profile for the aws_cloudtrail parser. Identity mappings only.
+profile: aws_cloudtrail
+version: 1
+parser: aws_cloudtrail
+fields:
+  eventName: eventName
+  eventSource: eventSource
+  eventType: eventType
+  errorCode: errorCode
+  errorMessage: errorMessage
+  awsRegion: awsRegion
+  sourceIPAddress: sourceIPAddress
+  userAgent: userAgent
+  recipientAccountId: recipientAccountId
+  readOnly: readOnly
+  managementEvent: managementEvent
+  userIdentity.type: userIdentity.type
+  userIdentity.arn: userIdentity.arn
+  userIdentity.principalId: userIdentity.principalId
+  userIdentity.accountId: userIdentity.accountId
+  userIdentity.userName: userIdentity.userName
+  userIdentity.accessKeyId: userIdentity.accessKeyId
+  userIdentity.invokedBy: userIdentity.invokedBy
+  userIdentity.sessionContext.sessionIssuer.type: userIdentity.sessionContext.sessionIssuer.type
+  userIdentity.sessionContext.sessionIssuer.arn: userIdentity.sessionContext.sessionIssuer.arn
+  userIdentity.sessionContext.sessionIssuer.userName: userIdentity.sessionContext.sessionIssuer.userName
+  userIdentity.sessionContext.attributes.mfaAuthenticated: userIdentity.sessionContext.attributes.mfaAuthenticated
+  requestParameters.*: requestParameters.*
+  responseElements.*: responseElements.*
+  additionalEventData.*: additionalEventData.*
+logsources:
+  - match:
+      product: aws
+      service: cloudtrail
