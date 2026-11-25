@@ -314,6 +314,22 @@ def test_databricks_sigma_fieldref(databricks_sigma_backend: DatabricksBackend):
     ) == ["lower(fieldA) = lower('valueA') AND NOT fieldB = fieldC"]
 
 
+def test_fieldref_contains_dbsql(databricks_sigma_backend: DatabricksBackend):
+    assert databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                selection:
+                    a|fieldref|contains: b
+                condition: selection
+        """)
+    ) == ["contains(lower(a), lower(b))"]
+
+
 # Tests for OR optimization as regex (Issue #12)
 
 def test_or_contains_optimization(databricks_sigma_backend: DatabricksBackend):

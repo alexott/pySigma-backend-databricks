@@ -58,6 +58,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # Type of a Windows EventData-style VARIANT: a list of {_Name, _VALUE} elements.
 _NAMED_ENTRY_TYPE = "ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>"
+_NAMED_OBJECT_TYPE = "STRUCT<_Name: STRING, _VALUE: STRING>"
 
 class LakewatchConversionError(SigmaConversionError):
     """Conversion error of the Lakewatch v2 parsed-table mode.
@@ -229,6 +230,9 @@ class DatabricksBackend(TextQueryBackend):
     # Field equals field comparison expression
     # Expression for field to field comparison as format string with placeholders {field1} and {field2}
     field_equals_field_expression: ClassVar[Optional[str]] = "{field1} = {field2}"
+    field_equals_field_startswith_expression: ClassVar[Optional[str]] = "startswith(lower({field1}), lower({field2}))"
+    field_equals_field_endswith_expression: ClassVar[Optional[str]] = "endswith(lower({field1}), lower({field2}))"
+    field_equals_field_contains_expression: ClassVar[Optional[str]] = "contains(lower({field1}), lower({field2}))"
 
     # OR optimization: Convert repeated OR operations with contains/startswith/endswith into regex
     # Enable optimization of OR conditions as regex expressions
@@ -449,13 +453,35 @@ class DatabricksBackend(TextQueryBackend):
         expr = self._render_path(part, SigmaString(""))[1]
         return expr if part.leaf_type == "STRING" else f"cast({expr} AS STRING)"
 
-    def _named_entry(self, path: FieldPath) -> str:
-        """Value of a named entry of a ``{_Name, _VALUE}`` list (VARIANT or ARRAY<STRUCT>)."""
+    def _named_entries(self, path: FieldPath) -> str:
+        """Return the ``ARRAY<STRUCT<_Name, _VALUE>>`` expression of a named-entry path.
+
+        A VARIANT is read as the list, or as a single ``{_Name, _VALUE}`` object (the one-element
+        form); an ARRAY<STRUCT> column is the list itself.
+        """
         source = self._struct_ref(None, path.leaf)
-        if path.entry_variant:
-            source = f"try_variant_get({source}, '$', '{_NAMED_ENTRY_TYPE}')"
+        if not path.entry_variant:
+            return source
+        return (
+            f"coalesce(try_variant_get({source}, '$', '{_NAMED_ENTRY_TYPE}'), "
+            f"CASE WHEN try_variant_get({source}, '$._Name', 'STRING') IS NOT NULL THEN "
+            f"array(try_variant_get({source}, '$', '{_NAMED_OBJECT_TYPE}')) END)"
+        )
+
+    def _named_entry(self, path: FieldPath) -> str:
+        """Value of a named entry of a ``{_Name, _VALUE}`` list (VARIANT or ARRAY<STRUCT>).
+
+        The entry ``*`` is the unnamed ``Data`` of a VARIANT: all plain strings joined with newlines.
+        """
+        if path.entry == "*":
+            source = self._struct_ref(None, path.leaf)
+            return (
+                f"array_join(coalesce(try_variant_get({source}, '$', 'ARRAY<STRING>'), "
+                f"CASE WHEN schema_of_variant({source}) = 'STRING' THEN "
+                f"array(try_variant_get({source}, '$', 'STRING')) END), '\\n')"
+            )
         name = self.sql_quote_regex(path.entry or "")
-        return f"try_element_at(filter({source}, e -> e._Name = '{name}'), 1)._VALUE"
+        return f"try_element_at(filter({self._named_entries(path)}, e -> e._Name = '{name}'), 1)._VALUE"
 
     @staticmethod
     def _wrap_exists(levels: List[Tuple[str, str]], expr: Any) -> Any:
@@ -1075,7 +1101,7 @@ class DatabricksBackend(TextQueryBackend):
         )
 
     def _check_parsed_field_reference(self, path: FieldPath, ref: SigmaFieldReference) -> None:
-        """Field references are only supported between plain columns and STRUCT members."""
+        """Field references may use plain columns, STRUCT members, VARIANT keys and named entries."""
         assert self._current_profile is not None
         ref_path = self._resolve_parsed_field(ref.field)
         if path.join or ref_path.join:
@@ -1083,7 +1109,7 @@ class DatabricksBackend(TextQueryBackend):
                 "field references to joined fields are not supported "
                 f"(profile {self._current_profile[0].profile})"
             )
-        if any(p.arrays or p.json_path or p.entry is not None for p in (path, ref_path)):
+        if any(p.arrays or p.whole_variant or (p.leaf_type == "STRUCT" and not p.json_path) for p in (path, ref_path)):
             raise self._parsed_error(
                 "field references to nested ARRAY/VARIANT fields are not supported "
                 f"(profile {self._current_profile[0].profile})"
@@ -1094,8 +1120,8 @@ class DatabricksBackend(TextQueryBackend):
         if self._current_profile is None:
             return super().convert_condition_field_eq_field_escape_and_quote(field1, field2)
         return (
-            self._struct_ref(None, self._resolve_parsed_field(field1).leaf),
-            self._struct_ref(None, self._resolve_parsed_field(field2).leaf),
+            self._render_path(self._resolve_parsed_field(field1), SigmaString(""))[1],
+            self._render_path(self._resolve_parsed_field(field2), SigmaString(""))[1],
         )
 
     def _warn_parsed_allowed(self, path: FieldPath, cond: ConditionFieldEqualsValueExpression) -> None:

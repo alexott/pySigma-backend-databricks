@@ -73,6 +73,8 @@ EXTRA_FIELDS = {
     "Tls": "tlsDetails",
     "Items": "items",
     "Image": "EventData[Image]",
+    "ParentImage": "EventData[ParentImage]",
+    "Data": "EventData[*]",
     "QueryName": ["EventData[QueryName]", "Data[QueryName]"],
     "Quote": "EventData[O'Brien]",
     "Level": "Level",
@@ -419,9 +421,8 @@ def test_parsed_fieldref_plain(env):
 
 
 @pytest.mark.parametrize("field, ref", [
-    ("eventName", "userIdentity.arn"),
-    ("userIdentity.arn", "eventName"),
     ("resources.arn", "eventName"),
+    ("eventName", "resources.arn"),
 ])
 def test_parsed_fieldref_nested_fails(env, field, ref):
     with pytest.raises(SigmaConversionError, match="field references to nested ARRAY/VARIANT"):
@@ -430,7 +431,16 @@ def test_parsed_fieldref_nested_fails(env, field, ref):
     condition: sel""")
 
 
-EVENT_DATA = "try_variant_get(EventData, '$', 'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>')"
+EVENT_DATA = (
+    "coalesce(try_variant_get(EventData, '$', 'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>'), "
+    "CASE WHEN try_variant_get(EventData, '$._Name', 'STRING') IS NOT NULL THEN "
+    "array(try_variant_get(EventData, '$', 'STRUCT<_Name: STRING, _VALUE: STRING>')) END)"
+)
+EVENT_DATA_STRINGS = (
+    "array_join(coalesce(try_variant_get(EventData, '$', 'ARRAY<STRING>'), "
+    "CASE WHEN schema_of_variant(EventData) = 'STRING' THEN "
+    "array(try_variant_get(EventData, '$', 'STRING')) END), '\\n')"
+)
 
 
 def _entry(source, name):
@@ -472,10 +482,55 @@ def test_parsed_named_entry_quotes_name(env):
     assert _entry(EVENT_DATA, "O\\'Brien") in sql
 
 
-def test_parsed_named_entry_fieldref_fails(env):
-    with pytest.raises(SigmaConversionError, match="field references to nested ARRAY/VARIANT"):
+def test_named_entry_object_fallback_sql(env):
+    sql = _one(env, """    sel:
+        Image|endswith: '\\a.exe'
+    condition: sel""")
+    assert EVENT_DATA in sql
+    assert "e -> e._Name = 'Image'" in sql
+
+
+def test_unnamed_data_joined_sql(env):
+    sql = _one(env, """    sel:
+        Data|contains: 'HostName=ConsoleHost'
+    condition: sel""")
+    assert f"contains(lower({EVENT_DATA_STRINGS}), lower('HostName=ConsoleHost'))" in sql
+
+
+def test_unnamed_data_requires_variant(env):
+    with pytest.raises(Exception, match=r"Data\[\*\].*whole VARIANT"):
         _one(env, """    sel:
-        Image|fieldref: eventName
+        BadData|contains: x
+    condition: sel""", extra_fields={"BadData": "Data[*]"})
+
+
+def test_fieldref_variant_keys(env):
+    sql = _one(env, """    sel:
+        userIdentity.arn|fieldref: requestParameters.userName
+    condition: sel""")
+    assert ("try_variant_get(userIdentity, '$.arn', 'string') = "
+            "try_variant_get(requestParameters, '$.userName', 'string')") in sql
+
+
+def test_fieldref_contains_variant(env):
+    sql = _one(env, """    sel:
+        userIdentity.arn|fieldref|contains: responseElements.accessKey.userName
+    condition: sel""", extra_fields={"responseElements.*": "responseElements.*"})
+    assert ("contains(lower(try_variant_get(userIdentity, '$.arn', 'string')), "
+            "lower(try_variant_get(responseElements, '$.accessKey.userName', 'string')))") in sql
+
+
+def test_fieldref_named_entries(env):
+    sql = _one(env, """    sel:
+        Image|fieldref: ParentImage
+    condition: sel""")
+    assert f"{_entry(EVENT_DATA, 'Image')} = {_entry(EVENT_DATA, 'ParentImage')}" in sql
+
+
+def test_fieldref_array_still_fails(env):
+    with pytest.raises(SigmaConversionError, match="nested ARRAY"):
+        _one(env, """    sel:
+        eventName|fieldref: resources.arn
     condition: sel""")
 
 

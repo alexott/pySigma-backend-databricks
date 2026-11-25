@@ -142,6 +142,17 @@ def test_resolve_named_entry_of_array_of_struct():
     assert r == FieldPath((), ("Data",), (), None, "STRING", entry="QueryName", entry_variant=False)
 
 
+def test_resolve_unnamed_data_of_variant():
+    r = resolve_schema_path(SCHEMA, "EventData[*]")
+    assert r == FieldPath((), ("EventData",), (), None, "STRING", entry="*", entry_variant=True)
+
+
+@pytest.mark.parametrize("path", ["data[*]", "eventName[*]", "userIdentity.arn[*]"])
+def test_resolve_unnamed_data_needs_whole_variant(path):
+    with pytest.raises(UnknownFieldError, match=re.escape("'[*]' needs a whole VARIANT")):
+        resolve_schema_path(SCHEMA, path)
+
+
 @pytest.mark.parametrize("path, reason", [
     ("eventName[Image]", "needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field"),
     ("userIdentity.arn[Image]", "needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field"),

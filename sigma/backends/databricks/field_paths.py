@@ -156,7 +156,15 @@ _NAMED_ENTRY = re.compile(r"(?P<base>.+)\[(?P<name>[^\[\]]+)\]")
 
 
 def _resolve_named_entry(schema: ParserSchema, path: str, base: str, name: str) -> FieldPath:
-    """Resolve ``base[name]``: a named entry of a VARIANT or ``ARRAY<STRUCT<_Name, _VALUE>>``."""
+    """Resolve ``base[name]``: a named entry of a VARIANT or ``ARRAY<STRUCT<_Name, _VALUE>>``.
+
+    ``base[*]`` is the unnamed ``Data`` of a whole VARIANT (all plain strings, joined).
+    """
+    if name == "*":
+        target = resolve_schema_path(schema, base)
+        if target.arrays or not target.whole_variant:
+            raise UnknownFieldError(path, schema.name, f"'[*]' needs a whole VARIANT field, '{base}' is not one")
+        return FieldPath((), target.leaf, (), None, "STRING", entry="*", entry_variant=True)
     target = resolve_schema_path(schema, base)
     if not target.arrays and target.whole_variant:
         return FieldPath((), target.leaf, (), None, "STRING", entry=name, entry_variant=True)
