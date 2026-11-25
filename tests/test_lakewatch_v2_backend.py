@@ -11,9 +11,9 @@ from sigma.exceptions import SigmaConfigurationError, SigmaConversionError
 
 from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.lakewatch_maps import (
+    build_mitre_mapping,
     build_v2_annotations,
     to_v2_fidelity,
-    to_v2_mitre,
     to_v2_references,
     to_v2_rule_name,
 )
@@ -112,7 +112,7 @@ def test_v2_optional_fields_omitted_by_default():
 
 
 def test_v2_options():
-    be = _backend(table_name="main.sec.auth", schedule="12h", compute_group="dedicated",
+    be = _backend(table_name="main.sec.auth", schedule="12h",
                   default_fidelity="High", default_category="Behavioral",
                   extend_lookback="1h")
     doc = _doc(be, BASE)
@@ -224,13 +224,13 @@ def test_to_v2_helpers():
     assert not to_v2_rule_name("a b " * 200).endswith("_")
     assert to_v2_references(["https://u1", "https://" + "x" * 505, "https://u2", "https://u3",
                              "https://u4"]) == ["https://u1", "https://u2", "https://u3"]
-    assert to_v2_mitre([{"techniqueId": "T1", "tactic": "Execution", "subTechnique": "",
-                         "subTechniqueId": ""}]) == [{"technique_id": "T1", "tactic": "Execution"}]
     # Empty fields are left out; an entry without tactic or technique id is dropped.
-    assert to_v2_mitre([
-        {"taxonomy": "Enterprise", "tactic": "", "technique": "X", "techniqueId": "T1"},
-        {"taxonomy": "Enterprise", "tactic": "Execution", "technique": "", "techniqueId": "T2"},
-    ]) == [{"taxonomy": "Enterprise", "tactic": "Execution", "technique_id": "T2"}]
+    rule = SigmaCollection.from_yaml(BASE).rules[0]
+    assert build_mitre_mapping(rule) == [{
+        "taxonomy": "Enterprise", "tactic": "Execution",
+        "technique": "Command and Scripting Interpreter", "technique_id": "T1059",
+        "sub_technique": "PowerShell", "sub_technique_id": "T1059.001",
+    }]
     # Only http(s) URLs are references in v2.
     assert to_v2_references(["Internal Research", "HTTPS://a", "ftp://b", "http://c"]) == [
         "HTTPS://a", "http://c"
@@ -298,15 +298,6 @@ def test_v2_enabled_option_invalid():
         _backend(enabled="maybe")
 
 
-def test_v1_unchanged_by_v2_fixes():
-    rule = SigmaCollection.from_yaml(BASE.replace("status: experimental", "status: stable")).rules[0]
-    be = DatabricksBackend(compute_group="dedicated")
-    doc = json.loads(be.convert_rule(rule, "lakewatch")[0])["doc"]
-    assert doc["spec"]["schedule"]["computeGroup"] == "dedicated"
-    assert doc["spec"]["schedule"]["enabled"] is True
-    assert doc["spec"]["metadata"]["fidelity"] == "High"
-
-
 def _convert(backend, rule_yaml=BASE):
     return backend.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch_v2")
 
@@ -315,11 +306,6 @@ def test_v2_warns_without_warehouse_id():
     with pytest.warns(UserWarning, match="warehouse_id") as record:
         _convert(_backend(), BASE + "---\n" + BASE.replace("Suspicious", "Other"))
     assert len([w for w in record if "warehouse_id" in str(w.message)]) == 1
-
-
-def test_v2_warns_when_compute_group_set():
-    with pytest.warns(UserWarning, match="compute_group"):
-        _convert(_backend(warehouse_id="wh", compute_group="dedicated"))
 
 
 def test_v2_no_warnings_with_defaults_and_warehouse():
@@ -418,5 +404,34 @@ def test_v2_output_dir_blank_is_ignored():
 def test_output_dir_warns_for_other_formats(tmp_path):
     rules = SigmaCollection.from_yaml(BASE)
     with pytest.warns(UserWarning, match="output_dir"):
-        DatabricksBackend(output_dir=str(tmp_path)).convert(rules, output_format="lakewatch")
+        DatabricksBackend(output_dir=str(tmp_path)).convert(rules, output_format="dbsql")
     assert not any(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("name, value", [("compute_group", "automatic"), ("lookback", "25 HOUR")])
+def test_removed_v1_options_raise(name, value):
+    with pytest.raises(SigmaConfigurationError, match=f"The {name} option was removed in 0.2.0"):
+        DatabricksBackend(**{name: value})
+
+
+def test_other_unknown_options_still_accepted():
+    assert DatabricksBackend(some_future_option="x").backend_options == {"some_future_option": "x"}
+
+
+def test_v1_format_removed():
+    assert "lakewatch" not in DatabricksBackend.formats     # Task 2 changes this to the v2 description
+    assert not hasattr(DatabricksBackend, "finalize_output_lakewatch")  # Task 2 re-adds it as v2
+
+
+def test_v2_unsupported_rule_skipped():
+    rule_yaml = BASE.replace("status: experimental", "status: unsupported")
+    out = _backend().convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch_v2")
+    assert out.strip() == ""
+
+
+def test_v2_empty_sql_dropped():
+    be = _backend(warehouse_id="wh")
+    empty = json.dumps({"status": "test", "sql": "", "doc": {"rule_name": "a"}})
+    real = json.dumps({"status": "test", "sql": "SELECT 1", "doc": {"rule_name": "b"}})
+    docs = list(yaml.safe_load_all(be.finalize_output_lakewatch_v2([empty, real])))
+    assert docs == [{"rule_name": "b"}]

@@ -3,7 +3,6 @@
 from sigma.rule import SigmaRule
 
 from sigma.backends.databricks.lakewatch_maps import (
-    FIDELITY_MAP,
     GOLD_TABLES,
     MITRE_TECHNIQUE_TACTICS,
     MITRE_TECHNIQUES,
@@ -31,7 +30,6 @@ def test_maps_are_grounded():
     assert OCSF_CLASS_UID_TO_TABLE[6003] == "api_activity"
     assert "authentication" in GOLD_TABLES
     assert SEVERITY_MAP["high"] == "High"
-    assert FIDELITY_MAP["experimental"] == "Investigative"
 
 
 def test_resolve_from_type_uid():
@@ -89,9 +87,9 @@ def test_build_mitre_mapping_from_tags():
         "taxonomy": "Enterprise",
         "tactic": "Execution",
         "technique": "Command and Scripting Interpreter",
-        "techniqueId": "T1059",
-        "subTechnique": "PowerShell",
-        "subTechniqueId": "T1059.001",
+        "technique_id": "T1059",
+        "sub_technique": "PowerShell",
+        "sub_technique_id": "T1059.001",
     }]
 
 
@@ -119,15 +117,13 @@ def _tagged_rule(tags: str) -> SigmaRule:
 
 
 def test_build_mitre_mapping_technique_only_tag():
-    # A bare technique tag with no sub-technique yields blank sub fields.
+    # A bare technique tag with no sub-technique leaves the sub fields out.
     rule = _tagged_rule("            - attack.execution\n            - attack.t1059")
     assert build_mitre_mapping(rule) == [{
         "taxonomy": "Enterprise",
         "tactic": "Execution",
         "technique": "Command and Scripting Interpreter",
-        "techniqueId": "T1059",
-        "subTechnique": "",
-        "subTechniqueId": "",
+        "technique_id": "T1059",
     }]
 
 
@@ -140,8 +136,8 @@ def test_build_mitre_mapping_multiple_subtechniques_collapse():
     )
     entries = build_mitre_mapping(rule)
     assert len(entries) == 1
-    assert entries[0]["techniqueId"] == "T1059"
-    assert entries[0]["subTechniqueId"] == "T1059.003"
+    assert entries[0]["technique_id"] == "T1059"
+    assert entries[0]["sub_technique_id"] == "T1059.003"
 
 
 def test_mitre_table_has_tactics():
@@ -157,7 +153,7 @@ def test_build_mitre_mapping_multiple_tactics_picks_tactic_of_technique():
         "            - attack.execution\n"
         "            - attack.t1059.003"
     )
-    tactics = {e["techniqueId"]: e["tactic"] for e in build_mitre_mapping(rule)}
+    tactics = {e["technique_id"]: e["tactic"] for e in build_mitre_mapping(rule)}
     assert tactics == {"T1059": "Execution", "T1071": "Command-And-Control"}
 
 
@@ -173,7 +169,7 @@ def test_build_mitre_mapping_ignores_group_and_software_tags():
     rule = _tagged_rule(
         "            - attack.g0016\n            - attack.s0002\n            - attack.t9999"
     )
-    assert build_mitre_mapping(rule)[0]["tactic"] == ""          # unknown technique, no tactic
+    assert build_mitre_mapping(rule) == []          # unknown technique, no tactic: entry dropped
 
 
 def test_build_mitre_mapping_unknown_technique_uses_single_tactic():
@@ -199,3 +195,21 @@ def test_resolve_class_uid_falls_back_to_class_name():
     # An unmappable class_uid falls through to a usable class_name.
     rule = _rule("            sel:\n                class_uid: 9999\n                class_name: 'DNS Activity'")
     assert resolve_ocsf_table(rule) == "dns_activity"
+
+
+def test_build_mitre_mapping_unknown_technique_leaves_technique_out():
+    rule = _tagged_rule("            - attack.execution\n            - attack.t9999")
+    assert build_mitre_mapping(rule) == [{
+        "taxonomy": "Enterprise",
+        "tactic": "Execution",
+        "technique_id": "T9999",
+    }]
+
+
+def test_build_mitre_mapping_drops_entry_without_tactic():
+    # Unknown technique with no tactic tag, or with two tactic tags: no tactic can be picked.
+    assert build_mitre_mapping(_tagged_rule("            - attack.t9999")) == []
+    two = _tagged_rule(
+        "            - attack.execution\n            - attack.persistence\n            - attack.t9999"
+    )
+    assert build_mitre_mapping(two) == []

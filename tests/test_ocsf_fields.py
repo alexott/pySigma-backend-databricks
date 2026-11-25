@@ -1,7 +1,5 @@
 """Tests for OCSF array/free-form aware field rendering of the Databricks backend."""
 
-import json
-
 import pytest
 from sigma.collection import SigmaCollection
 from sigma.pipelines.ocsf import ocsf_pipeline
@@ -154,16 +152,6 @@ def test_auto_enabled_for_ocsf_pipeline():
     """))[0]
     assert "exists(evidences, x0 -> endswith(lower(x0.file.name), lower('.exe')))" in query
     assert "contains(lower(raw_data), lower('evil'))" in query
-
-
-def test_auto_enabled_for_lakewatch_format():
-    backend = DatabricksBackend(table_name="t")
-    rule = _rule("""
-            sel:
-                process.file.hashes.value: abc
-    """).rules[0]
-    sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
-    assert "exists(process.file.hashes, x0 -> lower(x0.value) = lower('abc'))" in sql
 
 
 def test_invalid_option_value():

@@ -47,7 +47,6 @@ from sigma.types import (
 from .field_paths import FieldPath, UnknownFieldError, resolve_schema_path, split_join_field_name
 from .json_text import json_escape_string, looks_like_json
 from .lakewatch_maps import (
-    FIDELITY_MAP,
     SEVERITY_MAP,
     V2_DESCRIPTION_MAX_LEN,
     V2_FIDELITY_MAP,
@@ -58,7 +57,6 @@ from .lakewatch_maps import (
     build_v2_runbook,
     resolve_ocsf_table,
     to_v2_fidelity,
-    to_v2_mitre,
     to_v2_references,
     to_v2_rule_name,
     truncate,
@@ -173,7 +171,6 @@ class DatabricksBackend(TextQueryBackend):
         "default": "Plain Databricks SQL queries",
         "dbsql": "Databricks SQL queries with additional metadata as comments",
         "detection_yaml": "Yaml markup for Alex's own detection framework",
-        "lakewatch": "Lakewatch detection rules (v1 kind: Rule YAML)",
         "lakewatch_v2": "Lakewatch detection rules (v2 format, Unity Catalog governed)",
     }
     # TODO: does the backend requires that a processing pipeline is provided? This information can be used by user
@@ -332,8 +329,8 @@ class DatabricksBackend(TextQueryBackend):
 
     def __init__(self, processing_pipeline=None, collect_errors=False,
                  raw_log_field: Optional[str] = None, table_name: Optional[str] = None,
-                 lookback: str = "25 HOUR", schedule: str = "24h",
-                 compute_group: str = "automatic", default_fidelity: Optional[str] = None,
+                 schedule: str = "24h",
+                 default_fidelity: Optional[str] = None,
                  default_category: str = "Static Signature", cidr_expression: Optional[str] = None,
                  ocsf: Optional[Union[bool, str]] = None,
                  catalog_name: Optional[str] = None, schema_name: Optional[str] = None,
@@ -355,11 +352,22 @@ class DatabricksBackend(TextQueryBackend):
         ``output_dir`` makes ``lakewatch_v2`` write one ``<rule_name>.yaml`` file per rule into
         that directory instead of returning a multi-document YAML file.
         """
+        if "compute_group" in kwargs:
+            raise SigmaConfigurationError(
+                "The compute_group option was removed in 0.2.0 together with the Lakewatch v1 "
+                "format; Lakewatch rules have no compute group setting."
+            )
+        if "lookback" in kwargs:
+            raise SigmaConfigurationError(
+                "The lookback option was removed in 0.2.0 together with the Lakewatch v1 format; "
+                "Lakewatch rules filter on IN_TIMERANGE(time), use -O extend_lookback=... to "
+                "widen the window."
+            )
         super().__init__(processing_pipeline, collect_errors, **kwargs)
         self._raw_log_field_set = bool(raw_log_field)
         if raw_log_field:
             self.raw_log_field = raw_log_field
-        # None: render OCSF array/free-form fields only for the lakewatch format or rules processed
+        # None: render OCSF array/free-form fields only for the lakewatch_v2 format or rules processed
         # by the OCSF pipeline; True/False force it on/off.
         self.ocsf = self._parse_bool_option("ocsf", ocsf)
         self._current_rule: Optional[SigmaRule] = None
@@ -368,9 +376,7 @@ class DatabricksBackend(TextQueryBackend):
         if cidr_expression:
             self.cidr_expression = cidr_expression
         self.table_name = table_name
-        self.lookback = lookback
         self.schedule = schedule
-        self.compute_group = compute_group
         self.default_fidelity = default_fidelity
         self.default_category = default_category
         self.catalog_name = catalog_name
@@ -426,8 +432,6 @@ class DatabricksBackend(TextQueryBackend):
         """Whether field names are OCSF attribute paths that need array/free-form aware rendering."""
         if self.ocsf is not None:
             return self.ocsf
-        if self._current_format == "lakewatch":
-            return True
         if self._current_format == "lakewatch_v2":
             return not self._parsed_mode(self._current_format)
         rule = self._current_rule
@@ -1413,50 +1417,7 @@ class DatabricksBackend(TextQueryBackend):
         return SEVERITY_MAP.get(rule.level.name.lower(), "Medium") if rule.level else "Medium"
 
     def _lakewatch_fidelity(self, rule_status: str) -> str:
-        return self.default_fidelity or FIDELITY_MAP.get(rule_status, "Development")
-
-    def _lakewatch_v2_fidelity(self, rule_status: str) -> str:
         return to_v2_fidelity(self.default_fidelity or V2_FIDELITY_MAP.get(rule_status, "Development"))
-
-    def finalize_query_lakewatch(self, rule: SigmaRule, query: str, index: int,
-                                 state: ConversionState) -> Any:
-        """Build a Lakewatch v1 batch rule document for a single Sigma query."""
-        table = self._lakewatch_table(rule)
-        rule_status = self._rule_status(rule)
-        sql = "" if not query.strip() else (
-            f"SELECT *\nFROM {table}\n"
-            f"WHERE time >= CURRENT_TIMESTAMP() - INTERVAL {self.lookback}\n"
-            f"  AND ({query})"
-        )
-        spec_metadata: Dict[str, Any] = {
-            "objective": rule.description or rule.title,
-            "severity": self._lakewatch_severity(rule),
-            "fidelity": self._lakewatch_fidelity(rule_status),
-            "category": self.default_category,
-        }
-        mitre = build_mitre_mapping(rule)
-        if mitre:
-            spec_metadata["mitre"] = mitre
-        doc: Dict[str, Any] = {
-            "apiVersion": "v1",
-            "kind": "Rule",
-            "metadata": {
-                "displayName": rule.title,
-                "comment": rule.description or rule.title,
-            },
-            "spec": {
-                "input": {"batch": {"sql": sql}},
-                "metadata": spec_metadata,
-                "output": {"summary": rule.title, "defaultContext": True},
-                "schedule": {
-                    "atLeastEvery": self.schedule,
-                    "computeGroup": self.compute_group,
-                    "continuous": False,
-                    "enabled": True,
-                },
-            },
-        }
-        return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
 
     @staticmethod
     def _lakewatch_documents(queries: List[str]) -> List[Dict[str, Any]]:
@@ -1482,10 +1443,6 @@ class DatabricksBackend(TextQueryBackend):
             )
             for doc in documents
         )
-
-    def finalize_output_lakewatch(self, queries: List[str]) -> Any:
-        """Assemble per-rule Lakewatch v1 documents into one multi-document YAML file."""
-        return self._dump_lakewatch_documents(self._lakewatch_documents(queries))
 
     def finalize_query_lakewatch_v2(self, rule: SigmaRule, query: str, index: int,
                                     state: ConversionState) -> Any:
@@ -1519,7 +1476,7 @@ class DatabricksBackend(TextQueryBackend):
             "rule_name": to_v2_rule_name(rule.title, rule_name_suffix),
             "description": truncate(description, V2_DESCRIPTION_MAX_LEN),
             "severity": self._lakewatch_severity(rule),
-            "fidelity": self._lakewatch_v2_fidelity(rule_status),
+            "fidelity": self._lakewatch_fidelity(rule_status),
             "category": self.default_category,
             "objective": truncate(description, V2_OBJECTIVE_MAX_LEN),
         }
@@ -1554,7 +1511,7 @@ class DatabricksBackend(TextQueryBackend):
             "event_time_column": "time",
             "default_context": True,
         }
-        mitre = to_v2_mitre(build_mitre_mapping(rule))
+        mitre = build_mitre_mapping(rule)
         if mitre:
             doc["mitre"] = mitre
         return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
@@ -1612,12 +1569,6 @@ class DatabricksBackend(TextQueryBackend):
             warnings.warn(
                 "Lakewatch v2 rules have no warehouse_id: the server rejects enabled batch rules "
                 "without one (RULE_BATCH_PYSPARK_DISABLED). Set -O warehouse_id=...",
-                UserWarning, stacklevel=2,
-            )
-        if self.compute_group != "automatic":
-            warnings.warn(
-                "The compute_group option is ignored for Lakewatch v2: schedule.compute_group was "
-                "removed from the v2 API.",
                 UserWarning, stacklevel=2,
             )
 

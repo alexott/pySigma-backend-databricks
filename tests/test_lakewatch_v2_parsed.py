@@ -766,14 +766,6 @@ def test_parsed_mode_selection(env):
     assert env()._parsed_mode("default") is False
 
 
-def test_v1_lakewatch_unchanged(env):
-    backend = env()
-    rule = SigmaCollection.from_yaml(OCSF_RULE).rules[0]
-    sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
-    assert "unmapped:Initiated::string" in sql
-    assert "FROM process_activity" in sql
-
-
 def test_ocsf_cidr_on_free_form_field_renders_expression():
     # Regression: pySigma formats cidr_expression with the raw field name, which leaked the
     # internal placeholder for OCSF free-form and array fields.
@@ -786,7 +778,9 @@ detection:
         unmapped.ip|cidr: 10.0.0.0/8
     condition: sel
 """).rules[0]
-    sql = json.loads(DatabricksBackend().convert_rule(rule, "lakewatch")[0])["sql"]
+    sql = json.loads(
+        DatabricksBackend(ocsf=True, catalog_name="c", schema_name="s").convert_rule(rule, "lakewatch_v2")[0]
+    )["sql"]
     assert "ip_cidr_contains('10.0.0.0/8', try_ip_as_binary(unmapped:ip::string))" in sql
 
 

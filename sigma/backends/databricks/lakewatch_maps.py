@@ -46,13 +46,6 @@ SEVERITY_MAP: Dict[str, str] = {
     "informational": "Informational",
 }
 
-# Sigma status name (lower-case) -> Lakewatch fidelity.
-FIDELITY_MAP: Dict[str, str] = {
-    "stable": "High",
-    "test": "Medium",
-    "experimental": "Investigative",
-}
-
 _MITRE_PATH = os.path.join(os.path.dirname(__file__), "mitre_techniques.json")
 with open(_MITRE_PATH, encoding="utf-8") as _fh:
     _MITRE_DATA: Dict[str, dict] = json.load(_fh)
@@ -91,6 +84,10 @@ def _pick_tactic(technique: str, tagged: List[str]) -> str:
 
 
 def build_mitre_mapping(rule: SigmaRule) -> List[dict]:
+    """Lakewatch MITRE entries of a rule: snake_case keys, empty fields left out.
+
+    An entry without a tactic or a technique id is dropped.
+    """
     tactics: List[str] = []
     techniques: Dict[str, Optional[str]] = {}
     for tag in rule.tags:
@@ -113,14 +110,17 @@ def build_mitre_mapping(rule: SigmaRule) -> List[dict]:
     tagged = list(dict.fromkeys(tactics))
     entries: List[dict] = []
     for tid, sub in sorted(techniques.items()):
-        entries.append({
+        entry = {
             "taxonomy": "Enterprise",
             "tactic": _pick_tactic(sub or tid, tagged),
             "technique": MITRE_TECHNIQUES.get(tid, ""),
-            "techniqueId": tid,
-            "subTechnique": MITRE_TECHNIQUES.get(sub, "") if sub else "",
-            "subTechniqueId": sub or "",
-        })
+            "technique_id": tid,
+            "sub_technique": MITRE_TECHNIQUES.get(sub, "") if sub else "",
+            "sub_technique_id": sub or "",
+        }
+        entry = {key: value for key, value in entry.items() if value}
+        if entry.get("tactic") and entry.get("technique_id"):
+            entries.append(entry)
     return entries
 
 
@@ -230,27 +230,9 @@ def build_v2_annotations(rule: SigmaRule, profile: Optional[str] = None) -> Dict
 
 
 def to_v2_fidelity(fidelity: str) -> str:
-    """Convert a v1 fidelity value (``Investigative``) into the v2 enum (``FIDELITY_INVESTIGATIVE``)."""
+    """Convert a fidelity short name (``Investigative``) into the v2 enum (``FIDELITY_INVESTIGATIVE``)."""
     value = fidelity.strip().upper()
     return value if value.startswith("FIDELITY_") else f"FIDELITY_{value}"
-
-
-def to_v2_mitre(entries: List[dict]) -> List[dict]:
-    """Convert v1 MITRE entries to v2: snake_case keys, empty fields left out.
-
-    v2 needs a tactic and a technique id, so an entry without one is dropped.
-    """
-    renames = {
-        "techniqueId": "technique_id",
-        "subTechnique": "sub_technique",
-        "subTechniqueId": "sub_technique_id",
-    }
-    result: List[dict] = []
-    for entry in entries:
-        converted = {renames.get(key, key): value for key, value in entry.items() if value}
-        if converted.get("tactic") and converted.get("technique_id"):
-            result.append(converted)
-    return result
 
 
 def to_v2_rule_name(title: str, suffix: str = "") -> str:
