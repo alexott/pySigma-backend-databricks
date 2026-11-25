@@ -27,8 +27,22 @@ from sigma.backends.databricks.field_paths import UnknownFieldError, resolve_sch
 from sigma.backends.databricks.schema_catalog import ParserSchema
 from sigma.pipelines.databricks.lakewatch.transforms import Transform, parse_transform
 
-_TOP_KEYS = {"profile", "version", "parser", "fields", "logsources", "transforms", "products"}
-_BLOCK_KEYS = {"match", "conditions", "fields", "unsupported"}
+_TOP_KEYS = {
+    "profile",
+    "version",
+    "parser",
+    "fields",
+    "logsources",
+    "transforms",
+    "products",
+    "event_data_column",
+    "event_data",
+    "raw",
+    "unmapped_hint",
+}
+_BLOCK_KEYS = {"match", "conditions", "fields", "unsupported", "event_data", "route"}
+_RAW_KEYS = ("column", "entries", "expr")
+_ROUTE_KEYS = {"field", "in", "not_in"}
 _MATCH_KEYS = ("product", "category", "service")
 _MAPPING_KEYS = {"field", "transform", "undeclared", "modifiers", "select_condition"}
 # Profile ids become part of Unity Catalog rule names: keep them short and UC-safe.
@@ -58,6 +72,35 @@ class FieldMapping:
 
 
 @dataclass(frozen=True)
+class RawSource:
+    """Where the raw event text of a profile comes from (for keyword searches)."""
+
+    kind: str  # column | entries | expr
+    value: str
+    encoding: str  # text | json
+
+    @property
+    def approximate(self) -> bool:
+        """True when a search over the raw text only approximates a search over the fields."""
+        return self.kind == "entries" or self.encoding == "json"
+
+
+@dataclass(frozen=True)
+class Route:
+    """Routes rules to a block by the values of a field (lower-cased).
+
+    Without ``include`` and ``exclude`` the schema's ``allowed`` list of the mapped target applies.
+    """
+
+    field: str
+    include: Optional[FrozenSet[str]] = None
+    exclude: FrozenSet[str] = frozenset()
+
+
+EventDataNames = Union[Tuple[str, ...], str]
+
+
+@dataclass(frozen=True)
 class LogsourceBlock:
     """A profile block for the logsources it matches, with its conditions and fields."""
 
@@ -65,6 +108,8 @@ class LogsourceBlock:
     conditions: Dict[str, ConditionValue] = field(default_factory=dict)
     fields: Dict[str, FieldMapping] = field(default_factory=dict)
     unsupported: Tuple[str, ...] = ()
+    event_data: EventDataNames = ()
+    route: Optional[Route] = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +124,10 @@ class Profile:
     source: str = "<dict>"
     transforms: Dict[str, Tuple[Transform, ...]] = field(default_factory=dict)
     products: Dict[str, Dict[str, ConditionValue]] = field(default_factory=dict)
+    event_data_column: str = "EventData"
+    event_data: EventDataNames = ()
+    raw: Optional[RawSource] = None
+    unmapped_hint: Optional[str] = None
 
     def block_for(self, logsource: SigmaLogSource) -> Optional[LogsourceBlock]:
         """Return the most specific block matching ``logsource`` (first on ties), or None.
@@ -108,10 +157,24 @@ class Profile:
         return merged
 
     def mappings_for(self, block: LogsourceBlock) -> Dict[str, FieldMapping]:
-        """Return the profile fields overridden by the fields of ``block``."""
+        """Return the profile fields overridden by the fields of ``block``.
+
+        The ``event_data`` names of the profile and the block follow as ``Column[Name]``
+        mappings, unless a name is an explicit field.
+        """
         merged = dict(self.fields)
         merged.update(block.fields)
+        for names in (self.event_data, block.event_data):
+            if isinstance(names, str):
+                continue
+            for name in names:
+                if name not in merged:
+                    merged[name] = FieldMapping((f"{self.event_data_column}[{name}]",))
         return merged
+
+    def event_data_any(self, block: LogsourceBlock) -> bool:
+        """Return True when the profile or ``block`` accepts any EventData name."""
+        return self.event_data == "any" or block.event_data == "any"
 
 
 # --- parsing -----------------------------------------------------------------------------
@@ -217,6 +280,61 @@ def _parse_fields(
     return {str(k): _parse_mapping(v, source, str(k), named) for k, v in value.items()}
 
 
+def _parse_event_data(value: Any, source: str, where: str) -> EventDataNames:
+    if value == "any":
+        return "any"
+    if not isinstance(value, list) or not all(isinstance(n, str) for n in value):
+        raise ProfileError(source, f"{where}'event_data' must be a list of names or 'any'")
+    for name in value:
+        if not name or "[" in name or "]" in name:
+            raise ProfileError(source, f"{where}'event_data' name '{name}' must be non-empty without '[' or ']'")
+    if len(set(value)) != len(value):
+        dup = next(n for n in value if value.count(n) > 1)
+        raise ProfileError(source, f"{where}'event_data' lists '{dup}' twice")
+    return tuple(value)
+
+
+def _parse_raw(value: Any, source: str) -> RawSource:
+    if not isinstance(value, dict):
+        raise ProfileError(source, "'raw' must be a mapping")
+    _check_keys(value, (*_RAW_KEYS, "encoding"), source, "raw: ")
+    kinds = [k for k in _RAW_KEYS if k in value]
+    if len(kinds) != 1:
+        raise ProfileError(source, "raw: exactly one of 'column', 'entries' and 'expr' is required")
+    kind = kinds[0]
+    if not isinstance(value[kind], str) or not value[kind]:
+        raise ProfileError(source, f"raw: '{kind}' must be a non-empty string")
+    if kind == "expr":
+        encoding = value.get("encoding")
+        if encoding not in ("text", "json"):
+            raise ProfileError(source, "raw: 'expr' requires 'encoding' to be 'text' or 'json'")
+    elif "encoding" in value:
+        raise ProfileError(source, f"raw: 'encoding' is allowed only with 'expr', not '{kind}'")
+    else:
+        encoding = "text"
+    return RawSource(kind, value[kind], encoding)
+
+
+def _lower_values(value: Any, source: str, key: str) -> FrozenSet[str]:
+    if not isinstance(value, list) or not value or not all(isinstance(v, (str, int)) for v in value):
+        raise ProfileError(source, f"route: '{key}' must be a non-empty list of strings or numbers")
+    return frozenset(str(v).lower() for v in value)
+
+
+def _parse_route(value: Any, source: str) -> Route:
+    if not isinstance(value, dict):
+        raise ProfileError(source, "logsource block: 'route' must be a mapping")
+    _check_keys(value, _ROUTE_KEYS, source, "route: ")
+    name = value.get("field")
+    if not isinstance(name, str) or not name:
+        raise ProfileError(source, "route: 'field' must be a non-empty string")
+    if "in" in value and "not_in" in value:
+        raise ProfileError(source, "route: 'in' and 'not_in' cannot be combined")
+    include = _lower_values(value["in"], source, "in") if "in" in value else None
+    exclude = _lower_values(value["not_in"], source, "not_in") if "not_in" in value else frozenset()
+    return Route(name, include, exclude)
+
+
 def _parse_block(
     data: Any,
     source: str,
@@ -242,6 +360,10 @@ def _parse_block(
         conditions=conditions,
         fields=_parse_fields(data.get("fields", {}), source, "logsource block: ", named),
         unsupported=tuple(unsupported),
+        event_data=_parse_event_data(data.get("event_data", ()), source, "logsource block: ")
+        if "event_data" in data
+        else (),
+        route=_parse_route(data["route"], source) if "route" in data else None,
     )
 
 
@@ -286,6 +408,12 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
         raise ProfileError(source, "'logsources' must be a non-empty list")
     named = _parse_named_transforms(data.get("transforms", {}), source)
     products = _parse_products(data.get("products", {}), source)
+    column = data.get("event_data_column", "EventData")
+    if not isinstance(column, str) or not column or "[" in column or "]" in column:
+        raise ProfileError(source, "'event_data_column' must be a non-empty string without '[' or ']'")
+    hint = data.get("unmapped_hint")
+    if hint is not None and not isinstance(hint, str):
+        raise ProfileError(source, "'unmapped_hint' must be a string")
     blocks = tuple(_parse_block(b, source, named) for b in raw_blocks)
     seen = set()
     for block in blocks:
@@ -302,6 +430,10 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
         source=source,
         transforms=named,
         products=products,
+        event_data_column=column,
+        event_data=_parse_event_data(data["event_data"], source, "") if "event_data" in data else (),
+        raw=_parse_raw(data["raw"], source) if "raw" in data else None,
+        unmapped_hint=hint,
     )
 
 
@@ -417,7 +549,44 @@ def _validate_mappings(profile: Profile, schema: ParserSchema, mappings: Dict[st
                 )
 
 
+def _validate_raw(profile: Profile, schema: ParserSchema, raw: RawSource) -> None:
+    if raw.kind == "column":
+        fp = _resolve(profile, schema, raw.value, "raw column")
+        if fp.arrays or fp.json_path or fp.entry or fp.whole_variant or fp.leaf_type != "STRING":
+            raise ProfileError(
+                profile.source,
+                f"profile '{profile.profile}': raw column '{raw.value}' must be a scalar STRING",
+            )
+    elif raw.kind == "entries":
+        _resolve(profile, schema, f"{raw.value}[x]", "raw entries")
+
+
+def _validate_route(profile: Profile, schema: ParserSchema, block: LogsourceBlock, mapped) -> None:
+    route = block.route
+    if route is None:
+        return
+    mapping = mapped.get(route.field)
+    if mapping is None:
+        raise ProfileError(
+            profile.source, f"profile '{profile.profile}': route field '{route.field}' is not a mapped field"
+        )
+    if route.include is None and not route.exclude:
+        for target in mapping.targets or (None,):
+            info = schema.get(target) if target else None
+            if info is None or info.allowed is None:
+                raise ProfileError(
+                    profile.source,
+                    f"profile '{profile.profile}': route field '{route.field}' needs 'in' or 'not_in': "
+                    f"its target '{target}' has no schema 'allowed' list",
+                )
+
+
 def validate_profile(profile: Profile, schema: ParserSchema) -> None:
+    uses_event_data = bool(profile.event_data) or any(b.event_data for b in profile.logsources)
+    if uses_event_data:
+        _resolve(profile, schema, f"{profile.event_data_column}[x]", "event_data column")
+    if profile.raw is not None:
+        _validate_raw(profile, schema, profile.raw)
     _validate_mappings(profile, schema, profile.fields)
     for product, conditions in profile.products.items():
         _validate_conditions(profile, schema, conditions, f"product '{product}': ")
@@ -425,6 +594,7 @@ def validate_profile(profile: Profile, schema: ParserSchema) -> None:
         _validate_mappings(profile, schema, block.fields)
         _validate_conditions(profile, schema, block.conditions, "")
         mapped = profile.mappings_for(block)
+        _validate_route(profile, schema, block, mapped)
         for name in block.unsupported:
             if name in mapped:
                 raise ProfileError(

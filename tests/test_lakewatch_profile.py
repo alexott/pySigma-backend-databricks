@@ -9,6 +9,8 @@ from sigma.backends.databricks.schema_catalog import ParserSchema, PathInfo, Sch
 from sigma.pipelines.databricks.lakewatch.profile import (
     FieldMapping,
     ProfileError,
+    RawSource,
+    Route,
     load_profiles,
     parse_profile,
     validate_profile,
@@ -407,3 +409,114 @@ def test_validate_condition_allowed_like_backend():
         validate_profile(prof(block={"conditions": {"os": "linux"}}), s)
     with pytest.raises(ProfileError, match="'1' not in allowed"):
         validate_profile(prof(block={"conditions": {"inbound": 1}}), s)
+
+
+# --- event_data, raw, route, unmapped_hint ----------------------------------------------
+
+
+def schema_ed():
+    return ParserSchema(
+        "x",
+        None,
+        None,
+        {
+            "EventData": PathInfo("VARIANT", "column"),
+            "EventID": PathInfo("STRING", "column", allowed=("1", "3")),
+            "Other": PathInfo("STRING", "column"),
+            "raw_line": PathInfo("STRING", "column"),
+        },
+    )
+
+
+def ed_prof(top=None, block=None, fields=None):
+    b = {"match": {"product": "windows"}}
+    b.update(block or {})
+    data = base(fields=fields or {}, logsources=[b])
+    data.update(top or {})
+    return parse_profile(data, "<dict>")
+
+
+def test_event_data_expands():
+    p = ed_prof({"event_data": ["Image"]}, {"event_data": ["CommandLine"], "fields": {"Image": "X"}})
+    m = p.mappings_for(p.logsources[0])
+    assert m["Image"] == FieldMapping(("X",))
+    assert m["CommandLine"] == FieldMapping(("EventData[CommandLine]",))
+    p = ed_prof({"event_data": ["Image"], "event_data_column": "ED"})
+    assert p.mappings_for(p.logsources[0])["Image"].targets == ("ED[Image]",)
+
+
+def test_event_data_any():
+    p = ed_prof(block={"event_data": "any"})
+    assert p.event_data_any(p.logsources[0])
+    assert not ed_prof().event_data_any(ed_prof().logsources[0])
+    p = ed_prof({"event_data": "any"})
+    assert p.event_data_any(p.logsources[0])
+
+
+@pytest.mark.parametrize("bad", [["a[b]"], [""], ["a", "a"], "some", [1], {"a": 1}])
+def test_event_data_bad_names(bad):
+    with pytest.raises(ProfileError):
+        ed_prof({"event_data": bad})
+    with pytest.raises(ProfileError):
+        ed_prof(block={"event_data": bad})
+
+
+def test_raw_forms():
+    assert ed_prof({"raw": {"column": "a"}}).raw == RawSource("column", "a", "text")
+    assert ed_prof({"raw": {"entries": "b"}}).raw == RawSource("entries", "b", "text")
+    j = ed_prof({"raw": {"expr": "x", "encoding": "json"}}).raw
+    assert j == RawSource("expr", "x", "json")
+    assert j.approximate
+    assert ed_prof({"raw": {"entries": "b"}}).raw.approximate
+    assert not ed_prof({"raw": {"column": "a"}}).raw.approximate
+    assert not ed_prof({"raw": {"expr": "x", "encoding": "text"}}).raw.approximate
+    for bad in ({"expr": "x"}, {"column": "a", "entries": "b"}, {}, {"column": "a", "encoding": "json"}, "a"):
+        with pytest.raises(ProfileError):
+            ed_prof({"raw": bad})
+
+
+def test_raw_validate():
+    validate_profile(ed_prof({"raw": {"column": "raw_line"}}), schema_ed())
+    validate_profile(ed_prof({"raw": {"entries": "EventData"}}), schema_ed())
+    with pytest.raises(ProfileError):
+        validate_profile(ed_prof({"raw": {"column": "EventData"}}), schema_ed())
+    with pytest.raises(ProfileError):
+        validate_profile(ed_prof({"raw": {"entries": "raw_line"}}), schema_ed())
+
+
+def test_unmapped_hint():
+    assert ed_prof({"unmapped_hint": "hi"}).unmapped_hint == "hi"
+    with pytest.raises(ProfileError):
+        ed_prof({"unmapped_hint": 1})
+
+
+def test_route_parse_and_validate():
+    p = ed_prof(block={"route": {"field": "EventID"}}, fields={"EventID": "EventID"})
+    assert p.logsources[0].route == Route("EventID", None, frozenset())
+    validate_profile(p, schema_ed())
+    p = ed_prof(block={"route": {"field": "EventID", "in": [1, "A"]}}, fields={"EventID": "Other"})
+    assert p.logsources[0].route == Route("EventID", frozenset({"1", "a"}), frozenset())
+    validate_profile(p, schema_ed())
+    p = ed_prof(block={"route": {"field": "EventID", "not_in": ["1"]}}, fields={"EventID": "Other"})
+    assert p.logsources[0].route.exclude == frozenset({"1"})
+    with pytest.raises(ProfileError, match="Nope"):
+        validate_profile(ed_prof(block={"route": {"field": "Nope"}}, fields={"EventID": "EventID"}), schema_ed())
+    with pytest.raises(ProfileError, match="allowed"):
+        validate_profile(ed_prof(block={"route": {"field": "EventID"}}, fields={"EventID": "Other"}), schema_ed())
+    with pytest.raises(ProfileError):
+        ed_prof(block={"route": {"field": "EventID", "in": ["1"], "not_in": ["2"]}})
+    with pytest.raises(ProfileError):
+        ed_prof(block={"route": {"in": ["1"]}})
+    with pytest.raises(ProfileError):
+        ed_prof(block={"route": {"field": "EventID", "x": 1}})
+
+
+def test_event_data_validate_resolves():
+    validate_profile(ed_prof({"event_data": ["Image"]}), schema_ed())
+    with pytest.raises(ProfileError, match="Other\\[x\\]"):
+        validate_profile(ed_prof({"event_data": ["Image"], "event_data_column": "Other"}), schema_ed())
+
+
+def test_unsupported_vs_event_data():
+    with pytest.raises(ProfileError, match="both mapped and unsupported"):
+        validate_profile(ed_prof(block={"event_data": ["Image"], "unsupported": ["Image"]}), schema_ed())
