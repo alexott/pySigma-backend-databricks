@@ -156,6 +156,7 @@ Multiple rules are emitted as separate `---` documents in one file.
 Only batch rules are generated (streaming is future work). Sigma metadata maps to Lakewatch as
 follows:
 
+* `title`→`output.summary`, `description`→`description`/`objective`, `level`→`severity`, and `attack.*` tags→`mitre`.
 * The SQL filters on `IN_TIMERANGE(time)`, which follows the schedule.
 * `rule_name` is derived from the title in snake_case (e.g. `Encoded PowerShell` →
   `encoded_powershell`). Duplicate names within one output get `_2`, `_3`, … suffixes.

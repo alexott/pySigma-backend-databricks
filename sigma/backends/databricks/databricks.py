@@ -367,8 +367,8 @@ class DatabricksBackend(TextQueryBackend):
         self._raw_log_field_set = bool(raw_log_field)
         if raw_log_field:
             self.raw_log_field = raw_log_field
-        # None: render OCSF array/free-form fields only for the lakewatch format or rules processed
-        # by the OCSF pipeline; True/False force it on/off.
+        # None: render OCSF fields only for rules processed by an OCSF pipeline (for lakewatch: an
+        # ocsf_ pipeline selects OCSF mode); True/False force it on/off.
         self.ocsf = self._parse_bool_option("ocsf", ocsf)
         self._current_rule: Optional[SigmaRule] = None
         self._current_format: Optional[str] = None
@@ -1445,7 +1445,7 @@ class DatabricksBackend(TextQueryBackend):
         )
 
     def finalize_query_lakewatch(self, rule: SigmaRule, query: str, index: int,
-                                    state: ConversionState) -> Any:
+                                 state: ConversionState) -> Any:
         """Build a Lakewatch v2 batch rule document for a single Sigma query."""
         catalog_name = (self.catalog_name or "").strip()
         schema_name = (self.schema_name or "").strip()
