@@ -969,7 +969,7 @@ class DatabricksBackend(TextQueryBackend):
             self.backend_processing_pipeline
             + (self.processing_pipeline if self.processing_pipeline is not None else ProcessingPipeline())
             + self.output_format_processing_pipeline[output_format]
-            + build_profile_pipeline(selected[0], block)
+            + build_profile_pipeline(selected[0], block, rule.logsource)
         )
         # Same variables as Backend.init_processing_pipeline().
         pipeline.vars.update({"backend_" + key: value for key, value in self.backend_options.items()})

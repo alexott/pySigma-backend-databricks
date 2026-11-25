@@ -273,6 +273,61 @@ Field mapping is strict. A Sigma field that isn't a key of the profile's `fields
 rule with `field <name> is not mapped by profile <id>`, and keyword (unbound) searches fail as
 well. Use `-s` to skip failed rules when converting a directory.
 
+#### Value transforms
+
+A mapping can rewrite the Sigma values before they are compared. Transforms come from a fixed
+library and are configured in the profile:
+
+| Transform | Parameters | What it does |
+|-----------|------------|--------------|
+| `map` | `values: {from: to \| [to, ...]}`, `default: keep \| fail` (`fail`) | Replaces a value; a list becomes an OR. Keys are case-insensitive. |
+| `case` | `upper` or `lower` | Changes the case of string values. |
+| `basename` | none | `C:\dir\cmd.exe` and `*\cmd.exe` become `cmd.exe`. Fails for patterns on the directory, such as `startswith`. |
+| `path_prefix` | `rewrite: [{from: <regex>, to: <prefix>}]` | Rewrites the start of a path, for example `C:` to `\Device\HarddiskVolume*`. |
+| `registry_path` | `hive: short \| long \| kernel`, optional `split: {key: <path>, value: <path>}` | Normalizes the hive name (`HKLM`, `HKEY_LOCAL_MACHINE`, `\REGISTRY\MACHINE`, ...). With `split`, see below. |
+| `hashes` | `algos: {MD5: <path>, SHA1: <path>, SHA256: <path>, IMPHASH: <path>}` | Routes `ALGO=digest` values (or a bare digest, by its length) to the column of the algorithm. |
+| `domain_user` | `{domain: <path>, user: <path>}` | Matches `DOMAIN\user` values, see below. |
+| `regex_replace` | `pattern`, `replacement` | Regex substitution on the literal parts of a string. |
+| `to_int`, `to_str` | none | Converts digit strings to numbers, or numbers and booleans to strings. |
+
+```yaml
+transforms:                                  # named transforms, usable in every block
+  reg: {registry_path: {hive: long, split: {key: RegistryKey, value: RegistryValueName}}}
+fields:
+  Protocol: {field: proto, transform: {map: {values: {tcp: 6, udp: 17}}}}
+  ParentImage: {field: ParentBaseFileName, transform: basename, modifiers: [eq, endswith]}
+  CommandLine: {field: cmd, transform: [{case: lower}, {regex_replace: {pattern: '\s+', replacement: ' '}}]}
+  TargetObject: {transform: reg}             # targets come from the transform
+  Hashes: {transform: {hashes: {algos: {SHA256: SHA256, MD5: MD5}}}}
+  Initiated:
+    select_condition:                        # the value picks conditions instead of a predicate
+      'true': {event_type: NetworkConnect}
+      'false': {event_type: NetworkAccept}
+  CustomField: {field: userIdentity.customKey, undeclared: true}
+```
+
+* A transform that can't keep the meaning of a value fails the rule with
+  `field <F>: transform <kind>: <reason> (profile <id>)`. A condition is never dropped silently,
+  except hash algorithms the profile doesn't have, which are dropped with a warning. With `|all`,
+  or when no value is left, the rule fails instead.
+* Transforms run on the values after the Sigma modifiers, wildcards included. Field references
+  (`|fieldref`) to or from a transformed field aren't supported.
+* `registry_path` with `split` and `domain_user` compare the value with the joined expression
+  `concat_ws('\\', nullif(<key>, ''), nullif(<value>, ''))`, so every modifier keeps its meaning.
+  An empty value name (the key's default value) or a missing domain gives the other part alone.
+* `select_condition` maps each value (case-insensitive; `true`/`false` for booleans) to
+  conditions that are ANDed. Several values are ORed, and `not` works as usual. Another value,
+  or a wildcard, fails the rule. When the rule doesn't use the field, only the block conditions
+  apply.
+* `modifiers` lists the Sigma modifiers allowed on a field (`eq` for none). Any other modifier
+  fails the rule with `field <F>: modifier <m> is not supported`.
+* `undeclared: true` allows a target inside a VARIANT column that declares sub-fields, but not
+  this one: a key that the data has and the parser schema doesn't list. It is extracted as a
+  string.
+* The top-level `products` map adds conditions per Sigma product, for example
+  `products: {windows: {event_platform: Win}}`. Block conditions win on the same field. With
+  `products` set, a rule whose product isn't listed doesn't match the profile.
+
 Current limitations:
 
 * Keyword (unbound) searches aren't supported yet.
