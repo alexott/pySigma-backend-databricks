@@ -87,3 +87,26 @@ def test_invalid_json_schema_file(tmp_path):
     path.write_text("{not json", encoding="utf-8")
     with pytest.raises(SigmaConfigurationError, match="Cannot load parser schema file"):
         SchemaCatalog.load([str(path)])
+
+
+def test_windows_custom_loads():
+    s = SchemaCatalog.load().get("windows_sysmon_process")
+    assert s.paths["EventData"].type == "VARIANT"
+    assert {"1", "10"} <= set(s.paths["EventID"].allowed)
+    assert s.paths["Provider"].allowed == ("Microsoft-Windows-Sysmon",)
+    other = SchemaCatalog.load().get("windows_event_other")
+    assert other.paths["raw_event"].type == "VARIANT"
+    assert "EventData" in other.paths
+
+
+def test_builtin_overrides_bundled_custom(tmp_path, monkeypatch):
+    import sigma.backends.databricks.schema_catalog as sc
+
+    def cat(t):
+        return {"parsers": {"p": {"paths": {"f": {"type": t, "storage": "column"}}}}}
+
+    _write(tmp_path, "one.json", cat("STRING"))
+    _write(tmp_path, "two.json", cat("INT"))
+    monkeypatch.setattr(sc, "_BUNDLED_FILES", ("one.json", "two.json"))
+    monkeypatch.setattr(sc, "files", lambda _pkg: tmp_path)
+    assert SchemaCatalog.load().get("p").paths["f"].type == "INT"

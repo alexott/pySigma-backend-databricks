@@ -7,7 +7,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from sigma.exceptions import SigmaConfigurationError
 
 _BUILTIN_PACKAGE = "sigma.backends.databricks.lakewatch_schemas"
-_BUILTIN_FILE = "builtin.json"
+_BUNDLED_FILES = ("windows_custom.json", "builtin.json")
 
 
 @dataclass(frozen=True)
@@ -110,11 +110,12 @@ class SchemaCatalog:
 
     @classmethod
     def load(cls, extra_files: Sequence[str] = ()) -> "SchemaCatalog":
-        """Load the builtin catalog, then each extra file; later entries replace earlier ones."""
+        """Load the bundled catalogs, then each extra file; later entries replace earlier ones."""
         schemas: Dict[str, ParserSchema] = {}
-        builtin = files(_BUILTIN_PACKAGE).joinpath(_BUILTIN_FILE)
-        if builtin.is_file():
-            schemas.update(_parse_catalog(json.loads(builtin.read_text(encoding="utf-8"))))
+        for bundled_name in _BUNDLED_FILES:
+            bundled = files(_BUILTIN_PACKAGE).joinpath(bundled_name)
+            if bundled.is_file():
+                schemas.update(_parse_catalog(json.loads(bundled.read_text(encoding="utf-8"))))
         for extra in extra_files:
             try:
                 with open(extra, encoding="utf-8") as fh:

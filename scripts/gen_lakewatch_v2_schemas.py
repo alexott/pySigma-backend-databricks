@@ -1,16 +1,18 @@
 """Generate a Lakewatch parser schema catalog (JSON) from a parser pack directory.
 
 Dev-only, run manually to refresh the bundled catalog:
-    python scripts/gen_lakewatch_v2_schemas.py <pack_dir> [--parsers-subdir parsers] -o <out.json>
+    python scripts/gen_lakewatch_v2_schemas.py <pack_dir> [--parsers-subdir parsers]
+        [--include GLOB] [--exclude GLOB] -o <out.json>
 Reads ``<pack_dir>/<parsers_subdir>/*/parser.yaml`` plus the optional ``appIndex.yaml`` (uuid) and
 ``<parsers_subdir>/revisions.yaml`` (latestVersion).
 """
 import argparse
+import fnmatch
 import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import yaml
 
@@ -75,7 +77,12 @@ def _git_sha(directory: Path) -> Optional[str]:
         return None
 
 
-def build_catalog(pack_dir: Path, parsers_subdir: str = "parsers") -> dict:
+def build_catalog(
+    pack_dir: Path,
+    parsers_subdir: str = "parsers",
+    include: Optional[Sequence[str]] = None,
+    exclude: Optional[Sequence[str]] = None,
+) -> dict:
     pack_dir = Path(pack_dir)
     parsers_dir = pack_dir / parsers_subdir
     uuids = {p["name"]: p.get("uuid") for p in _load_yaml(pack_dir / "appIndex.yaml").get("parsers") or []}
@@ -86,6 +93,10 @@ def build_catalog(pack_dir: Path, parsers_subdir: str = "parsers") -> dict:
     parsers: Dict[str, Any] = {}
     for parser_file in sorted(parsers_dir.glob("*/parser.yaml")):
         name = parser_file.parent.name
+        if include and not any(fnmatch.fnmatch(name, g) for g in include):
+            continue
+        if exclude and any(fnmatch.fnmatch(name, g) for g in exclude):
+            continue
         paths: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in _MANAGED.items()}
         _walk(_load_yaml(parser_file).get("fields"), "", "column", paths)
         parsers[name] = {"uuid": uuids.get(name), "version": versions.get(name), "paths": paths}
@@ -104,9 +115,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("pack_dir", type=Path)
     ap.add_argument("--parsers-subdir", default="parsers")
+    ap.add_argument("--include", action="append", metavar="GLOB", help="keep only parser dirs matching (repeatable)")
+    ap.add_argument("--exclude", action="append", metavar="GLOB", help="drop parser dirs matching (repeatable)")
     ap.add_argument("-o", "--output", type=Path, required=True)
     args = ap.parse_args()
-    catalog = build_catalog(args.pack_dir.expanduser(), args.parsers_subdir)
+    catalog = build_catalog(args.pack_dir.expanduser(), args.parsers_subdir, args.include, args.exclude)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Wrote {len(catalog['parsers'])} parsers to {args.output}")

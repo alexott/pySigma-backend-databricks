@@ -1,0 +1,2916 @@
+{
+  "generated_at": "2026-11-25T14:16:33Z",
+  "generated_from": "lakewatch@4e3ed35",
+  "parsers": {
+    "windows_application": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "allowed": [
+            "Application"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_applocker": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "allowed": [
+            "Microsoft-Windows-AppLocker/EXE and DLL",
+            "Microsoft-Windows-AppLocker/MSI and Script",
+            "Microsoft-Windows-AppLocker/Packaged app-Deployment",
+            "Microsoft-Windows-AppLocker/Packaged app-Execution"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "8001",
+            "8002",
+            "8003",
+            "8004",
+            "8005",
+            "8006",
+            "8007",
+            "8020",
+            "8021",
+            "8022",
+            "8023",
+            "8024",
+            "8025"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-AppLocker"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_defender_detection": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "allowed": [
+            "Microsoft-Windows-Windows Defender/Operational"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_event_other": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Provider": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "raw_event": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_ntlm_authentication": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "allowed": [
+            "Microsoft-Windows-NTLM/Operational"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "4001",
+            "4002",
+            "4003",
+            "8001",
+            "8002",
+            "8003",
+            "8004"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_powershell_other": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-PowerShell"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_powershell_script": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "4103",
+            "4104",
+            "4105",
+            "4106"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-PowerShell"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_security_account_change": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "4720",
+            "4722",
+            "4723",
+            "4724",
+            "4725",
+            "4726",
+            "4738",
+            "4740",
+            "4741",
+            "4742",
+            "4767",
+            "4780",
+            "4781",
+            "4794",
+            "4798"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Security-Auditing"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_security_authentication": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "4624",
+            "4625",
+            "4627",
+            "4634",
+            "4647",
+            "4648",
+            "4768",
+            "4769",
+            "4770",
+            "4771",
+            "4772",
+            "4776",
+            "4777",
+            "4778",
+            "4779",
+            "4800",
+            "4801"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Security-Auditing"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_security_group_management": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "4727",
+            "4728",
+            "4729",
+            "4730",
+            "4731",
+            "4732",
+            "4733",
+            "4734",
+            "4735",
+            "4737",
+            "4754",
+            "4755",
+            "4756",
+            "4757",
+            "4758",
+            "4764",
+            "4799"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Security-Auditing"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_security_network": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "5140",
+            "5145",
+            "5152",
+            "5156",
+            "5157",
+            "5158",
+            "5159"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Security-Auditing"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_security_other": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "allowed": [
+            "Security"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_security_process": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "4688",
+            "4689",
+            "4690",
+            "4696"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Security-Auditing"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_security_user_access": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "4672",
+            "4673",
+            "4674",
+            "4703",
+            "4704",
+            "4705",
+            "4717",
+            "4718"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Security-Auditing"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_smbserver_detection": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "3000"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-SMBServer"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_sysmon_dns": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "22"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Sysmon"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_sysmon_file": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "2",
+            "11",
+            "15",
+            "23",
+            "26",
+            "27",
+            "28",
+            "29"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Sysmon"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_sysmon_network": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "3"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Sysmon"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_sysmon_other": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Sysmon"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_sysmon_process": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "1",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "25"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Sysmon"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_sysmon_registry": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "12",
+            "13",
+            "14"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-Sysmon"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_system": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "allowed": [
+            "System"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_taskscheduler": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "allowed": [
+            "Microsoft-Windows-TaskScheduler/Operational"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    },
+    "windows_wmi_activity": {
+      "paths": {
+        "ActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Channel": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Computer": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "EventID": {
+          "allowed": [
+            "5857",
+            "5858",
+            "5859",
+            "5860",
+            "5861"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "EventIDQualifiers": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "EventRecordID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "EventSourceName": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Keywords": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Level": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "Message": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Opcode": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ProcessID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "Provider": {
+          "allowed": [
+            "Microsoft-Windows-WMI-Activity"
+          ],
+          "required": true,
+          "storage": "column",
+          "type": "STRING"
+        },
+        "ProviderGuid": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RelatedActivityID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "RenderingInfo": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "Task": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "ThreadID": {
+          "storage": "column",
+          "type": "BIGINT"
+        },
+        "UserData": {
+          "storage": "column",
+          "type": "VARIANT"
+        },
+        "UserID": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "Version": {
+          "storage": "column",
+          "type": "INT"
+        },
+        "lw_id": {
+          "storage": "column",
+          "type": "STRING"
+        },
+        "lw_meta": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "lw_observables": {
+          "storage": "column",
+          "type": "STRUCT"
+        },
+        "time": {
+          "storage": "column",
+          "type": "TIMESTAMP"
+        }
+      },
+      "uuid": null,
+      "version": null
+    }
+  }
+}

@@ -50,3 +50,17 @@ def test_missing_index_files(tmp_path):
     x = _load().build_catalog(tmp_path)["parsers"]["x"]
     assert x["uuid"] is None and x["version"] is None
     assert x["paths"]["a"] == {"type": "STRING", "storage": "column"}
+
+
+def test_gen_include_filter(tmp_path, monkeypatch):
+    for name in ("a", "windows_x", "windows_snare"):
+        (tmp_path / "parsers" / name).mkdir(parents=True)
+        (tmp_path / "parsers" / name / "parser.yaml").write_text("fields:\n  - name: f\n")
+    mod = _load()
+    assert set(mod.build_catalog(tmp_path, include=["windows_*"])["parsers"]) == {"windows_x", "windows_snare"}
+    out = tmp_path / "out.json"
+    monkeypatch.setattr("sys.argv", [
+        "gen", str(tmp_path), "--include", "windows_*", "--exclude", "windows_snare", "-o", str(out)])
+    mod.main()
+    import json
+    assert set(json.loads(out.read_text())["parsers"]) == {"windows_x"}
