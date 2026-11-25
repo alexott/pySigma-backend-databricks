@@ -1,0 +1,144 @@
+# Built-in Lakewatch profile for the windows_event_logs parser (a Lakewatch built-in): the Windows event header only.
+#
+# Header columns as declared in the built-in parser schema (builtin.json): EventID, Channel, Computer,
+# ProviderName, UserID, Message, Level, Task, Opcode, Keywords, ... EventData is not parsed, so a
+# rule that needs EventData fields fails with the unmapped hint; use the custom windows_* parsers.
+#
+# Channel names (Event Viewer / Windows documentation):
+#   service                     channel                                                   source
+#   codeintegrity-operational: Microsoft-Windows-CodeIntegrity/Operational
+#       https://learn.microsoft.com/windows/security/application-security/application-control/app-control-for-business/operations/event-id-explanations
+#   appxdeployment-server: Microsoft-Windows-AppXDeploymentServer/Operational
+#       https://learn.microsoft.com/windows/win32/appxpkg/troubleshooting
+#   firewall-as: Microsoft-Windows-Windows Firewall With Advanced Security/Firewall
+#       https://learn.microsoft.com/troubleshoot/windows-server/networking/error-0x000006d9-when-you-share-printer
+#   msexchange-management: MSExchange Management
+#       https://learn.microsoft.com/exchange/policy-and-compliance/admin-audit-logging/admin-audit-logging
+#   bits-client: Microsoft-Windows-Bits-Client/Operational
+#       https://learn.microsoft.com/microsoftteams/vdi-2-troubleshooting
+#   dns-client: Microsoft-Windows-DNS Client Events/Operational
+#       https://learn.microsoft.com/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection
+#   iis-configuration: Microsoft-IIS-Configuration/Operational
+#       https://learn.microsoft.com/answers/questions/1885320/how-to-enable-logs-in-microsoft-iis-configuration
+#   security-mitigations: Microsoft-Windows-Security-Mitigations/KernelMode ; Microsoft-Windows-Security-Mitigations/UserMode
+#       https://learn.microsoft.com/defender-endpoint/attack-surface-reduction-windows-events
+#   dns-server: DNS Server
+#       https://learn.microsoft.com/windows-server/networking/dns/manage-dns-server-events
+#   security: Security; powershell: Microsoft-Windows-PowerShell/Operational (about_Logging_Windows);
+#   powershell-classic: Windows PowerShell (about_Eventlogs, powershell-5.1);
+#   system: System; application: Application; taskscheduler: Microsoft-Windows-TaskScheduler/Operational;
+#   windefend: Microsoft-Windows-Windows Defender/Operational; wmi: Microsoft-Windows-WMI-Activity/Operational;
+#   ntlm: Microsoft-Windows-NTLM/Operational; applocker: Microsoft-Windows-AppLocker/{EXE and DLL, MSI and Script,
+#   Packaged app-Deployment, Packaged app-Execution}.
+# No LGPL Sigma pipeline source was used.
+profile: windows_event_logs
+version: 1
+parser: windows_event_logs
+unmapped_hint: "windows_event_logs has the event header only; EventData fields need the custom windows_* parsers"
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: ProviderName
+  UserID: UserID
+  Message: Message
+  Level: Level
+  Task: Task
+  Opcode: Opcode
+  Keywords: Keywords
+logsources:
+  - match:
+      product: windows
+      service: security
+    conditions:
+      Channel: 'Security'
+  - match:
+      product: windows
+      service: system
+    conditions:
+      Channel: 'System'
+  - match:
+      product: windows
+      service: application
+    conditions:
+      Channel: 'Application'
+  - match:
+      product: windows
+      service: taskscheduler
+    conditions:
+      Channel: 'Microsoft-Windows-TaskScheduler/Operational'
+  - match:
+      product: windows
+      service: windefend
+    conditions:
+      Channel: 'Microsoft-Windows-Windows Defender/Operational'
+  - match:
+      product: windows
+      service: wmi
+    conditions:
+      Channel: 'Microsoft-Windows-WMI-Activity/Operational'
+  - match:
+      product: windows
+      service: ntlm
+    conditions:
+      Channel: 'Microsoft-Windows-NTLM/Operational'
+  - match:
+      product: windows
+      service: applocker
+    conditions:
+      Channel: ['Microsoft-Windows-AppLocker/EXE and DLL', 'Microsoft-Windows-AppLocker/MSI and Script', 'Microsoft-Windows-AppLocker/Packaged app-Deployment', 'Microsoft-Windows-AppLocker/Packaged app-Execution']
+  - match:
+      product: windows
+      service: codeintegrity-operational
+    conditions:
+      Channel: 'Microsoft-Windows-CodeIntegrity/Operational'
+  - match:
+      product: windows
+      service: appxdeployment-server
+    conditions:
+      Channel: 'Microsoft-Windows-AppXDeploymentServer/Operational'
+  - match:
+      product: windows
+      service: firewall-as
+    conditions:
+      Channel: 'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall'
+  - match:
+      product: windows
+      service: msexchange-management
+    conditions:
+      Channel: 'MSExchange Management'
+  - match:
+      product: windows
+      service: bits-client
+    conditions:
+      Channel: 'Microsoft-Windows-Bits-Client/Operational'
+  - match:
+      product: windows
+      service: dns-client
+    conditions:
+      Channel: 'Microsoft-Windows-DNS Client Events/Operational'
+  - match:
+      product: windows
+      service: iis-configuration
+    conditions:
+      Channel: 'Microsoft-IIS-Configuration/Operational'
+  - match:
+      product: windows
+      service: security-mitigations
+    conditions:
+      Channel: ['Microsoft-Windows-Security-Mitigations/KernelMode', 'Microsoft-Windows-Security-Mitigations/UserMode']
+  - match:
+      product: windows
+      service: dns-server
+    conditions:
+      Channel: 'DNS Server'
+  - match:
+      product: windows
+      service: powershell
+    conditions:
+      Channel: 'Microsoft-Windows-PowerShell/Operational'
+  - match:
+      product: windows
+      service: powershell-classic
+    conditions:
+      Channel: 'Windows PowerShell'

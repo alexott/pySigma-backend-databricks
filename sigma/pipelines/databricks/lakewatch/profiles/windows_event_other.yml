@@ -1,0 +1,138 @@
+# Built-in Lakewatch profile for the windows_event_other parser: catch-all for channels with no dedicated parser, plus classic Windows PowerShell.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Channel names (Event Viewer / Windows documentation):
+#   service                     channel                                                   source
+#   codeintegrity-operational: Microsoft-Windows-CodeIntegrity/Operational
+#       https://learn.microsoft.com/windows/security/application-security/application-control/app-control-for-business/operations/event-id-explanations
+#   appxdeployment-server: Microsoft-Windows-AppXDeploymentServer/Operational
+#       https://learn.microsoft.com/windows/win32/appxpkg/troubleshooting
+#   firewall-as: Microsoft-Windows-Windows Firewall With Advanced Security/Firewall
+#       https://learn.microsoft.com/troubleshoot/windows-server/networking/error-0x000006d9-when-you-share-printer
+#   msexchange-management: MSExchange Management
+#       https://learn.microsoft.com/exchange/policy-and-compliance/admin-audit-logging/admin-audit-logging
+#   bits-client: Microsoft-Windows-Bits-Client/Operational
+#       https://learn.microsoft.com/microsoftteams/vdi-2-troubleshooting
+#   dns-client: Microsoft-Windows-DNS Client Events/Operational
+#       https://learn.microsoft.com/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection
+#   iis-configuration: Microsoft-IIS-Configuration/Operational
+#       https://learn.microsoft.com/answers/questions/1885320/how-to-enable-logs-in-microsoft-iis-configuration
+#   security-mitigations: Microsoft-Windows-Security-Mitigations/KernelMode ; Microsoft-Windows-Security-Mitigations/UserMode
+#       https://learn.microsoft.com/defender-endpoint/attack-surface-reduction-windows-events
+#   dns-server: DNS Server
+#       https://learn.microsoft.com/windows-server/networking/dns/manage-dns-server-events
+#   security: Security; powershell: Microsoft-Windows-PowerShell/Operational (about_Logging_Windows);
+#   powershell-classic: Windows PowerShell (about_Eventlogs, powershell-5.1);
+#   system: System; application: Application; taskscheduler: Microsoft-Windows-TaskScheduler/Operational;
+#   windefend: Microsoft-Windows-Windows Defender/Operational; wmi: Microsoft-Windows-WMI-Activity/Operational;
+#   ntlm: Microsoft-Windows-NTLM/Operational; applocker: Microsoft-Windows-AppLocker/{EXE and DLL, MSI and Script,
+#   Packaged app-Deployment, Packaged app-Execution}.
+#
+# Field-name sources: classic PowerShell EventIDs 400 (engine lifecycle), 600 (provider lifecycle)
+# and 800 (pipeline execution details) and the channel "Windows PowerShell" come from Microsoft Learn
+# about_Eventlogs (powershell-5.1,
+# https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_eventlogs) and
+# the Windows PowerShell logging documentation. Their Data elements are unnamed; `Data` maps to
+# `EventData[*]` (all string elements joined with newlines; plan 3 ruling 10) and the classic
+# blocks list no event_data, so any other field fails. Other blocks use `event_data: any` (lenient;
+# warning per field, plan 3 ruling 4), set per block. No LGPL Sigma pipeline source was used.
+#
+# Keyword search runs over to_json(raw_event) and is approximate.
+profile: windows_event_other
+version: 1
+parser: windows_event_other
+raw:
+  expr: "to_json(raw_event)"
+  encoding: json
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: codeintegrity-operational
+    conditions:
+      Channel: 'Microsoft-Windows-CodeIntegrity/Operational'
+    event_data: any
+  - match:
+      product: windows
+      service: appxdeployment-server
+    conditions:
+      Channel: 'Microsoft-Windows-AppXDeploymentServer/Operational'
+    event_data: any
+  - match:
+      product: windows
+      service: firewall-as
+    conditions:
+      Channel: 'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall'
+    event_data: any
+  - match:
+      product: windows
+      service: msexchange-management
+    conditions:
+      Channel: 'MSExchange Management'
+    event_data: any
+  - match:
+      product: windows
+      service: bits-client
+    conditions:
+      Channel: 'Microsoft-Windows-Bits-Client/Operational'
+    event_data: any
+  - match:
+      product: windows
+      service: dns-client
+    conditions:
+      Channel: 'Microsoft-Windows-DNS Client Events/Operational'
+    event_data: any
+  - match:
+      product: windows
+      service: iis-configuration
+    conditions:
+      Channel: 'Microsoft-IIS-Configuration/Operational'
+    event_data: any
+  - match:
+      product: windows
+      service: security-mitigations
+    conditions:
+      Channel: ['Microsoft-Windows-Security-Mitigations/KernelMode', 'Microsoft-Windows-Security-Mitigations/UserMode']
+    event_data: any
+  - match:
+      product: windows
+      service: dns-server
+    conditions:
+      Channel: 'DNS Server'
+    event_data: any
+  - match:
+      product: windows
+      category: ps_classic_start
+    conditions:
+      Channel: 'Windows PowerShell'
+      EventID: '400'
+    fields:
+      Data: 'EventData[*]'
+  - match:
+      product: windows
+      category: ps_classic_provider_start
+    conditions:
+      Channel: 'Windows PowerShell'
+      EventID: '600'
+    fields:
+      Data: 'EventData[*]'
+  - match:
+      product: windows
+      category: ps_classic_script
+    conditions:
+      Channel: 'Windows PowerShell'
+      EventID: '800'
+    fields:
+      Data: 'EventData[*]'
+  - match:
+      product: windows
+      service: powershell-classic
+    conditions:
+      Channel: 'Windows PowerShell'
+    fields:
+      Data: 'EventData[*]'

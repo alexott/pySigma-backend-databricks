@@ -261,3 +261,102 @@ def test_security_service_route_multi_eventid():
     assert sum("__windows_security_process" in q for q in queries) == 1
     for n in ("account_change", "group_management", "network", "user_access", "other"):
         assert f"__windows_security_{n}" not in joined
+
+
+def _convert_warns(parsers, logsource, detection, **options):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        queries = _convert(parsers, logsource, detection, table_name="t", **options)
+    return queries, [str(w.message) for w in caught]
+
+
+def _svc(name):
+    return f"    product: windows\n    service: {name}"
+
+
+def test_task10_profiles_found():
+    for name in (
+        "powershell_script", "powershell_other", "system", "application", "taskscheduler",
+        "defender_detection", "wmi_activity", "ntlm_authentication", "applocker", "event_other", "event_logs",
+    ):
+        assert f"windows_{name}" in WINDOWS_PROFILES
+
+
+def test_ps_script_4104():
+    sql = _sql(
+        "windows_powershell_script",
+        "    product: windows\n    category: ps_script",
+        "    sel:\n        ScriptBlockText|contains: 'Invoke-Mimikatz'\n    condition: sel",
+    )
+    assert "lower(eventid) = lower('4104')" in sql.lower()
+    assert "e._Name = 'ScriptBlockText'" in sql
+
+
+def test_ps_module_4103():
+    sql = _sql(
+        "windows_powershell_script",
+        "    product: windows\n    category: ps_module",
+        "    sel:\n        ContextInfo|contains: 'x'\n    condition: sel",
+    )
+    assert "lower('4103')" in sql.lower()
+    assert "e._Name = 'ContextInfo'" in sql
+
+
+def test_system_any_warns():
+    queries, warns = _convert_warns(
+        "windows_system",
+        _svc("system"),
+        "    sel:\n        Provider_Name: Service Control Manager\n        ServiceName: x\n    condition: sel",
+    )
+    sql = json.loads(queries[0])["sql"]
+    assert "Provider" in sql
+    assert "e._Name = 'ServiceName'" in sql
+    assert any("not in a field list" in w for w in warns)
+
+
+def test_event_other_channel_and_keyword():
+    queries, warns = _convert_warns(
+        "windows_event_other",
+        _svc("msexchange-management"),
+        "    keywords:\n        - 'Set-Mailbox'\n    condition: keywords",
+    )
+    sql = json.loads(queries[0])["sql"]
+    assert "Channel" in sql and "MSExchange Management" in sql
+    assert "to_json(raw_event)" in sql
+    assert any("approximate" in w.lower() for w in warns)
+
+
+def test_event_logs_header_only():
+    reason = _failure(
+        "windows_event_logs", _svc("system"), "    sel:\n        ServiceName: x\n    condition: sel"
+    )
+    assert reason.endswith(
+        "windows_event_logs has the event header only; EventData fields need the custom windows_* parsers"
+    )
+    sql = _sql("windows_event_logs", _svc("system"), "    sel:\n        EventID: 7045\n    condition: sel")
+    assert "7045" in sql and "System" in sql
+
+
+def test_ps_classic_start():
+    sql = _sql(
+        "windows_event_other",
+        _cat("ps_classic_start"),
+        "    sel:\n        Data|contains: 'HostName=ConsoleHost'\n    condition: sel",
+    )
+    assert "Windows PowerShell" in sql
+    assert "lower('400')" in sql.lower()
+    assert "array_join(coalesce(try_variant_get(EventData, '$', 'ARRAY<STRING>')" in sql
+
+
+def test_ps_classic_strict():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(SigmaTransformationError) as exc:
+            _convert(
+                "windows_event_other",
+                _cat("ps_classic_start"),
+                "    sel:\n        HostApplication: x\n    condition: sel",
+                table_name="t",
+            )
+    assert "field HostApplication is not mapped by profile windows_event_other" in str(exc.value)
+    assert not any("not in a field list" in str(w.message) for w in caught)

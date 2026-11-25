@@ -1,0 +1,28 @@
+# Built-in Lakewatch profile for the windows_applocker parser: AppLocker events 8001-8007 and 8020-8025.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: none (no first-party field list; EventData names differ per event). The
+# parser fixes the channel, so the block needs no condition. Channel names: see the table in
+# windows_event_other.yml and windows_event_logs.yml. event_data is `any`: every EventData field a
+# rule uses maps leniently with a "not in a field list" warning (plan 3 ruling 4). No LGPL Sigma
+# pipeline source was used.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); a block lists its EventData
+# names under `event_data` and each maps to EventData[<name>]. Values pass through unchanged.
+# EventID is a STRING column.
+profile: windows_applocker
+version: 1
+parser: windows_applocker
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: applocker
+    event_data: any

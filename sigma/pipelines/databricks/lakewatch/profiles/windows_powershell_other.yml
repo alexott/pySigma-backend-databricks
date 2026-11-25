@@ -1,0 +1,31 @@
+# Built-in Lakewatch profile for the windows_powershell_other parser: Microsoft-Windows-PowerShell events other than 4103-4106.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: none (no first-party field list for these events). The channel
+# (Microsoft-Windows-PowerShell/Operational) is documented in Microsoft Learn about_Logging_Windows
+# (https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_logging_windows).
+# event_data is `any`: every EventData field a rule uses maps leniently with a "not in a field
+# list" warning. No LGPL Sigma pipeline source was used.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); a block lists its EventData
+# names under `event_data` and each maps to EventData[<name>]. Values pass through unchanged.
+# EventID is a STRING column.
+profile: windows_powershell_other
+version: 1
+parser: windows_powershell_other
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: powershell
+    route:
+      field: EventID
+      not_in: ['4103', '4104', '4105', '4106']
+    event_data: any

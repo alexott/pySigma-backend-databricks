@@ -1,0 +1,46 @@
+# Built-in Lakewatch profile for the windows_powershell_script parser: PowerShell engine events 4103-4106 (module and script block logging).
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name sources: Microsoft Learn about_Logging_Windows
+# (https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_logging_windows)
+# for the Microsoft-Windows-PowerShell/Operational channel and EventID 4104 (script block logging);
+# the data-item names (ContextInfo, UserData, Payload for 4103; MessageNumber, MessageTotal,
+# ScriptBlockText, ScriptBlockId, Path for 4104; ScriptBlockId, RunspaceId for 4105 and 4106) are
+# those of the Microsoft-Windows-PowerShell provider event manifest shipped with PowerShell
+# (https://github.com/PowerShell/PowerShell, MIT, src/PowerShell.Core.Instrumentation). The
+# Learn pages don't enumerate the 4103/4105/4106 data items. Field names are facts of the event
+# schema; no LGPL Sigma pipeline source was used.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); a block lists its EventData
+# names under `event_data` and each maps to EventData[<name>]. Values pass through unchanged.
+# EventID is a STRING column.
+profile: windows_powershell_script
+version: 1
+parser: windows_powershell_script
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      category: ps_script
+    conditions:
+      EventID: '4104'
+    event_data: [ScriptBlockText, ScriptBlockId, Path, MessageNumber, MessageTotal]
+  - match:
+      product: windows
+      category: ps_module
+    conditions:
+      EventID: '4103'
+    event_data: [ContextInfo, UserData, Payload]
+  - match:
+      product: windows
+      service: powershell
+    route:
+      field: EventID
+    event_data: [ContextInfo, UserData, Payload, ScriptBlockText, ScriptBlockId, Path, MessageNumber, MessageTotal, RunspaceId]

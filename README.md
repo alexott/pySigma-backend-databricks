@@ -376,6 +376,11 @@ Built-in profiles:
 | `windows_security_user_access` | `product: windows`, `service: security` (EventIDs 4672-4674, 4703-4705, 4717, 4718) | `windows_security_user_access` (requires the custom Windows parsers) |
 | `windows_security_network` | `product: windows`, `service: security` (EventIDs 5140, 5145, 5152, 5156-5159) | `windows_security_network` (requires the custom Windows parsers) |
 | `windows_security_other` | `product: windows`, `service: security` for any EventID not served by the other six; EventData fields are mapped leniently with a warning | `windows_security_other` (requires the custom Windows parsers) |
+| `windows_powershell_script` | `product: windows` with `category: ps_script` (4104) or `ps_module` (4103); `service: powershell` (EventIDs 4103-4106) | `windows_powershell_script` (requires the custom Windows parsers) |
+| `windows_powershell_other` | `product: windows`, `service: powershell` for any EventID other than 4103-4106 | `windows_powershell_other` (requires the custom Windows parsers) |
+| `windows_system`, `windows_application`, `windows_taskscheduler`, `windows_defender_detection`, `windows_wmi_activity`, `windows_ntlm_authentication`, `windows_applocker` | `product: windows` with `service: system`, `application`, `taskscheduler`, `windefend`, `wmi`, `ntlm`, `applocker` | the profile of the same name (requires the custom Windows parsers) |
+| `windows_event_other` | `product: windows` with `service: codeintegrity-operational`, `appxdeployment-server`, `firewall-as`, `msexchange-management`, `bits-client`, `dns-client`, `iis-configuration`, `security-mitigations` or `dns-server` (matched by `Channel`); classic PowerShell: `category: ps_classic_start`, `ps_classic_provider_start`, `ps_classic_script` or `service: powershell-classic` | `windows_event_other` (requires the custom Windows parsers) |
+| `windows_event_logs` | `product: windows` with any of the services above, plus `security` and `powershell` (matched by `Channel`); header columns only | `windows_event_logs` (Lakewatch built-in) |
 
 The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
 (`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which
@@ -396,6 +401,17 @@ account when 4688 records one and the creator otherwise, and `IntegrityLevel` ma
 LocalSystem as the computer account. `Hashes`, `OriginalFileName`, `CurrentDirectory`,
 `ParentCommandLine`, `ParentUser`, `Company`, `Description`, `Product` and `FileVersion` fail
 the rule as unsupported.
+
+The PowerShell and channel profiles (`windows_powershell_*`, `windows_system` and the other
+channel parsers, and `windows_event_other`) have no first-party EventData field list, so they use
+lenient mode: each EventData field a rule uses maps to `EventData[Name]` and raises a `UserWarning`
+that it isn't in a field list. `windows_powershell_script` is strict (4103 to 4106 field names).
+`windows_event_other` keyword search runs over `to_json(raw_event)` and is approximate. Classic
+Windows PowerShell events 400, 600 and 800 (channel `Windows PowerShell`) have unnamed `Data`
+elements; Sigma `Data` maps to all of them joined with newlines, so `Data|contains` and `Data|re`
+work and any other field fails. `windows_event_logs` is the built-in header-only parser: rules that
+need EventData fields fail with a hint to use the custom `windows_*` parsers. Sysmon `file_access`
+and `file_rename` rules stay uncovered.
 
 `crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
 events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from
