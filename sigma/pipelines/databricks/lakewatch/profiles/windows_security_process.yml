@@ -70,6 +70,12 @@ logsources:
               medium: S-1-16-8192
               high: S-1-16-12288
               system: S-1-16-16384
+              # A SID value (as Sysmon-style rules write it) maps to itself.
+              s-1-16-0: S-1-16-0
+              s-1-16-4096: S-1-16-4096
+              s-1-16-8192: S-1-16-8192
+              s-1-16-12288: S-1-16-12288
+              s-1-16-16384: S-1-16-16384
     unsupported:
       - Hashes
       - OriginalFileName

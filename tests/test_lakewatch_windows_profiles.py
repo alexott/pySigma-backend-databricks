@@ -1,6 +1,7 @@
 """Tests for the built-in Windows Lakewatch profiles (custom Windows parsers)."""
 
 import json
+import re
 import warnings
 from pathlib import Path
 
@@ -169,10 +170,8 @@ def test_security_4688_ids():
         ParentProcessId: 255
     condition: sel""",
     )
-    assert "'0x1018'" in sql
-    assert "e._Name = 'NewProcessId'" in sql
-    assert "'0xff'" in sql
-    assert "e._Name = 'ProcessId'" in sql
+    assert re.search(r"e\._Name = 'NewProcessId'\), 1\)\._VALUE\) = lower\('0x1018'\)", sql)
+    assert re.search(r"e\._Name = 'ProcessId'\), 1\)\._VALUE\) = lower\('0xff'\)", sql)
 
 
 def test_security_4688_user():
@@ -241,3 +240,24 @@ def test_process_creation_fans_out():
             table_map="windows_sysmon_process:t_sysmon,windows_security_process:t_sec",
         )
     assert len(queries) == 2
+
+
+def test_security_4688_integrity_sid_literal():
+    sql = _sql(
+        SEC_PROC,
+        _cat("process_creation"),
+        "    sel:\n        IntegrityLevel: S-1-16-16384\n    condition: sel",
+    )
+    assert re.search(r"e\._Name = 'MandatoryLabel'\), 1\)\._VALUE\) = lower\('S-1-16-16384'\)", sql)
+
+
+def test_security_service_route_multi_eventid():
+    queries, _ = _security_queries("    sel:\n        EventID: [4624, 4688]\n    condition: sel")
+    assert len(queries) == 2
+    joined = "\n".join(queries)
+    assert "__windows_security_authentication" in joined
+    assert "__windows_security_process" in joined
+    assert sum("__windows_security_authentication" in q for q in queries) == 1
+    assert sum("__windows_security_process" in q for q in queries) == 1
+    for n in ("account_change", "group_management", "network", "user_access", "other"):
+        assert f"__windows_security_{n}" not in joined
