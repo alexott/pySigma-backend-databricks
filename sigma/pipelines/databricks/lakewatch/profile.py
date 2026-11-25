@@ -370,12 +370,15 @@ def _validate_conditions(
         _resolve(profile, schema, name, f"{what}condition field")
         info = schema.get(name)
         if info is not None and info.allowed is not None:
+            # Compared as the backend does: case-insensitive, booleans as true/false.
+            allowed = {a.lower() for a in info.allowed}
             for v in value if isinstance(value, list) else [value]:
-                if str(v) not in info.allowed:
+                text = ("true" if v else "false") if isinstance(v, bool) else str(v).lower()
+                if text not in allowed:
                     raise ProfileError(
                         profile.source,
                         f"profile '{profile.profile}': {what}condition field '{name}': "
-                        f"'{v}' not in allowed {list(info.allowed)}",
+                        f"'{text}' not in allowed {list(info.allowed)}",
                     )
 
 

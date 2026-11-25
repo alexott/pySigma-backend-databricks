@@ -388,3 +388,22 @@ def test_validate_undeclared():
         validate_profile(prof({"U": "w.other"}), schema2())
     with pytest.raises(ProfileError, match="'undeclared' is not needed"):
         validate_profile(prof({"U": {"field": "w.known", "undeclared": True}}), schema2())
+
+
+def test_validate_condition_allowed_like_backend():
+    # Compared as the backend does: case-insensitive, booleans as true/false.
+    paths = dict(schema().paths)
+    paths.update(
+        {
+            "inbound": PathInfo("BOOLEAN", "column", allowed=("true", "false")),
+            "os": PathInfo("STRING", "column", allowed=("WINDOWS", "MAC")),
+        }
+    )
+    s = ParserSchema("x", None, None, paths)
+    validate_profile(prof(block={"conditions": {"inbound": False}}), s)
+    validate_profile(prof(block={"conditions": {"inbound": [True, False]}}), s)
+    validate_profile(prof(block={"conditions": {"os": "windows"}}), s)
+    with pytest.raises(ProfileError, match="'linux' not in allowed"):
+        validate_profile(prof(block={"conditions": {"os": "linux"}}), s)
+    with pytest.raises(ProfileError, match="'1' not in allowed"):
+        validate_profile(prof(block={"conditions": {"inbound": 1}}), s)

@@ -112,7 +112,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         with open(args.describe_json, encoding="utf-8") as fh:
             describe = json.load(fh)
-    catalog = schema_from_describe(describe, args.parser, args.uuid)
+    try:
+        catalog = schema_from_describe(describe, args.parser, args.uuid)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     with open(args.output, "w", encoding="utf-8") as fh:
         json.dump(catalog, fh, indent=2)
         fh.write("\n")

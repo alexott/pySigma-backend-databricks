@@ -92,6 +92,16 @@ def test_describe_requires_time():
         _load("describe_to_schema").schema_from_describe(describe, "demo")
 
 
+def test_describe_main_missing_time_offline(tmp_path, capsys):
+    describe = tmp_path / "d.json"
+    describe.write_text(json.dumps({"columns": [{"name": "a", "type": {"name": "string"}}]}))
+    out = tmp_path / "out.json"
+    argv = ["--describe-json", str(describe), "--parser", "demo", "-o", str(out)]
+    assert _load("describe_to_schema").main(argv) == 1
+    assert "error: the table has no 'time' column" in capsys.readouterr().err
+    assert not out.exists()
+
+
 @pytest.mark.parametrize("word", ["on", "off", "yes", "no", "null", "true", "false", "123"])
 def test_q_quotes_reserved_words(word):
     q = _load("scaffold_profile")._q(word)

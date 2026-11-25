@@ -13,7 +13,14 @@ from sigma.processing.transformations import (
 )
 from sigma.processing.transformations.base import DetectionItemTransformation
 from sigma.rule import SigmaDetection, SigmaDetectionItem, SigmaLogSource
-from sigma.types import SigmaBool, SigmaFieldReference, SigmaNumber, SigmaString, SigmaType
+from sigma.types import (
+    SigmaBool,
+    SigmaCasedString,
+    SigmaFieldReference,
+    SigmaNumber,
+    SigmaString,
+    SigmaType,
+)
 
 from .profile import FieldMapping, LogsourceBlock, Profile
 from .transforms import Alternative, TransformFailure, apply_chain
@@ -107,7 +114,10 @@ class ProfileFieldMapping(FieldMappingTransformation):
         field = detection_item.field
         for value in detection_item.value:
             if isinstance(value, SigmaFieldReference) and self._transformed(value.field):
-                self._fail(value.field, "field references are not supported for transformed fields")
+                # Name the rule's field; the referenced one is the transformed field.
+                self._fail(
+                    str(field), f"field reference to transformed field {value.field} is not supported"
+                )
         mapping = self.special.get(field) if field is not None else None
         if mapping is None:
             return super().apply_detection_item(detection_item)
@@ -120,6 +130,8 @@ class ProfileFieldMapping(FieldMappingTransformation):
             return super().apply_detection_item(detection_item)
         if any(isinstance(v, SigmaFieldReference) for v in detection_item.value):
             self._fail(field, "field references are not supported for transformed fields")
+        if any(isinstance(v, SigmaCasedString) for v in detection_item.value):
+            self._fail(field, "case-sensitive matching is not supported")
         linking = ConditionAND if detection_item.value_linking is ConditionAND else ConditionOR
         if mapping.select is not None:
             nodes = self._select(field, mapping.select, detection_item.value)

@@ -214,6 +214,7 @@ VALUE_LEVEL = [
     {"regex_replace": {"pattern": "a", "replacement": "b"}},
     "to_int",
     "to_str",
+    {"reject": {"pattern": "x", "reason": "r"}},
 ]
 SUPPLIES_TARGETS = [
     HASHES,
@@ -233,3 +234,81 @@ def test_value_transforms_pass_null_and_exists(spec, value):
 def test_target_transforms_fail_on_null_and_exists(spec, value):
     with pytest.raises(TransformFailure, match=f"cannot be applied to {type(value).__name__}"):
         run(spec, value)
+
+
+REJECT = {"reject": {"pattern": r"^\*?(DWORD|QWORD) \(|^\*?Binary Data", "reason": "numeric values are not text"}}
+
+
+def test_reject_matching_values_fail():
+    for text in ("DWORD (0x00000001)", "*DWORD (0x00000000)*", "qword (0x1)", "Binary Data", "*binary data*"):
+        with pytest.raises(TransformFailure, match="^numeric values are not text$"):
+            run(REJECT, SigmaString(text))
+
+
+def test_reject_other_values_pass():
+    for text in ("*powershell*", "C:\\x.exe", "(Empty)", "*DWORD", "x DWORD (0x1)"):
+        assert run(REJECT, SigmaString(text)) == [(T, SigmaString(text))]
+    assert run(REJECT, SigmaNumber(1)) == [(T, SigmaNumber(1))]
+    with pytest.raises(TransformFailure, match="numeric values"):
+        run(REJECT, SigmaRegularExpression("^DWORD \\(0x0"))
+    assert run(REJECT, SigmaRegularExpression("power.*shell"))[0][0] == T
+
+
+def test_reject_params():
+    for bad in ({"reject": {"pattern": "a"}}, {"reject": {"pattern": "(", "reason": "r"}},
+                {"reject": {"pattern": "a", "reason": ""}}, {"reject": {"pattern": 1, "reason": "r"}}, "reject"):
+        with pytest.raises(ValueError):
+            parse_transform(bad, {})
+
+
+def test_basename_contains_without_separator_fails():
+    for text in ("*Microsoft Office*", "*tomcat*"):
+        with pytest.raises(TransformFailure, match="basename cannot express a pattern on the directory"):
+            run("basename", SigmaString(text))
+    # An endswith-shaped value stays as it is.
+    assert str(one("basename", "*cmd.exe")[1]) == "*cmd.exe"
+    assert str(one("basename", "cmd.exe")[1]) == "cmd.exe"
+
+
+REG = {"registry_path": {"hive": "kernel"}}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        r"*HKLM\SOFTWARE\x*",
+        r"*\hklm\SOFTWARE\x",
+        r"*HKU\S-1\x",
+        r"*HKCU\Software\x",
+        r"*HKEY_LOCAL_MACHINE\SOFTWARE\x",
+        r"*\REGISTRY\MACHINE\SOFTWARE\x",
+        r"*\registry\user\S-1\x",
+        r"*HKCR\x",
+    ],
+)
+def test_registry_path_hive_inside_pattern_fails(text):
+    with pytest.raises(TransformFailure, match="hive inside the pattern"):
+        run(REG, SigmaString(text))
+
+
+def test_registry_path_wildcard_without_hive_unchanged():
+    for text in (r"*\SOFTWARE\Microsoft\Run\*", r"*\HKLMX\a", r"*SHKU\x", "*HKLM"):
+        assert str(one(REG, text)[1]) == text
+
+
+SPLIT = {"registry_path": {"hive": "kernel", "split": {"key": "k", "value": "v"}}}
+
+
+def test_registry_path_split_default_value_fails():
+    for text in (r"HKLM\SOFTWARE\x\(Default)", r"*\Run\(default)", r"*\x\(Default)*"):
+        with pytest.raises(TransformFailure, match=r"the \(Default\) value name cannot be matched"):
+            run(SPLIT, SigmaString(text))
+    # Without split the value is matched as it is.
+    assert str(one(REG, r"*\x\(Default)")[1]) == r"*\x\(Default)"
+
+
+def test_expansion_message():
+    from sigma.types import SigmaExpansion
+
+    with pytest.raises(TransformFailure, match=r"^expanded values \(windash/base64offset\) are not supported$"):
+        run("basename", SigmaExpansion([SigmaString("a"), SigmaString("b")]))

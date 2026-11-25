@@ -421,8 +421,37 @@ def test_fieldref_on_transformed_field_fails():
     msg = "field references are not supported for transformed fields"
     with pytest.raises(SigmaTransformationError, match=f"field C: {msg}"):
         run_win(profile, block, "    sel:\n        C|fieldref: D\n    condition: sel")
-    with pytest.raises(SigmaTransformationError, match=f"field C: {msg}"):
+    # The message names the rule's field (D), and the referenced transformed field (C).
+    ref = "field D: field reference to transformed field C is not supported"
+    with pytest.raises(SigmaTransformationError, match=ref):
         run_win(profile, block, "    sel:\n        D|fieldref: C\n    condition: sel")
+
+
+def test_fieldref_between_transformed_fields_names_rule_field():
+    profile, block = make_win(
+        {"C": {"field": "c", "transform": {"case": "upper"}}, "E": {"field": "e", "transform": "to_str"}}
+    )
+    with pytest.raises(SigmaTransformationError, match="field C: field reference to transformed field E"):
+        run_win(profile, block, "    sel:\n        C|fieldref: E\n    condition: sel")
+
+
+def test_cased_on_special_fields_fails():
+    profile, block = make_win(
+        {"C": {"field": "c", "transform": {"case": "upper"}}, "S": {"select_condition": {"a": {"k": "v"}}}, "P": "p"}
+    )
+    for field in ("C", "S"):
+        msg = rf"field {field}: case-sensitive matching is not supported \(profile p\)"
+        with pytest.raises(SigmaTransformationError, match=msg):
+            run_win(profile, block, f"    sel:\n        {field}|cased: a\n    condition: sel")
+    r = run_win(profile, block, "    sel:\n        P|cased: a\n    condition: sel")
+    assert leaves(r.detection.detections["sel"]) == [("p", "a")]
+
+
+def test_windash_on_transformed_field_message():
+    profile, block = make_win({"C": {"field": "c", "transform": {"case": "upper"}}})
+    msg = r"field C: transform case: expanded values \(windash/base64offset\) are not supported"
+    with pytest.raises(SigmaTransformationError, match=msg):
+        run_win(profile, block, "    sel:\n        C|windash|contains: ' -x '\n    condition: sel")
 
 
 def test_named_transform_and_plain_fields_together():

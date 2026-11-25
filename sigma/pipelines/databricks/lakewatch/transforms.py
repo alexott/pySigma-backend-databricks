@@ -25,8 +25,10 @@ from sigma.types import (
     Placeholder,
     SigmaBool,
     SigmaExists,
+    SigmaExpansion,
     SigmaNull,
     SigmaNumber,
+    SigmaRegularExpression,
     SigmaString,
     SigmaType,
     SpecialChars,
@@ -72,6 +74,8 @@ def _from_text(text: str) -> SigmaString:
 
 
 def _unsupported(value: SigmaType) -> TransformFailure:
+    if isinstance(value, SigmaExpansion):
+        return TransformFailure("expanded values (windash/base64offset) are not supported")
     return TransformFailure(f"cannot be applied to {type(value).__name__}")
 
 
@@ -232,6 +236,9 @@ class BasenameTransform(_NoParams):
                 if found >= 0:
                     index, pos = i, found
         if index < 0:
+            # A contains-shaped value (*text*) may match the directory; endswith (*cmd.exe) is kept.
+            if len(parts) > 1 and parts[0] is _WILD and parts[-1] is _WILD:
+                raise TransformFailure(self._CANNOT)
             return [(targets, value)]
         head: List[_Part] = [*parts[:index], str(parts[index])[: pos + 1]]
         tail: List[_Part] = [str(parts[index])[pos + 1 :], *parts[index + 1 :]]
@@ -328,6 +335,12 @@ _HIVE_INPUTS = sorted(
     key=lambda item: -len(item[0]),
 )
 _HIVE_STYLES = ("short", "long", "kernel")
+# A hive spelling followed by a backslash, not preceded by a name character.
+_HIVE_INSIDE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:" + "|".join(re.escape(s) for s, _ in _HIVE_INPUTS) + r")\\",
+    re.IGNORECASE,
+)
+_DEFAULT_VALUE = "\\(default)"
 
 
 class RegistryPathTransform(Transform):
@@ -363,13 +376,20 @@ class RegistryPathTransform(Transform):
 
     def apply(self, value, targets, *, field, all_values):
         """Apply the transform to one value."""
+        string = _string(value)
         if self.split is not None:
+            text = "".join(p for p in string.s if isinstance(p, str))
+            if text.lower().endswith(_DEFAULT_VALUE):
+                raise TransformFailure("the (Default) value name cannot be matched on joined key/value columns")
             targets = (join_field_name("\\", list(self.split)),)
-        return [(targets, self._rewrite(_string(value)))]
+        return [(targets, self._rewrite(string))]
 
     def _rewrite(self, value: SigmaString) -> SigmaString:
         parts = value.s
         if not parts or not isinstance(parts[0], str):
+            for part in parts:
+                if isinstance(part, str) and _HIVE_INSIDE.search(part):
+                    raise TransformFailure(f"hive inside the pattern '{value}' cannot be rewritten")
             return value
         first = parts[0]
         for spelling, hive in _HIVE_INPUTS:
@@ -513,6 +533,60 @@ class RegexReplaceTransform(Transform):
         return [(targets, _string(value).map_str_parts(lambda s: self.pattern.sub(self.replacement, s)))]
 
 
+def _pattern_text(value: SigmaString) -> str:
+    """Return the text of ``value`` with wildcards written as ``*`` and ``?``."""
+    out = []
+    for part in value.s:
+        if isinstance(part, str):
+            out.append(part)
+        elif part is SpecialChars.WILDCARD_MULTI:
+            out.append("*")
+        elif part is SpecialChars.WILDCARD_SINGLE:
+            out.append("?")
+        else:
+            out.append(str(part))
+    return "".join(out)
+
+
+class RejectTransform(Transform):
+    """Fail values that match a pattern, for values the target can never hold."""
+
+    kind = "reject"
+
+    def __init__(self, pattern: "re.Pattern[str]", reason: str):
+        """Store the validated parameters."""
+        self.pattern = pattern
+        self.reason = reason
+
+    @classmethod
+    def from_params(cls, params: Any) -> "RejectTransform":
+        """Build the transform from validated profile parameters."""
+        params = _require_params(cls.kind, params)
+        _require_keys(cls.kind, params, ["pattern", "reason"])
+        pattern, reason = params["pattern"], params["reason"]
+        if not isinstance(pattern, str) or not isinstance(reason, str) or not reason:
+            raise ValueError("transform reject: pattern and reason must be strings, reason non-empty")
+        try:
+            return cls(re.compile(pattern, re.IGNORECASE), reason)
+        except re.error as e:
+            raise ValueError(f"transform reject: bad regex '{pattern}': {e}") from e
+
+    def apply(self, value, targets, *, field, all_values):
+        """Fail when the value's text (wildcards as ``*``/``?``) matches the pattern."""
+        if isinstance(value, SigmaString):
+            text = _pattern_text(value)
+        elif isinstance(value, (SigmaNumber, SigmaBool)):
+            text = str(value)
+        elif isinstance(value, SigmaRegularExpression):
+            # Best effort: drop a leading anchor and backslash escapes, so ^DWORD \( is DWORD (.
+            text = re.sub(r"\\(.)", r"\1", str(value.regexp).removeprefix("^"))
+        else:
+            raise _unsupported(value)
+        if self.pattern.search(text):
+            raise TransformFailure(self.reason)
+        return [(targets, value)]
+
+
 class ToIntTransform(_NoParams):
     """Turn digit strings into numbers."""
 
@@ -555,6 +629,7 @@ KINDS: Dict[str, Type[Transform]] = {
         RegexReplaceTransform,
         ToIntTransform,
         ToStrTransform,
+        RejectTransform,
     )
 }
 
