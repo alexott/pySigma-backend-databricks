@@ -10,7 +10,9 @@ Licensed under the Apache License, Version 2.0 (full text below).
 
 Derived files: the field mappings and event-type conditions of
 sigma/pipelines/databricks/lakewatch/profiles/sentinelone_deep_visibility.yml are ported from
-sigma/pipelines/panther/sentinelone_panther_pipeline.py, with changes (see the header of that
+sigma/pipelines/panther/sentinelone_panther_pipeline.py, and those of
+sigma/pipelines/databricks/lakewatch/profiles/carbonblack_endpoint_event.yml from
+sigma/pipelines/panther/carbon_black_panther_pipeline.py, with changes (see the header of each
 profile). The upstream repository has no NOTICE file.
 --------------------------------------------------------------------------------
 

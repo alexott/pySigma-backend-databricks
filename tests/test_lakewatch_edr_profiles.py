@@ -358,3 +358,136 @@ def test_s1_file_delete_event_type():
     condition: sel""",
     )
     assert "lower(event_type) = lower('file deletion')" in sql.lower()
+
+
+# --- carbonblack_endpoint_event ------------------------------------------------------------
+
+CB = "carbonblack_endpoint_event"
+
+
+def test_cb_profile_validates():
+    profile = load_profiles()[CB]
+    assert profile.version == 1
+    assert profile.parser == CB
+    validate_profile(profile, SchemaCatalog.load().get(CB))
+
+
+def test_cb_process_creation_child_vs_parent():
+    sql = _sql(
+        CB,
+        "windows",
+        "process_creation",
+        """    sel:
+        Image|endswith: '\\cmd.exe'
+        ParentImage|endswith: '\\winword.exe'
+        CommandLine|contains: 'whoami'
+        ParentCommandLine|contains: 'doc'
+    condition: sel""",
+    )
+    low = sql.lower()
+    # Image is the child process; the parent is the actor process.
+    assert "childproc_name" in low
+    assert "process_path" in low
+    assert "target_cmdline" in low
+    assert "process_cmdline" in low
+    assert "parent_path" not in low
+    assert "type = 'endpoint.event.procstart'" in low or "lower(type) = lower('endpoint.event.procstart')" in low
+    assert "device_os" in low
+
+
+def test_cb_hashes_array():
+    sql = _sql(
+        CB,
+        "windows",
+        "process_creation",
+        """    sel:
+        Hashes|contains: 'MD5=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    condition: sel""",
+    )
+    assert "exists(childproc_hash, x0 ->" in sql
+
+
+def test_cb_initiated_bool_column():
+    sql = _sql(
+        CB,
+        "windows",
+        "network_connection",
+        """    sel:
+        Initiated: 'true'
+        DestinationPort: 4444
+    condition: sel""",
+    )
+    assert "netconn_inbound = false" in sql
+    assert "remote_port = 4444" in sql
+
+
+def test_cb_network_inbound_fails():
+    with pytest.raises(SigmaTransformationError, match="field Initiated: value 'false' is not one of"):
+        _sql(
+            CB,
+            "windows",
+            "network_connection",
+            """    sel:
+        Initiated: 'false'
+    condition: sel""",
+        )
+
+
+def test_cb_protocol_map_fail():
+    with pytest.raises(SigmaTransformationError, match="not in the map"):
+        _sql(
+            CB,
+            "windows",
+            "network_connection",
+            """    sel:
+        Protocol: icmp
+    condition: sel""",
+        )
+
+
+def test_cb_protocol_map_ok():
+    sql = _sql(
+        CB,
+        "windows",
+        "network_connection",
+        """    sel:
+        Protocol: udp
+    condition: sel""",
+    )
+    assert "PROTO_UDP" in sql
+
+
+def test_cb_file_event_and_products():
+    sql = _sql(
+        CB,
+        "linux",
+        "file_event",
+        """    sel:
+        TargetFilename|endswith: '.sh'
+    condition: sel""",
+    )
+    low = sql.lower()
+    assert "filemod_name" in low
+    assert "endpoint.event.filemod" in low
+    assert "'linux'" in low
+    sql = _sql(
+        CB,
+        "macos",
+        "file_event",
+        """    sel:
+        TargetFilename|endswith: '.sh'
+    condition: sel""",
+    )
+    assert "'mac'" in sql.lower()
+
+
+def test_cb_unsupported_original_file_name():
+    with pytest.raises(SigmaTransformationError, match=f"field OriginalFileName is not supported by profile {CB}"):
+        _sql(
+            CB,
+            "windows",
+            "process_creation",
+            """    sel:
+        OriginalFileName: 'cmd.exe'
+    condition: sel""",
+        )

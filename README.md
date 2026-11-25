@@ -353,6 +353,7 @@ Built-in profiles:
 | `okta_system_log` | `product: okta`, `service: okta` | `okta_system_log` |
 | `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
 | `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
+| `carbonblack_endpoint_event` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event` or `network_connection` | `carbonblack_endpoint_event` |
 
 `crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
 events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from
@@ -388,6 +389,24 @@ Its limitations:
   rule, and `DestinationHostname` isn't supported (hostnames are on DNS events).
 * `CurrentDirectory`, `Product`, `Protocol` and `record_type` aren't supported, and neither is
   `OriginalFileName` in `process_creation`.
+
+`carbonblack_endpoint_event` is ported from the Apache-2.0 Panther pipeline (see
+`THIRD_PARTY_NOTICES`) and checked against the Carbon Black Cloud Data Forwarder `endpoint.event`
+schema 1.2.0 (the header of the profile cites it). It selects events by `type`
+(`endpoint.event.procstart`, `filemod`, `netconn`) and `device_os` (`WINDOWS`, `MAC`, `LINUX`).
+Its limitations:
+
+* In `process_creation`, `Image`, `CommandLine` and `User` are the new (child) process
+  (`childproc_name`, `target_cmdline`, `childproc_username`), and `ParentImage`,
+  `ParentCommandLine` and `ParentUser` are the actor process (`process_path`, `process_cmdline`,
+  `process_username`). Panther's pipeline crossed these. `OriginalFileName`, `IntegrityLevel` and
+  `CurrentDirectory` aren't supported.
+* `network_connection` covers outbound connections only (`netconn_inbound = false`), because the
+  schema's `local_*`/`remote_*` fields equal Sigma's source and destination only for outbound
+  connections. `Initiated: 'false'` fails the rule. `Protocol` accepts `tcp` and `udp`; `PROTO_TCP`
+  is inferred from the documented `PROTO_UDP`.
+* Only `process_creation`, `file_event` and `network_connection` have blocks. Other categories
+  (`image_load`, `registry_set`, `dns_query`, ...) fail with the no-profile reason.
 
 ## OCSF field rendering
 

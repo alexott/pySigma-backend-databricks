@@ -1,0 +1,112 @@
+# Built-in Lakewatch profile for the carbonblack_endpoint_event parser (VMware Carbon Black
+# Cloud Data Forwarder, endpoint.event schema 1.2.0).
+#
+# Derived from pySigma-backend-panther, sigma/pipelines/panther/carbon_black_panther_pipeline.py
+# (Apache-2.0, Copyright Panther Labs Inc.; see THIRD_PARTY_NOTICES). The event types, the OS
+# values and the netconn/filemod field names are ported, with these changes:
+#   * process_creation actor/child mapping is corrected (see below). Panther mapped
+#     ParentImage to parent_path and Image to process_path, and so matched the wrong processes.
+#   * Hashes is added (Panther did not map it): childproc_hash is an ARRAY<STRING> of
+#     [MD5, SHA256], so both algorithms target it and are matched with exists().
+#   * User, ParentUser, SourceIp, SourcePort and the file_event/network_connection process
+#     fields (Image, CommandLine, User) are added; Panther mapped Image/CommandLine globally.
+#   * OriginalFileName, IntegrityLevel and CurrentDirectory are `unsupported` (the schema has no
+#     such fields); Panther silently dropped OriginalFileName, which changes the rule's meaning.
+#   * Protocol uses a value map, so an unknown protocol fails the rule instead of being dropped.
+#   * network_connection is outbound-only, see below. Panther dropped Initiated entirely.
+#   * Unsupported logsources fail with the no-profile reason, as in every profile.
+#
+# Verification (2026-11-25), Carbon Black Cloud Data Forwarder endpoint.event schema 1.2.0
+# https://developer.carbonblack.com/reference/carbon-black-cloud/data-forwarder/schema/latest/endpoint.event-1.2.0/
+#   type: endpoint.event.procstart, endpoint.event.filemod, endpoint.event.netconn (all listed).
+#   device_os: WINDOWS and LINUX appear in the schema examples; MAC is named in
+#   https://developer.carbonblack.com/2023/07/semantic-versioning-support-in-carbon-black-cloud-data-forwarder/
+#   ("alongside WINDOWS, MAC, LINUX"). The field table says "Windows/OSX/Linux" but the values
+#   are the uppercase ones used here.
+#   netconn_protocol: the table says "String UDP or TCP protocol identifier"; the example shows
+#   PROTO_UDP. PROTO_TCP is inferred from that pattern (not shown in a doc), and only the Protocol
+#   value map depends on it, not event selection.
+#
+# procstart semantics (from the field descriptions): process_path / process_cmdline /
+# process_username describe the ACTOR process, "command line executed by the actor process",
+# which is the creating (parent) process in a procstart. childproc_name / childproc_username /
+# childproc_hash describe the NEW (child) process, and target_cmdline is "process command line
+# associated with the target process", the child's command line. So Sigma's Image maps to
+# childproc_name and ParentImage to process_path (not parent_path, which is the actor's own
+# parent, the grandparent). Panther's mapping had these crossed.
+#
+# Network direction: the netconn fields are local_*/remote_* with a netconn_inbound flag, and
+# Sigma's Source is the connection initiator, so remote = Destination only for outbound
+# connections. network_connection is therefore outbound-only (netconn_inbound = false) and
+# `Initiated: 'false'` fails the rule instead of matching the wrong side.
+#
+# Not covered: only procstart, filemod and netconn have blocks; the other categories (image_load,
+# registry_set, dns_query, ...) fail with the no-profile reason, because no other event type was
+# mapped or verified for this plan.
+profile: carbonblack_endpoint_event
+version: 1
+parser: carbonblack_endpoint_event
+products:
+  windows:
+    device_os: WINDOWS
+  macos:
+    device_os: MAC
+  linux:
+    device_os: LINUX
+logsources:
+  - match:
+      category: process_creation
+    conditions:
+      type: endpoint.event.procstart
+    fields:
+      Image: childproc_name
+      CommandLine: target_cmdline
+      User: childproc_username
+      ParentImage: process_path
+      ParentCommandLine: process_cmdline
+      ParentUser: process_username
+      Hashes:
+        transform:
+          hashes:
+            algos:
+              MD5: childproc_hash
+              SHA256: childproc_hash
+    unsupported:
+      - OriginalFileName
+      - IntegrityLevel
+      - CurrentDirectory
+  - match:
+      category: file_event
+    conditions:
+      type: endpoint.event.filemod
+    fields:
+      TargetFilename: filemod_name
+      Image: process_path
+      CommandLine: process_cmdline
+      User: process_username
+  # Outbound connections only; see the header.
+  - match:
+      category: network_connection
+    conditions:
+      type: endpoint.event.netconn
+      netconn_inbound: false
+    fields:
+      DestinationIp: remote_ip
+      DestinationPort: remote_port
+      SourceIp: local_ip
+      SourcePort: local_port
+      DestinationHostname: netconn_domain
+      Image: process_path
+      CommandLine: process_cmdline
+      User: process_username
+      Protocol:
+        field: netconn_protocol
+        transform:
+          map:
+            values:
+              tcp: PROTO_TCP
+              udp: PROTO_UDP
+      Initiated:
+        select_condition:
+          'true':
+            netconn_inbound: false
