@@ -162,3 +162,103 @@ def test_target_with_other_format_warns():
     backend = DatabricksBackend(target="content_pack")
     with pytest.warns(UserWarning, match="target option is supported only by the lakewatch format"):
         backend.convert(_collection(_rule()), "default")
+
+
+# --- output_dir scaffolding (Ruling 2) ---
+
+def _pack_convert(out_dir, description="d", uuid_schema_path=None, collection=None):
+    backend = DatabricksBackend(target="content_pack", parsers=CS, output_dir=str(out_dir))
+    rule = _rule().replace("status: test", f"status: test\ndescription: {description}")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return backend.convert(collection or _collection(rule), "lakewatch")
+
+
+def _pack_name(out_dir):
+    return [p.name for p in Path(out_dir).iterdir() if p.is_dir()][0]
+
+
+def test_merge_revisions_new_unchanged_changed():
+    from sigma.backends.databricks.lakewatch_pack import merge_revisions
+    existing = {"rules": [
+        {"name": "keep", "latestVersion": 2, "contentHash": "h1", "versionNote": "note"},
+        {"name": "chg", "latestVersion": 3, "contentHash": "old", "versionNote": "x"},
+        {"name": "absent", "latestVersion": 5, "contentHash": "z"},
+    ]}
+    merged = merge_revisions(existing, {"keep": "h1", "chg": "new", "fresh": "h9"})
+    assert merged["rules"] == [
+        {"name": "keep", "latestVersion": 2, "contentHash": "h1", "versionNote": "note"},
+        {"name": "chg", "latestVersion": 4, "contentHash": "new"},
+        {"name": "absent", "latestVersion": 5, "contentHash": "z"},
+        {"name": "fresh", "latestVersion": 1, "contentHash": "h9"},
+    ]
+    assert merge_revisions(None, {"a": "h"}) == {
+        "rules": [{"name": "a", "latestVersion": 1, "contentHash": "h"}]}
+
+
+def test_pack_layout(tmp_path):
+    import hashlib
+
+    import yaml
+    msg = _pack_convert(tmp_path)
+    name = _pack_name(tmp_path)
+    assert msg == f"# Wrote 1 Lakewatch content-pack rule(s) to {tmp_path}"
+    file = tmp_path / name / f"{name}.yaml"
+    assert list(yaml.safe_load(file.read_text())) == ["description", "metadata", "rule"]
+    revisions = yaml.safe_load((tmp_path / "revisions.yaml").read_text())
+    assert revisions == {"rules": [{
+        "name": name, "latestVersion": 1,
+        "contentHash": hashlib.sha256(file.read_bytes()).hexdigest()}]}
+    assert yaml.safe_load((tmp_path / "appIndex.rules.yaml").read_text()) == {"rules": [{"name": name}]}
+    assert not (tmp_path / f"{name}.yaml").exists()
+
+
+def test_revisions_rerun_is_stable(tmp_path):
+    import yaml
+    _pack_convert(tmp_path)
+    first = (tmp_path / "revisions.yaml").read_bytes()
+    _pack_convert(tmp_path)
+    assert (tmp_path / "revisions.yaml").read_bytes() == first
+    assert yaml.safe_load(first)["rules"][0]["latestVersion"] == 1
+
+
+def test_revisions_bump_once(tmp_path):
+    import yaml
+    _pack_convert(tmp_path)
+    _pack_convert(tmp_path, description="changed")
+    _pack_convert(tmp_path, description="changed")
+    assert yaml.safe_load((tmp_path / "revisions.yaml").read_text())["rules"][0]["latestVersion"] == 2
+
+
+def test_app_index_fragment_lists_existing_dirs(tmp_path):
+    import yaml
+    (tmp_path / "other_rule").mkdir()
+    (tmp_path / "other_rule" / "other_rule.yaml").write_text("x: 1\n")
+    (tmp_path / "empty_dir").mkdir()
+    _pack_convert(tmp_path)
+    name = _pack_name_with_file(tmp_path)
+    fragment = yaml.safe_load((tmp_path / "appIndex.rules.yaml").read_text())
+    assert fragment == {"rules": [{"name": n} for n in sorted(["other_rule", name])]}
+
+
+def _pack_name_with_file(out_dir):
+    return [p.name for p in Path(out_dir).iterdir()
+            if p.is_dir() and p.name != "other_rule" and (p / f"{p.name}.yaml").exists()][0]
+
+
+def test_malformed_revisions_not_overwritten(tmp_path):
+    (tmp_path / "revisions.yaml").write_text("rules: notalist\n")
+    with pytest.raises(SigmaConfigurationError, match="cannot merge"):
+        _pack_convert(tmp_path)
+    assert (tmp_path / "revisions.yaml").read_text() == "rules: notalist\n"
+
+
+def test_workspace_output_dir_unchanged(tmp_path):
+    backend = DatabricksBackend(parsers=CS, output_dir=str(tmp_path), catalog_name="c", schema_name="s",
+                                 table_name="t")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        msg = backend.convert(_collection(_rule()), "lakewatch")
+    assert msg.startswith("# Wrote 1 Lakewatch rule(s) to")
+    files = [p.name for p in tmp_path.iterdir()]
+    assert len(files) == 1 and files[0].endswith(".yaml") and "revisions.yaml" not in files

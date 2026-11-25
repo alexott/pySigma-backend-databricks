@@ -64,7 +64,7 @@ from .lakewatch_maps import (
 )
 from .lakewatch_output import PLACEHOLDER_IDENTIFIER, escape_title, placeholders
 from .lakewatch_overrides import OutputOverride, OverridesFile, parse_override, resolve_output
-from .lakewatch_pack import content_resource_id
+from .lakewatch_pack import content_resource_id, write_pack
 from .ocsf_fields import split_ocsf_path
 from .schema_catalog import ParserSchema, SchemaCatalog
 
@@ -1783,6 +1783,9 @@ class DatabricksBackend(TextQueryBackend):
                 doc["rule_name"] = candidate
             named.append((candidate, doc))
         if self.output_dir:
+            if self.target == "content_pack":
+                return write_pack([doc for _, doc in named], self.output_dir,
+                                  lambda doc: self._dump_lakewatch_documents([doc]))
             return self._write_lakewatch_files(named, self.output_dir)
         return self._dump_lakewatch_documents([doc for _, doc in named])
 
