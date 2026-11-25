@@ -64,6 +64,7 @@ from .lakewatch_maps import (
 )
 from .lakewatch_output import PLACEHOLDER_IDENTIFIER, escape_title, placeholders
 from .lakewatch_overrides import OutputOverride, OverridesFile, parse_override, resolve_output
+from .lakewatch_pack import content_resource_id
 from .ocsf_fields import split_ocsf_path
 from .schema_catalog import ParserSchema, SchemaCatalog
 
@@ -345,6 +346,7 @@ class DatabricksBackend(TextQueryBackend):
                  table_map: Optional[Union[str, Sequence[str]]] = None,
                  output_dir: Optional[str] = None,
                  overrides: Optional[str] = None,
+                 target: Optional[str] = None,
                  **kwargs):
         """Initialize Databricks backend with optional Lakewatch, raw-log, CIDR and OCSF options.
 
@@ -355,6 +357,10 @@ class DatabricksBackend(TextQueryBackend):
 
         ``output_dir`` makes ``lakewatch`` write one ``<rule_name>.yaml`` file per rule into
         that directory instead of returning a multi-document YAML file.
+
+        ``target`` is ``workspace`` (the default: rules for the Lakewatch API) or ``content_pack``
+        (content-pack documents; needs parsed tables and ignores the catalog, schema, warehouse
+        and table options).
 
         ``overrides`` is the path of a YAML file with per-rule ``summary``, ``context`` and
         ``select`` settings for parsed-table rules (see ``lakewatch_overrides``).
@@ -392,6 +398,10 @@ class DatabricksBackend(TextQueryBackend):
         self.extend_lookback = extend_lookback
         # Lakewatch v2 rules are emitted disabled unless enabled=true: review before scheduling.
         self.enabled = bool(self._parse_bool_option("enabled", enabled))
+        self.target = self._parse_target(target)
+        self._target_given = target is not None
+        # Whether enabled was passed at all (it is parsed to a plain bool above).
+        self._enabled_given = enabled is not None and str(enabled).strip() != ""
         self.parsers = self._split_list_option(parsers)
         self.lakewatch_profiles_dir = self._split_list_option(lakewatch_profiles_dir)
         self.lakewatch_schemas = self._split_list_option(lakewatch_schemas)
@@ -415,6 +425,15 @@ class DatabricksBackend(TextQueryBackend):
         # warning was already issued for the current rule and profile.
         self._current_raw: Optional["RawSource"] = None
         self._raw_warned = False
+
+    @staticmethod
+    def _parse_target(value: Optional[str]) -> str:
+        """Parse the ``target`` option: ``workspace`` (default) or ``content_pack``."""
+        normalized = (value or "").strip().lower() or "workspace"
+        if normalized not in ("workspace", "content_pack"):
+            raise SigmaConfigurationError(
+                f"invalid -O target value {value!r}: expected content_pack or workspace")
+        return normalized
 
     @staticmethod
     def _parse_bool_option(name: str, value: Optional[Union[bool, str]]) -> Optional[bool]:
@@ -1059,6 +1078,10 @@ class DatabricksBackend(TextQueryBackend):
                 )
             return False
         if self.ocsf is True or self._ocsf_pipeline_selected():
+            if self.target == "content_pack":
+                raise SigmaConfigurationError(
+                    "-O target=content_pack needs Lakewatch parsed tables and cannot be combined "
+                    "with OCSF mode")
             if self.parsers:
                 raise SigmaConfigurationError(
                     "-O parsers=... selects Lakewatch parsed tables and cannot be combined with "
@@ -1096,7 +1119,8 @@ class DatabricksBackend(TextQueryBackend):
             validate_profile,
         )
 
-        if not (self.catalog_name or "").strip() or not (self.schema_name or "").strip():
+        pack = self.target == "content_pack"
+        if not pack and (not (self.catalog_name or "").strip() or not (self.schema_name or "").strip()):
             raise SigmaConfigurationError(
                 "Lakewatch v2 rules require the target Unity Catalog location: "
                 "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
@@ -1140,6 +1164,14 @@ class DatabricksBackend(TextQueryBackend):
             validate_profile(profile, schema)
             if self._raw_log_field_set:
                 _validate_raw(profile, schema, RawSource("column", self.raw_log_field, "text"))
+            if pack:
+                if not schema.uuid:
+                    raise SigmaConfigurationError(
+                        f"parser {profile.parser} of profile {profile.profile} has no parser uuid, "
+                        f"which -O target=content_pack needs: add \"uuid\" to its entry in a schema "
+                        f"file (-O lakewatch_schemas=...) or use -O target=workspace")
+                selected.append((profile, schema, ""))
+                continue
             table = tables.get(pid) or table_name
             if not table:
                 missing.append(pid)
@@ -1534,14 +1566,14 @@ class DatabricksBackend(TextQueryBackend):
         return to_v2_fidelity(self.default_fidelity or V2_FIDELITY_MAP.get(rule_status, "Development"))
 
     @staticmethod
-    def _lakewatch_documents(queries: List[str]) -> List[Dict[str, Any]]:
-        """Rule documents of the per-rule envelopes, without deprecated, unsupported and empty rules."""
-        documents: List[Dict[str, Any]] = []
+    def _lakewatch_documents(queries: List[str]) -> List[Tuple[str, Dict[str, Any]]]:
+        """(rule_name, document) of the per-rule envelopes, without deprecated, unsupported and empty rules."""
+        documents: List[Tuple[str, Dict[str, Any]]] = []
         for query in queries:
             envelope = json.loads(query)
             if envelope["status"] in ("deprecated", "unsupported") or not envelope["sql"]:
                 continue
-            documents.append(envelope["doc"])
+            documents.append((envelope["rule_name"], envelope["doc"]))
         return documents
 
     @staticmethod
@@ -1560,15 +1592,22 @@ class DatabricksBackend(TextQueryBackend):
 
     def finalize_query_lakewatch(self, rule: SigmaRule, query: str, index: int,
                                  state: ConversionState) -> Any:
-        """Build a Lakewatch v2 batch rule document for a single Sigma query."""
-        catalog_name = (self.catalog_name or "").strip()
-        schema_name = (self.schema_name or "").strip()
-        if not catalog_name or not schema_name:
-            raise SigmaConversionError(
-                "Lakewatch v2 rules require the target Unity Catalog location: "
-                "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
-            )
-        table = self._lakewatch_table(rule)
+        """Build a Lakewatch v2 batch rule document (workspace or content pack) for a Sigma query."""
+        status, sql, core = self._lakewatch_body(rule, query)
+        if self.target == "content_pack":
+            doc = self._content_pack_document(rule, core)
+        else:
+            doc = self._workspace_document(core)
+        return json.dumps({"status": status, "sql": sql, "rule_name": core["rule_name"], "doc": doc})
+
+    def _lakewatch_body(self, rule: SigmaRule, query: str) -> Tuple[str, str, Dict[str, Any]]:
+        """Build the rule document shared by both targets: status, SQL and the target-neutral body.
+
+        The body has no catalog/schema, ``schedule`` is ``{at_least_every}`` only and ``batch`` is
+        ``{sql: {query}}``; the target builders add the rest.
+        """
+        pack = self.target == "content_pack"
+        table = "{{table.events}}" if pack else self._lakewatch_table(rule)
         rule_name_suffix = ""
         profile_ref: Optional[str] = None
         if self._current_profile is not None:
@@ -1608,8 +1647,6 @@ class DatabricksBackend(TextQueryBackend):
         )
         description = rule.description or rule.title
         doc: Dict[str, Any] = {
-            "catalog_name": catalog_name,
-            "schema_name": schema_name,
             "rule_name": to_v2_rule_name(rule.title, rule_name_suffix),
             "description": truncate(description, V2_DESCRIPTION_MAX_LEN),
             "severity": self._lakewatch_severity(rule),
@@ -1627,22 +1664,10 @@ class DatabricksBackend(TextQueryBackend):
         if annotations:
             doc["annotations"] = annotations
         # schedule.compute_group was removed from the v2 API (rules run on dedicated compute).
-        doc["schedule"] = {
-            "at_least_every": self.schedule,
-            "enabled": self.enabled,
-        }
+        doc["schedule"] = {"at_least_every": self.schedule}
         if self.extend_lookback:
             doc["timerange"] = {"extend_lookback": self.extend_lookback}
-        batch: Dict[str, Any] = {}
-        if self.warehouse_id:
-            batch["warehouse_id"] = self.warehouse_id
-        # Unqualified table names resolve against the catalog and schema of the rule.
-        batch["sql"] = {
-            "query": sql,
-            "default_catalog_name": catalog_name,
-            "default_schema_name": schema_name,
-        }
-        doc["batch"] = batch
+        doc["batch"] = {"sql": {"query": sql}}
         output: Dict[str, Any] = {"summary": summary}
         if context is not None:
             output["context"] = context
@@ -1652,7 +1677,54 @@ class DatabricksBackend(TextQueryBackend):
         mitre = build_mitre_mapping(rule)
         if mitre:
             doc["mitre"] = mitre
-        return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
+        return rule_status, sql, doc
+
+    def _workspace_document(self, core: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the flat Lakewatch API rule: catalog and schema first, scheduling and batch settings."""
+        catalog_name = (self.catalog_name or "").strip()
+        schema_name = (self.schema_name or "").strip()
+        if not catalog_name or not schema_name:
+            raise SigmaConversionError(
+                "Lakewatch v2 rules require the target Unity Catalog location: "
+                "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
+            )
+        doc: Dict[str, Any] = {"catalog_name": catalog_name, "schema_name": schema_name}
+        for key, value in core.items():
+            if key == "schedule":
+                value = {**value, "enabled": self.enabled}
+            elif key == "batch":
+                batch: Dict[str, Any] = {}
+                if self.warehouse_id:
+                    batch["warehouse_id"] = self.warehouse_id
+                # Unqualified table names resolve against the catalog and schema of the rule.
+                batch["sql"] = {
+                    "query": value["sql"]["query"],
+                    "default_catalog_name": catalog_name,
+                    "default_schema_name": schema_name,
+                }
+                value = batch
+            doc[key] = value
+        return doc
+
+    def _content_pack_document(self, rule: SigmaRule, core: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the content-pack document: description, metadata and the rule body."""
+        if rule.id is None:
+            raise self._parsed_error(
+                "content_pack mode needs a Sigma rule id (used for content_resource_id)")
+        assert self._current_profile is not None
+        profile, schema, _ = self._current_profile
+        body: Dict[str, Any] = {"rule_name": core["rule_name"],
+                                "content_resource_id": content_resource_id(str(rule.id), profile.profile)}
+        body.update((k, v) for k, v in core.items() if k != "rule_name")
+        return {
+            "description": core["description"],
+            "metadata": {
+                "rule_kind": "panther",
+                "displayName": rule.title,
+                "table_parameters": {"events": {"display_name": "Events", "parser_ids": [schema.uuid]}},
+            },
+            "rule": body,
+        }
 
     def _output_settings(self, rule: SigmaRule, profile_id: str) -> OutputOverride:
         """Resolve summary, context and select: the file's profile entry, its default, the rule."""
@@ -1696,21 +1768,26 @@ class DatabricksBackend(TextQueryBackend):
             self._warn_lakewatch_options()
         # rule_name must be unique within the target schema: suffix duplicates.
         used = set()
-        for doc in documents:
-            name = candidate = doc["rule_name"]
+        named: List[Tuple[str, Dict[str, Any]]] = []
+        for name, doc in documents:
+            candidate = name
             count = 1
             while candidate in used:
                 count += 1
                 suffix = f"_{count}"
                 candidate = name[:V2_RULE_NAME_MAX_LEN - len(suffix)] + suffix
             used.add(candidate)
-            doc["rule_name"] = candidate
+            if self.target == "content_pack":
+                doc["rule"]["rule_name"] = candidate
+            else:
+                doc["rule_name"] = candidate
+            named.append((candidate, doc))
         if self.output_dir:
-            return self._write_lakewatch_files(documents, self.output_dir)
-        return self._dump_lakewatch_documents(documents)
+            return self._write_lakewatch_files(named, self.output_dir)
+        return self._dump_lakewatch_documents([doc for _, doc in named])
 
     @classmethod
-    def _write_lakewatch_files(cls, documents: List[Dict[str, Any]], output_dir: str) -> str:
+    def _write_lakewatch_files(cls, documents: List[Tuple[str, Dict[str, Any]]], output_dir: str) -> str:
         """Write each document to ``<output_dir>/<rule_name>.yaml`` and return a summary comment.
 
         Rule names are unique and contain only ``[a-z0-9_]``, so they are safe file names.
@@ -1719,8 +1796,8 @@ class DatabricksBackend(TextQueryBackend):
         directory = Path(output_dir).expanduser()
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            for doc in documents:
-                (directory / f"{doc['rule_name']}.yaml").write_text(
+            for name, doc in documents:
+                (directory / f"{name}.yaml").write_text(
                     cls._dump_lakewatch_documents([doc]), encoding="utf-8")
         except OSError as e:
             raise SigmaConfigurationError(f"cannot write rules to output_dir {directory}: {e}") from None
@@ -1728,6 +1805,12 @@ class DatabricksBackend(TextQueryBackend):
 
     def finalize(self, queries: List[Any], output_format: str) -> Any:
         """Finalize the output, warning when ``output_dir`` is set for a format that ignores it."""
+        if self._target_given and output_format != "lakewatch":
+            warnings.warn(
+                f"The target option is supported only by the lakewatch format and is "
+                f"ignored for {output_format}.",
+                UserWarning, stacklevel=2,
+            )
         if self.output_dir and output_format != "lakewatch":
             warnings.warn(
                 f"The output_dir option is supported only by the lakewatch format and is "
@@ -1738,6 +1821,17 @@ class DatabricksBackend(TextQueryBackend):
 
     def _warn_lakewatch_options(self) -> None:
         """Warn once per conversion about options that make the v2 rules fail or are ignored."""
+        if self.target == "content_pack":
+            ignored = sorted(
+                name for name, given in (
+                    ("catalog_name", self.catalog_name), ("schema_name", self.schema_name),
+                    ("warehouse_id", self.warehouse_id), ("table_name", self.table_name),
+                    ("table_map", self.table_map), ("enabled", self._enabled_given),
+                ) if given)
+            if ignored:
+                warnings.warn(f"ignored with -O target=content_pack: {', '.join(ignored)}",
+                              UserWarning, stacklevel=2)
+            return
         if not self.warehouse_id:
             warnings.warn(
                 "Lakewatch v2 rules have no warehouse_id: the server rejects enabled batch rules "

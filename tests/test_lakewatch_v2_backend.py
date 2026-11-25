@@ -202,7 +202,7 @@ def test_v2_multi_document_output_dedups_rule_names():
 def test_v2_dedup_avoids_existing_suffixed_names():
     be = _backend(warehouse_id="wh")
     envelopes = [
-        json.dumps({"status": "test", "sql": "x", "doc": {"rule_name": name}})
+        json.dumps({"status": "test", "sql": "x", "rule_name": name, "doc": {"rule_name": name}})
         for name in ("a_2", "a", "a")
     ]
     docs = list(yaml.safe_load_all(be.finalize_output_lakewatch(envelopes)))
@@ -436,7 +436,7 @@ def test_v2_unsupported_rule_skipped():
 
 def test_v2_empty_sql_dropped():
     be = _backend(warehouse_id="wh")
-    empty = json.dumps({"status": "test", "sql": "", "doc": {"rule_name": "a"}})
-    real = json.dumps({"status": "test", "sql": "SELECT 1", "doc": {"rule_name": "b"}})
+    empty = json.dumps({"status": "test", "sql": "", "rule_name": "a", "doc": {"rule_name": "a"}})
+    real = json.dumps({"status": "test", "sql": "SELECT 1", "rule_name": "b", "doc": {"rule_name": "b"}})
     docs = list(yaml.safe_load_all(be.finalize_output_lakewatch([empty, real])))
     assert docs == [{"rule_name": "b"}]
