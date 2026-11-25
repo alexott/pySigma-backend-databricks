@@ -59,7 +59,6 @@ def test_basename_shapes():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert str(one("basename", r"*\cmd.exe")[1]) == "cmd.exe"
-        assert str(one("basename", r"*\py*.exe")[1]) == "py*.exe"
         assert str(one("basename", "*cmd.exe")[1]) == "*cmd.exe"
     with pytest.warns(UserWarning):
         assert str(one("basename", "/usr/bin/curl")[1]) == "curl"
@@ -162,3 +161,33 @@ def test_to_int_to_str():
     assert str(one("to_str", SigmaBool(True))[1]) == "true"
     assert str(one("to_str", "x")[1]) == "x"
     assert SpecialChars.WILDCARD_MULTI in SigmaString("a*").s
+
+
+def test_basename_keeps_directory_warning_unless_bare_wildcard():
+    for text in (r"*\System32\cmd.exe", r"*System32\cmd.exe"):
+        with pytest.warns(UserWarning, match="directory dropped"):
+            assert str(one("basename", text)[1]) == "cmd.exe"
+
+
+def test_basename_wildcard_in_file_name_warns():
+    with pytest.warns(UserWarning, match="wildcard in the file name"):
+        assert str(one("basename", r"*\py*.exe")[1]) == "py*.exe"
+    with pytest.warns(UserWarning, match="wildcard in the file name"):
+        assert str(one("basename", r"C:\x\a*b.exe")[1]) == "a*b.exe"
+
+
+def test_hashes_validate_prefixed_digests():
+    for bad in ("MD5=", "MD5=abc", "SHA1=" + "a" * 32, "MD5=" + "g" * 32, "a" * 31 + "z"):
+        with pytest.raises(TransformFailure):
+            run(HASHES, SigmaString(bad))
+    with pytest.raises(TransformFailure, match="not a hash"):
+        run(HASHES, SigmaString("foo=bar"))
+    with pytest.raises(TransformFailure, match="32 characters"):
+        run(HASHES, SigmaString("IMPHASH=abc"), all_values=True)
+    with pytest.warns(UserWarning, match="IMPHASH"):
+        assert run(HASHES, SigmaString("IMPHASH=" + "a" * 32)) == []
+
+
+def test_make_sets_original():
+    value = one({"path_prefix": {"rewrite": [{"from": "C:", "to": "D:*"}]}}, r"C:\x")[1]
+    assert value.original == str(value)

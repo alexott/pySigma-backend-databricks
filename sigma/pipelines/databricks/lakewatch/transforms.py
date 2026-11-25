@@ -22,6 +22,7 @@ from typing import (
 )
 
 from sigma.types import (
+    Placeholder,
     SigmaBool,
     SigmaNumber,
     SigmaString,
@@ -37,7 +38,7 @@ class TransformFailure(ValueError):  # noqa: N818
 
 
 Alternative = Tuple[Tuple[str, ...], SigmaType]
-_Part = Union[str, SpecialChars]
+_Part = Union[str, SpecialChars, Placeholder]
 _WILD = SpecialChars.WILDCARD_MULTI
 
 
@@ -53,7 +54,8 @@ def _make(parts: Sequence[_Part]) -> SigmaString:
                 continue
         merged.append(part)
     result = SigmaString("")
-    result.s = tuple(merged)
+    result.s = merged
+    result.original = str(result)
     return result
 
 
@@ -229,14 +231,20 @@ class BasenameTransform(_NoParams):
                     index, pos = i, found
         if index < 0:
             return [(targets, value)]
-        head = [*parts[:index], str(parts[index])[: pos + 1]]
-        tail = [str(parts[index])[pos + 1 :], *parts[index + 1 :]]
+        head: List[_Part] = [*parts[:index], str(parts[index])[: pos + 1]]
+        tail: List[_Part] = [str(parts[index])[pos + 1 :], *parts[index + 1 :]]
         tail = [p for p in tail if p != ""]
         if not tail or tail[-1] is _WILD:
             raise TransformFailure(self._CANNOT)
-        if not (len(head) == 2 and head[0] is _WILD):
+        if not (len(head) == 2 and head[0] is _WILD and head[1] in ("\\", "/")):
             warnings.warn(
                 "basename: directory dropped; the match is broader than the rule's",
+                UserWarning,
+                stacklevel=2,
+            )
+        if any(not isinstance(p, str) for p in tail):
+            warnings.warn(
+                "basename: a wildcard in the file name may span directories; the match is narrower than the rule's",
                 UserWarning,
                 stacklevel=2,
             )
@@ -326,7 +334,6 @@ class RegistryPathTransform(Transform):
         """Store the validated parameters."""
         self.hive = hive
         self.split = split
-        self.supplies_targets = split is not None
 
     @classmethod
     def from_params(cls, params: Any) -> "RegistryPathTransform":
@@ -343,7 +350,7 @@ class RegistryPathTransform(Transform):
                 _require_path(cls.kind, "key", sp["key"]),
                 _require_path(cls.kind, "value", sp["value"]),
             )
-        return cls(params["hive"], split)
+        return (_RegistryPathSplit if split else cls)(params["hive"], split)
 
     def required_paths(self):
         """Return the schema paths named by the parameters."""
@@ -374,7 +381,15 @@ class RegistryPathTransform(Transform):
         return value
 
 
+class _RegistryPathSplit(RegistryPathTransform):
+    """Registry path transform that also supplies the joined key and value targets."""
+
+    supplies_targets = True
+
+
 _HASH_LENGTHS = {32: "MD5", 40: "SHA1", 64: "SHA256"}
+_DIGEST_LENGTHS = {"MD5": 32, "IMPHASH": 32, "SHA1": 40, "SHA256": 64}
+_HEX = re.compile(r"[0-9a-fA-F]+")
 
 
 class HashesTransform(Transform):
@@ -413,17 +428,24 @@ class HashesTransform(Transform):
             parts = parts[1:]
         if parts and parts[-1] is _WILD:
             parts = parts[:-1]
-        if not all(isinstance(p, str) for p in parts):
+        texts = [p for p in parts if isinstance(p, str)]
+        if len(texts) != len(parts):
             raise TransformFailure(f"value '{value}' is not a plain hash")
-        text = "".join(parts)  # type: ignore[arg-type]
+        text = "".join(texts)
         if "=" in text:
             algo, digest = text.split("=", 1)
             algo = algo.upper()
+            if algo not in self.ALGOS:
+                raise TransformFailure(f"value '{value}' is not a hash")
+            if len(digest) != _DIGEST_LENGTHS[algo]:
+                raise TransformFailure(f"{algo} digest must have {_DIGEST_LENGTHS[algo]} characters")
         else:
             digest = text
             algo = _HASH_LENGTHS.get(len(text), "")
             if not algo:
                 raise TransformFailure(f"cannot tell the hash algorithm of '{value}'")
+        if not _HEX.fullmatch(digest):
+            raise TransformFailure(f"value '{value}' is not a hexadecimal digest")
         if algo not in self.algos:
             if all_values:
                 raise TransformFailure(f"algorithm {algo} is not available")
