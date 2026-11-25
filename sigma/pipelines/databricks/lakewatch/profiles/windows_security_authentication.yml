@@ -1,0 +1,32 @@
+# Built-in Lakewatch profile for the windows_security_authentication parser: Windows Security logon, Kerberos and NTLM authentication events.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Event XML and Field Descriptions of one Microsoft Learn page per EventID,
+# https://learn.microsoft.com/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-NNNN for NNNN in:
+#   4624, 4625, 4627, 4634, 4647, 4648, 4768, 4769, 4770, 4771, 4772, 4776, 4777, 4778, 4779, 
+#   4800, 4801
+# Field names are facts of the Windows audit schema; no LGPL Sigma pipeline source was used.
+# 4772 and 4777 are documented as defined but never generated (the pages carry no fields); 4768
+# stands in for 4772 and 4776 for 4777. 4779 has the same fields as 4778.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); each EventData name listed
+# under `event_data` maps to EventData[<name>]. Values pass through unchanged. EventID is a
+# STRING column.
+profile: windows_security_authentication
+version: 1
+parser: windows_security_authentication
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: security
+    route:
+      field: EventID
+    event_data: [SubjectUserSid, SubjectUserName, SubjectDomainName, SubjectLogonId, TargetUserSid, TargetUserName, TargetDomainName, TargetLogonId, LogonType, LogonProcessName, AuthenticationPackageName, WorkstationName, LogonGuid, TransmittedServices, LmPackageName, KeyLength, ProcessId, ProcessName, IpAddress, IpPort, ImpersonationLevel, RestrictedAdminMode, TargetOutboundUserName, TargetOutboundDomainName, VirtualAccount, TargetLinkedLogonId, ElevatedToken, Status, FailureReason, SubStatus, EventIdx, EventCountTotal, GroupMembership, TargetLogonGuid, TargetServerName, TargetInfo, TargetSid, ServiceName, ServiceSid, TicketOptions, TicketEncryptionType, PreAuthType, CertIssuerName, CertSerialNumber, CertThumbprint, ResponseTicket, AccountSupportedEncryptionTypes, AccountAvailableKeys, ServiceSupportedEncryptionTypes, ServiceAvailableKeys, DCSupportedEncryptionTypes, DCAvailableKeys, ClientAdvertizedEncryptionTypes, SessionKeyEncryptionType, PreAuthEncryptionType, RequestTicketHash, ResponseTicketHash, PackageName, Workstation, AccountName, AccountDomain, LogonID, SessionName, ClientName, ClientAddress, SessionId]

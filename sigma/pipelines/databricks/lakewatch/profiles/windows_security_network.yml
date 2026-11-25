@@ -1,0 +1,29 @@
+# Built-in Lakewatch profile for the windows_security_network parser: Windows Security file share and Windows Filtering Platform events.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Event XML and Field Descriptions of one Microsoft Learn page per EventID,
+# https://learn.microsoft.com/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-NNNN for NNNN in:
+#   5140, 5145, 5152, 5156, 5157, 5158, 5159
+# Field names are facts of the Windows audit schema; no LGPL Sigma pipeline source was used.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); each EventData name listed
+# under `event_data` maps to EventData[<name>]. Values pass through unchanged. EventID is a
+# STRING column.
+profile: windows_security_network
+version: 1
+parser: windows_security_network
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: security
+    route:
+      field: EventID
+    event_data: [SubjectUserSid, SubjectUserName, SubjectDomainName, SubjectLogonId, ObjectType, IpAddress, IpPort, ShareName, ShareLocalPath, RelativeTargetName, AccessMask, AccessList, AccessReason, ProcessId, ProcessID, Application, Direction, SourceAddress, SourcePort, DestAddress, DestPort, Protocol, FilterRTID, LayerName, LayerRTID, RemoteUserID, RemoteMachineID]

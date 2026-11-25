@@ -369,6 +369,13 @@ Built-in profiles:
 | `windows_sysmon_file` | `product: windows` with `category: file_change`, `file_event`, `create_stream_hash`, `file_delete`, `file_block_executable`, `file_block_shredding` or `file_executable_detected`; `service: sysmon` | `windows_sysmon_file` (requires the custom Windows parsers) |
 | `windows_sysmon_registry` | `product: windows` with `category: registry_add`, `registry_delete`, `registry_set`, `registry_rename` or `registry_event`; `service: sysmon` (EventIDs 12-14) | `windows_sysmon_registry` (requires the custom Windows parsers) |
 | `windows_sysmon_other` | `product: windows` with `category: sysmon_status`, `pipe_created`, `wmi_event`, `clipboard_capture` or `sysmon_error`; `service: sysmon` for any EventID not served by the other five | `windows_sysmon_other` (requires the custom Windows parsers) |
+| `windows_security_process` | `product: windows` with `category: process_creation` (EventID 4688); `service: security` (EventIDs 4688, 4689, 4690, 4696) | `windows_security_process` (requires the custom Windows parsers) |
+| `windows_security_authentication` | `product: windows`, `service: security` (EventIDs 4624, 4625, 4627, 4634, 4647, 4648, 4768-4772, 4776-4779, 4800, 4801) | `windows_security_authentication` (requires the custom Windows parsers) |
+| `windows_security_account_change` | `product: windows`, `service: security` (EventIDs 4720, 4722-4726, 4738, 4740-4742, 4767, 4780, 4781, 4794, 4798) | `windows_security_account_change` (requires the custom Windows parsers) |
+| `windows_security_group_management` | `product: windows`, `service: security` (EventIDs 4727-4735, 4737, 4754-4758, 4764, 4799) | `windows_security_group_management` (requires the custom Windows parsers) |
+| `windows_security_user_access` | `product: windows`, `service: security` (EventIDs 4672-4674, 4703-4705, 4717, 4718) | `windows_security_user_access` (requires the custom Windows parsers) |
+| `windows_security_network` | `product: windows`, `service: security` (EventIDs 5140, 5145, 5152, 5156-5159) | `windows_security_network` (requires the custom Windows parsers) |
+| `windows_security_other` | `product: windows`, `service: security` for any EventID not served by the other six; EventData fields are mapped leniently with a warning | `windows_security_other` (requires the custom Windows parsers) |
 
 The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
 (`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which
@@ -378,6 +385,17 @@ category (for example `CommandLine` on `file_event`) fails the rule with `field 
 by profile <id>`. `file_access` and `file_rename` rules have no Sysmon event and fail with the
 no-profile reason. A rule with `service: sysmon` is routed to the profile that serves its
 EventID values, so select all six profiles to cover it.
+
+The seven `windows_security_*` profiles read the Security-channel fields from `EventData[Name]`
+entries; field names come from the Microsoft Learn page of each event. A rule with
+`service: security` is routed by its EventID values, so select all seven to cover it. Sigma
+`process_creation` maps to EventID 4688: `Image` is `NewProcessName`, `ParentImage` is
+`ParentProcessName`, process IDs are matched as `0x` hex, `User` and `LogonId` use the target
+account when 4688 records one and the creator otherwise, and `IntegrityLevel` maps to the
+`MandatoryLabel` SID. A `User` value that matches `AUTHORI`/`AUTORI` fails, because 4688 logs
+LocalSystem as the computer account. `Hashes`, `OriginalFileName`, `CurrentDirectory`,
+`ParentCommandLine`, `ParentUser`, `Company`, `Description`, `Product` and `FileVersion` fail
+the rule as unsupported.
 
 `crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
 events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from

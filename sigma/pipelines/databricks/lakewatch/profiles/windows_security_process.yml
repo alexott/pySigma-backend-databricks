@@ -1,0 +1,88 @@
+# Built-in Lakewatch profile for the windows_security_process parser: Windows Security process events (EventIDs 4688, 4689, 4690, 4696).
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Event XML and Field Descriptions of one Microsoft Learn page per EventID,
+# https://learn.microsoft.com/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-NNNN for NNNN in:
+#   4688, 4689, 4690, 4696
+# Field names are facts of the Windows audit schema; no LGPL Sigma pipeline source was used.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); each EventData name listed
+# under `event_data` maps to EventData[<name>]. Values pass through unchanged. EventID is a
+# STRING column.
+#
+# Sigma process_creation maps to EventID 4688 (user decision, plan 3 ruling 6). Verified against
+# the 4688 page: the MandatoryLabel SIDs (S-1-16-0/4096/8192/12288/16384), hexadecimal process IDs
+# ('0x' + hex, example 0x2bc), and the example of a LocalSystem process with the computer account
+# (WIN-...$, S-1-5-18, 0x3e7) as the creator Subject. The page doesn't spell out the '-' and
+# '0x0' values of the unset Target* fields; they come from live data and the field descriptions
+# (Target Subject is filled only when the creator and target logons differ).
+profile: windows_security_process
+version: 1
+parser: windows_security_process
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      category: process_creation
+    conditions:
+      EventID: '4688'
+    event_data: [SubjectUserSid, SubjectUserName, SubjectDomainName, SubjectLogonId, NewProcessId, NewProcessName, TokenElevationType, CommandLine, TargetUserSid, TargetUserName, TargetDomainName, TargetLogonId, ParentProcessName, MandatoryLabel]
+    fields:
+      Image: 'EventData[NewProcessName]'
+      ParentImage: 'EventData[ParentProcessName]'
+      ProcessId:
+        field: 'EventData[NewProcessId]'
+        transform: to_hex
+      ParentProcessId:
+        field: 'EventData[ProcessId]'
+        transform: to_hex
+      User:
+        transform:
+          - reject:
+              pattern: 'AUTHORI|AUTORI'
+              reason: LocalSystem is logged as the computer account in 4688
+          - first_set:
+              candidates:
+                - domain: 'EventData[TargetDomainName]'
+                  user: 'EventData[TargetUserName]'
+                - domain: 'EventData[SubjectDomainName]'
+                  user: 'EventData[SubjectUserName]'
+              unset: ['-']
+      LogonId:
+        transform:
+          first_set:
+            candidates: ['EventData[TargetLogonId]', 'EventData[SubjectLogonId]']
+            unset: ['0x0', '-']
+      IntegrityLevel:
+        field: 'EventData[MandatoryLabel]'
+        transform:
+          map:
+            values:
+              untrusted: S-1-16-0
+              low: S-1-16-4096
+              medium: S-1-16-8192
+              high: S-1-16-12288
+              system: S-1-16-16384
+    unsupported:
+      - Hashes
+      - OriginalFileName
+      - CurrentDirectory
+      - ParentCommandLine
+      - ParentUser
+      - Company
+      - Description
+      - Product
+      - FileVersion
+  - match:
+      product: windows
+      service: security
+    route:
+      field: EventID
+    event_data: [SubjectUserSid, SubjectUserName, SubjectDomainName, SubjectLogonId, NewProcessId, NewProcessName, TokenElevationType, ProcessId, CommandLine, TargetUserSid, TargetUserName, TargetDomainName, TargetLogonId, ParentProcessName, MandatoryLabel, Status, ProcessName, SourceHandleId, SourceProcessId, TargetHandleId, TargetProcessId, TargetProcessName]

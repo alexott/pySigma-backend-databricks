@@ -120,3 +120,124 @@ def test_sysmon_service_routes():
 def test_sysmon_keyword_entries():
     sql = _sql(PROC, _cat("process_creation"), "    keywords:\n        - 'mimikatz'\n    condition: keywords")
     assert "array_join(transform(" in sql
+
+
+SECURITY_PROFILES = sorted(p for p in WINDOWS_PROFILES if p.startswith("windows_security_"))
+SEC_PROC = "windows_security_process"
+SEC_ALL = ",".join(f"windows_security_{n}" for n in (
+    "process", "authentication", "account_change", "group_management", "network", "user_access", "other"
+))
+SEC_TABLES = ",".join(f"windows_security_{n}:t_{n}" for n in (
+    "process", "authentication", "account_change", "group_management", "network", "user_access", "other"
+))
+
+
+def _failure(parsers, logsource, detection):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(SigmaTransformationError) as exc:
+            _convert(parsers, logsource, detection, table_name="t")
+    return str(exc.value)
+
+
+def test_security_profiles_found():
+    assert len(SECURITY_PROFILES) == 7
+
+
+def test_security_4688_mapping():
+    sql = _sql(
+        SEC_PROC,
+        _cat("process_creation"),
+        """    sel:
+        Image|endswith: '\\cmd.exe'
+        ParentImage|endswith: '\\winword.exe'
+        IntegrityLevel: High
+    condition: sel""",
+    )
+    assert "e._Name = 'NewProcessName'" in sql
+    assert "e._Name = 'ParentProcessName'" in sql
+    assert "S-1-16-12288" in sql
+    assert "lower(eventid) = lower('4688')" in sql.lower()
+
+
+def test_security_4688_ids():
+    sql = _sql(
+        SEC_PROC,
+        _cat("process_creation"),
+        """    sel:
+        ProcessId: 4120
+        ParentProcessId: 255
+    condition: sel""",
+    )
+    assert "'0x1018'" in sql
+    assert "e._Name = 'NewProcessId'" in sql
+    assert "'0xff'" in sql
+    assert "e._Name = 'ProcessId'" in sql
+
+
+def test_security_4688_user():
+    sql = _sql(
+        SEC_PROC,
+        _cat("process_creation"),
+        "    sel:\n        User|endswith: '\\alice'\n    condition: sel",
+    )
+    assert "CASE WHEN" in sql
+    assert "e._Name = 'TargetUserName'" in sql
+    assert "ELSE" in sql
+    assert "e._Name = 'SubjectUserName'" in sql
+    assert "e._Name = 'SubjectDomainName'" in sql
+    reason = _failure(
+        SEC_PROC, _cat("process_creation"), "    sel:\n        User|contains: 'AUTHORI'\n    condition: sel"
+    )
+    assert "LocalSystem" in reason
+
+
+def test_security_4688_unsupported():
+    reason = _failure(
+        SEC_PROC, _cat("process_creation"), "    sel:\n        OriginalFileName: x\n    condition: sel"
+    )
+    assert "field OriginalFileName is not supported by profile windows_security_process" in reason
+
+
+def _security_queries(eventid_detection, **options):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        queries = _convert(
+            SEC_ALL,
+            "    product: windows\n    service: security",
+            eventid_detection,
+            table_map=SEC_TABLES,
+            **options,
+        )
+    return queries, [str(w.message) for w in caught]
+
+
+def test_security_service_route():
+    queries, _ = _security_queries("    sel:\n        EventID: 4625\n        TargetUserName: x\n    condition: sel")
+    assert len(queries) == 1
+    assert "t_authentication" in queries[0]
+    assert "__windows_security_authentication" in queries[0]
+    for n in ("process", "account_change", "group_management", "network", "user_access", "other"):
+        assert f"__windows_security_{n}" not in queries[0]
+
+
+def test_security_other_route():
+    queries, warns = _security_queries(
+        "    sel:\n        EventID: 1102\n        SubjectUserName: x\n    condition: sel"
+    )
+    assert len(queries) == 1
+    assert "__windows_security_other" in queries[0]
+    assert "__windows_security_process" not in queries[0]
+    assert any("not in a field list" in w for w in warns)
+
+
+def test_process_creation_fans_out():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        queries = _convert(
+            "windows_sysmon_process,windows_security_process",
+            _cat("process_creation"),
+            "    sel:\n        Image|endswith: '\\cmd.exe'\n    condition: sel",
+            table_map="windows_sysmon_process:t_sysmon,windows_security_process:t_sec",
+        )
+    assert len(queries) == 2

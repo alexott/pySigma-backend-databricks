@@ -1,0 +1,31 @@
+# Built-in Lakewatch profile for the windows_security_account_change parser: Windows Security user and computer account management events.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Event XML and Field Descriptions of one Microsoft Learn page per EventID,
+# https://learn.microsoft.com/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-NNNN for NNNN in:
+#   4720, 4722, 4723, 4724, 4725, 4726, 4738, 4740, 4741, 4742, 4767, 4780, 4781, 4794, 4798
+# Field names are facts of the Windows audit schema; no LGPL Sigma pipeline source was used.
+# 4780 has no event XML on Learn; its Event Schema section lists Subject*, Target Account
+# (name, domain, SID) and Privileges, which are the names used here.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); each EventData name listed
+# under `event_data` maps to EventData[<name>]. Values pass through unchanged. EventID is a
+# STRING column.
+profile: windows_security_account_change
+version: 1
+parser: windows_security_account_change
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: security
+    route:
+      field: EventID
+    event_data: [TargetUserName, TargetDomainName, TargetSid, SubjectUserSid, SubjectUserName, SubjectDomainName, SubjectLogonId, PrivilegeList, SamAccountName, DisplayName, UserPrincipalName, HomeDirectory, HomePath, ScriptPath, ProfilePath, UserWorkstations, PasswordLastSet, AccountExpires, PrimaryGroupId, AllowedToDelegateTo, OldUacValue, NewUacValue, UserAccountControl, UserParameters, SidHistory, LogonHours, Dummy, DnsHostName, ServicePrincipalNames, ComputerAccountChange, OldTargetUserName, NewTargetUserName, Workstation, Status, CallerProcessId, CallerProcessName]

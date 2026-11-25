@@ -1,0 +1,29 @@
+# Built-in Lakewatch profile for the windows_security_user_access parser: Windows Security privilege and user-right events.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Event XML and Field Descriptions of one Microsoft Learn page per EventID,
+# https://learn.microsoft.com/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-NNNN for NNNN in:
+#   4672, 4673, 4674, 4703, 4704, 4705, 4717, 4718
+# Field names are facts of the Windows audit schema; no LGPL Sigma pipeline source was used.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); each EventData name listed
+# under `event_data` maps to EventData[<name>]. Values pass through unchanged. EventID is a
+# STRING column.
+profile: windows_security_user_access
+version: 1
+parser: windows_security_user_access
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: security
+    route:
+      field: EventID
+    event_data: [SubjectUserSid, SubjectUserName, SubjectDomainName, SubjectLogonId, PrivilegeList, ObjectServer, Service, ProcessId, ProcessName, ObjectType, ObjectName, HandleId, AccessMask, TargetUserSid, TargetUserName, TargetDomainName, TargetLogonId, EnabledPrivilegeList, DisabledPrivilegeList, TargetSid, AccessGranted, AccessRemoved]

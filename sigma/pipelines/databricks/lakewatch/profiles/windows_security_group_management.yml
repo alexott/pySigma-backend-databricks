@@ -1,0 +1,35 @@
+# Built-in Lakewatch profile for the windows_security_group_management parser: Windows Security security group management events.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Event XML and Field Descriptions of one Microsoft Learn page per EventID,
+# https://learn.microsoft.com/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-NNNN for NNNN in:
+#   4727, 4728, 4729, 4730, 4731, 4732, 4733, 4734, 4735, 4737, 4754, 4755, 4756, 4757, 4758, 
+#   4764, 4799
+# Field names are facts of the Windows audit schema; no LGPL Sigma pipeline source was used.
+# Learn has no per-event page for 4727-4730, 4737 and 4754-4758 (the URLs above return 404 and
+# the group-management overview page lists no fields). Their EventData names are the Target* /
+# Subject* / Member* / SamAccountName / SidHistory / PrivilegeList names that 4731-4735 and 4764
+# document for the same event family; 4728 was also checked against live data (MemberName,
+# MemberSid).
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); each EventData name listed
+# under `event_data` maps to EventData[<name>]. Values pass through unchanged. EventID is a
+# STRING column.
+profile: windows_security_group_management
+version: 1
+parser: windows_security_group_management
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: security
+    route:
+      field: EventID
+    event_data: [TargetUserName, TargetDomainName, TargetSid, SubjectUserSid, SubjectUserName, SubjectDomainName, SubjectLogonId, PrivilegeList, SamAccountName, SidHistory, MemberName, MemberSid, GroupTypeChange, CallerProcessId, CallerProcessName]

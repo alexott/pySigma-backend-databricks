@@ -1,0 +1,31 @@
+# Built-in Lakewatch profile for the windows_security_other parser: Windows Security every Security-channel EventID not served by the other six windows_security_* parsers.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: none (see below). Channel names and the EventID split come from Windows
+# documentation and the parser schema.
+# Field names are facts of the Windows audit schema; no LGPL Sigma pipeline source was used.
+# No first-party field list covers this catch-all: event_data is `any`, so every EventData field
+# a rule uses is mapped leniently with a "not in a field list" warning.
+#
+# The fields live in EventData as named entries ({_Name, _VALUE}); each EventData name listed
+# under `event_data` maps to EventData[<name>]. Values pass through unchanged. EventID is a
+# STRING column.
+profile: windows_security_other
+version: 1
+parser: windows_security_other
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      service: security
+    route:
+      field: EventID
+      not_in: ['4624', '4625', '4627', '4634', '4647', '4648', '4672', '4673', '4674', '4688', '4689', '4690', '4696', '4703', '4704', '4705', '4717', '4718', '4720', '4722', '4723', '4724', '4725', '4726', '4727', '4728', '4729', '4730', '4731', '4732', '4733', '4734', '4735', '4737', '4738', '4740', '4741', '4742', '4754', '4755', '4756', '4757', '4758', '4764', '4767', '4768', '4769', '4770', '4771', '4772', '4776', '4777', '4778', '4779', '4780', '4781', '4794', '4798', '4799', '4800', '4801', '5140', '5145', '5152', '5156', '5157', '5158', '5159']
+    event_data: any
