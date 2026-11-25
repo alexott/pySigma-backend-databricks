@@ -230,8 +230,10 @@ def _optional_bool(kind: str, params: Dict[str, Any], name: str) -> bool:
 class BasenameTransform(Transform):
     r"""Keep only the last path component.
 
-    With ``also_suffix`` a concrete base name ``N`` also yields endswith ``\N``, which matches a
-    column holding the full path: with the separator in front it means "base name equals N".
+    With ``also_suffix`` a base name ``N`` also yields endswith ``\N`` (and ``/N`` when the value
+    used ``/``), which matches a column holding the full path: with the separator in front it
+    means "base name equals N". Only an endswith shape without a separator (``*cmd.exe``) stays
+    single, as it already matches both forms.
     """
 
     kind = "basename"
@@ -252,15 +254,21 @@ class BasenameTransform(Transform):
 
     def apply(self, value, targets, *, field, all_values):
         """Apply the transform to one value."""
-        name = self._base_name(_string(value))
+        name, slash = self._base_name(_string(value))
         if name is None:
             return [(targets, value)]
         if not self.also_suffix:
             return [(targets, name)]
-        return [(targets, name), (targets, _make([_WILD, "\\", *name.s]))]
+        alternatives: List[Alternative] = [(targets, name), (targets, _make([_WILD, "\\", *name.s]))]
+        if slash:
+            alternatives.append((targets, _make([_WILD, "/", *name.s])))
+        return alternatives
 
-    def _base_name(self, value: SigmaString) -> Optional[SigmaString]:
-        """Return the base name, or None for a value kept as is (empty, or *cmd.exe without a separator)."""
+    def _base_name(self, value: SigmaString) -> Tuple[Optional[SigmaString], bool]:
+        """Return the base name and whether its separator was ``/``.
+
+        The name is None for a value kept as is: empty, or starting with ``*`` without a separator.
+        """
         parts = value.s
         index = pos = -1
         for i, part in enumerate(parts):
@@ -273,8 +281,11 @@ class BasenameTransform(Transform):
             # A trailing wildcard (startswith, contains) matches the directory part of a full path.
             if len(parts) > 1 and parts[-1] is _WILD:
                 raise TransformFailure(self._CANNOT)
-            # A plain name is the base name; an endswith shape already matches both forms.
-            return value if len(parts) == 1 and isinstance(parts[0], str) else None
+            # The value is the base name (py*.exe, ?md.exe too); an endswith shape (*cmd.exe)
+            # already matches both forms.
+            if not parts or parts[0] is _WILD:
+                return None, False
+            return value, False
         head: List[_Part] = [*parts[:index], str(parts[index])[: pos + 1]]
         tail: List[_Part] = [str(parts[index])[pos + 1 :], *parts[index + 1 :]]
         tail = [p for p in tail if p != ""]
@@ -292,7 +303,7 @@ class BasenameTransform(Transform):
                 UserWarning,
                 stacklevel=3,
             )
-        return _make(tail)
+        return _make(tail), str(parts[index])[pos] == "/"
 
 
 class PathPrefixTransform(Transform):

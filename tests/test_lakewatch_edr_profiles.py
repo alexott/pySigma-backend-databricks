@@ -318,6 +318,32 @@ def test_cs_parent_image_base_name_or_full_path():
     assert f"{col} = lower('explorer.exe') OR endswith({col}, lower('\\\\explorer.exe'))" in sql
 
 
+def test_cs_parent_image_plain_name():
+    sql = _sql(CS, "windows", "process_creation", _sel("ParentImage", "cmd.exe"))
+    col = "lower(try_variant_get(event, '$.ParentBaseFileName', 'string'))"
+    assert f"({col} = lower('cmd.exe') OR endswith({col}, lower('\\\\cmd.exe')))" in sql
+
+
+def test_cs_parent_image_alternatives_under_not_and_list():
+    sql = _sql(
+        CS,
+        "windows",
+        "process_creation",
+        """    sel:
+        CommandLine|contains: 'x'
+    filter:
+        ParentImage|endswith:
+            - '\\explorer.exe'
+            - '\\cmd.exe'
+    condition: sel and not filter""",
+    )
+    col = "lower(try_variant_get(event, '$.ParentBaseFileName', 'string'))"
+    explorer = f"{col} = lower('explorer.exe') OR endswith({col}, lower('\\\\explorer.exe'))"
+    cmd = f"{col} = lower('cmd.exe') OR endswith({col}, lower('\\\\cmd.exe'))"
+    # Both alternatives of every list value sit inside the NOT; the backend flattens the nested ORs.
+    assert f"NOT ({explorer} OR {cmd})" in sql
+
+
 def test_cs_file_event_file_create_info():
     sql = _sql(CS, "windows", "file_event", _sel("TargetFilename|endswith", ".dll"))
     assert _names_selected(sql, ["FileCreateInfo"])

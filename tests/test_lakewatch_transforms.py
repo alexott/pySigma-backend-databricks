@@ -392,3 +392,30 @@ def test_basename_params():
         parse_transform({"basename": {"also_suffix": 1}}, {})
     # Without also_suffix the result is a single alternative, as before.
     assert _strs(run("basename", SigmaString("cmd.exe"))) == ["cmd.exe"]
+
+
+def test_basename_also_suffix_inner_wildcard_without_separator():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _strs(run(SUFFIX, SigmaString("py*.exe"))) == ["py*.exe", r"*\py*.exe"]
+        assert _strs(run(SUFFIX, SigmaString("?md.exe"))) == ["?md.exe", r"*\?md.exe"]
+        assert _strs(run(SUFFIX, SigmaString("cmd.e?e"))) == ["cmd.e?e", r"*\cmd.e?e"]
+        assert _strs(run(SUFFIX, SigmaString("*"))) == ["*"]
+    alternatives = run(SUFFIX, SigmaString("?md.exe"))
+    assert alternatives[1][1].s[2] is SpecialChars.WILDCARD_SINGLE
+
+
+def test_basename_also_suffix_forward_slash():
+    with pytest.warns(UserWarning, match="directory dropped"):
+        assert _strs(run(SUFFIX, SigmaString("/usr/bin/bash"))) == ["bash", r"*\bash", "*/bash"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _strs(run(SUFFIX, SigmaString("*/bash"))) == ["bash", r"*\bash", "*/bash"]
+        assert _strs(run(SUFFIX, SigmaString(r"*\bash"))) == ["bash", r"*\bash"]
+
+
+def test_path_prefix_keep_original_unknown_param():
+    with pytest.raises(ValueError, match="unknown parameter"):
+        parse_transform(
+            {"path_prefix": {"rewrite": [{"from": "C:", "to": "D:"}], "keep_original": True, "nope": 1}}, {}
+        )
