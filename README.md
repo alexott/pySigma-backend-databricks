@@ -335,6 +335,14 @@ Current limitations:
   `requestParameters|contains`. Use a path such as `requestParameters.bucketName` instead.
 * Rules that use these fail. With `sigma convert -s` they are skipped and reported.
 
+Writing profiles: `scripts/scaffold_profile.py PARSER --match product=windows,category=process_creation --rules <sigma rules dir>`
+writes a starting profile with one identity line per schema path, a `# used by N rules` comment
+on each path that matching rules use, and a trailing list of Sigma fields the schema lacks. Use
+`--schemas` for a schema file that isn't built in. To build such a file from a table, run
+`scripts/describe_to_schema.py --parser NAME -o out.json` with either `--describe-json FILE` (the
+output of `DESCRIBE TABLE EXTENDED <table> AS JSON`) or `--table c.s.t --profile P --warehouse-id W`,
+which runs the statement through the `databricks` CLI. `--profile` is never defaulted.
+
 Built-in profiles:
 
 | Profile | Logsource | Parser |

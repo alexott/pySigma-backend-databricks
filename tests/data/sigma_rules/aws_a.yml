@@ -1,0 +1,14 @@
+title: Test rule A
+id: 00000000-0000-0000-0000-00000000000a
+status: test
+logsource:
+    product: aws
+    service: cloudtrail
+detection:
+    sel:
+        eventName: ConsoleLogin
+        src_ip|cidr: 10.0.0.0/8
+    filter:
+        - userIdentity.arn|endswith: root
+    condition: sel and not filter
+level: low

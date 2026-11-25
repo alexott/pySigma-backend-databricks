@@ -1,0 +1,15 @@
+{
+  "table_name": "t",
+  "columns": [
+    {"name": "time", "type": {"name": "timestamp"}},
+    {"name": "actor", "type": {"name": "struct", "fields": [
+      {"name": "id", "type": {"name": "string"}},
+      {"name": "n", "type": {"name": "bigint"}}]}},
+    {"name": "items", "type": {"name": "array", "element_type": {"name": "struct", "fields": [
+      {"name": "arn", "type": {"name": "string"}}]}}},
+    {"name": "tags", "type": {"name": "array", "element_type": {"name": "string"}}},
+    {"name": "event", "type": {"name": "variant"}},
+    {"name": "labels", "type": {"name": "map"}},
+    {"name": "ok", "type": {"name": "boolean"}}
+  ]
+}

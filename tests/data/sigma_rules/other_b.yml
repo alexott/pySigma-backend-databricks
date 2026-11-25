@@ -1,0 +1,12 @@
+title: Test rule B
+id: 00000000-0000-0000-0000-00000000000b
+status: test
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    sel:
+        Image|endswith: x.exe
+        eventName: nope
+    condition: sel
+level: low
