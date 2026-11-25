@@ -1,8 +1,9 @@
 """Identifiers for Lakewatch content-pack documents."""
 
 import hashlib
+import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from uuid import NAMESPACE_URL, uuid5
 
 import yaml
@@ -57,6 +58,88 @@ def _load_revisions(path: Path) -> Optional[Dict[str, Any]]:
     return data
 
 
+_ITEM_RE = re.compile(r"^(\s*)- name:\s*(.*?)\s*$")
+
+
+def _scalar(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    return text
+
+
+def _edit_revisions_text(text: str, existing: Dict[str, Any], hashes: Mapping[str, str]) -> str:
+    """Apply the ``merge_revisions`` result to the text of ``revisions.yaml`` line by line.
+
+    Only changed entries' ``latestVersion``/``contentHash`` lines are rewritten and their
+    ``versionNote`` is removed; new entries are appended; everything else stays byte-identical.
+    """
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if re.match(r"^rules:\s*$", ln)), None)
+    if start is None:
+        return text
+    items: List[Tuple[str, int, int, str]] = []  # name, first line, end line (exclusive), indent
+    for i in range(start + 1, len(lines)):
+        m = _ITEM_RE.match(lines[i])
+        if m and (not items or m.group(1) == items[-1][3]):
+            if items:
+                items[-1] = (items[-1][0], items[-1][1], i, items[-1][3])
+            items.append((_scalar(m.group(2)), i, len(lines), m.group(1)))
+        elif lines[i].strip() and not lines[i][0].isspace() and not lines[i].startswith("- "):
+            if items:
+                items[-1] = (items[-1][0], items[-1][1], i, items[-1][3])
+            break
+    current = {e["name"]: e for e in existing["rules"]}
+    out = lines[:]
+    for name, first, end, indent in reversed(items):
+        entry = current.get(name)
+        if entry is None or name not in hashes or entry.get("contentHash") == hashes[name]:
+            continue
+        key = " " * (len(indent) + 2)
+        block: List[str] = []
+        skipping = False
+        for ln in lines[first:end]:
+            if skipping and (not ln.strip() or ln.startswith(key + " ") or ln.startswith(key + "\t")):
+                continue
+            skipping = False
+            if ln.startswith(key + "versionNote:"):
+                skipping = True
+                continue
+            m = re.match(rf"^({re.escape(key)}latestVersion:\s*)(\d+)(\s*)$", ln, re.S)
+            if m:
+                ln = f"{m.group(1)}{int(m.group(2)) + 1}{m.group(3)}"
+            elif re.match(rf"^{re.escape(key)}contentHash:", ln):
+                ln = f"{key}contentHash: {hashes[name]}\n"
+            block.append(ln)
+        out[first:end] = block
+    new = [n for n in hashes if n not in current]
+    if new and items:
+        indent = items[-1][3]
+        key = " " * (len(indent) + 2)
+        last = max(i for i, ln in enumerate(out) if ln.strip() and i > start)
+        # the last non-blank line within the rules section
+        if not out[last].endswith("\n"):
+            out[last] += "\n"
+        added = [f"{indent}- name: {n}\n{key}latestVersion: 1\n{key}contentHash: {hashes[n]}\n" for n in new]
+        out[last + 1:last + 1] = added
+    return "".join(out)
+
+
+def _merge_revisions_text(path: Path, existing: Optional[Dict[str, Any]], hashes: Mapping[str, str]) -> str:
+    expected = merge_revisions(existing, hashes)
+    if existing is None:
+        return yaml.safe_dump(expected, sort_keys=False)
+    text = path.read_text(encoding="utf-8")
+    edited = _edit_revisions_text(text, existing, hashes)
+    try:
+        ok = yaml.safe_load(edited) == expected
+    except yaml.YAMLError:
+        ok = False
+    if not ok:
+        raise SigmaConfigurationError(f"cannot merge {path}: unsupported revisions.yaml layout")
+    return edited
+
+
 def write_pack(documents: Sequence[Dict[str, Any]], output_dir: str,
                dump: Callable[[Dict[str, Any]], str]) -> str:
     """Write content-pack documents into a pack ``rules/`` directory.
@@ -77,7 +160,7 @@ def write_pack(documents: Sequence[Dict[str, Any]], output_dir: str,
             rule_dir.mkdir(exist_ok=True)
             (rule_dir / f"{name}.yaml").write_bytes(data)
             hashes[name] = hashlib.sha256(data).hexdigest()
-        merged = yaml.safe_dump(merge_revisions(existing, hashes), sort_keys=False)
+        merged = _merge_revisions_text(revisions_path, existing, hashes)
         if not revisions_path.is_file() or revisions_path.read_text(encoding="utf-8") != merged:
             revisions_path.write_text(merged, encoding="utf-8")
         fragment = yaml.safe_dump({"rules": [{"name": n} for n in rule_dirs(directory)]}, sort_keys=False)

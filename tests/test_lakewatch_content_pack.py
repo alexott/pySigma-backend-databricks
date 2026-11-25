@@ -262,3 +262,68 @@ def test_workspace_output_dir_unchanged(tmp_path):
     assert msg.startswith("# Wrote 1 Lakewatch rule(s) to")
     files = [p.name for p in tmp_path.iterdir()]
     assert len(files) == 1 and files[0].endswith(".yaml") and "revisions.yaml" not in files
+
+
+# --- hand-formatted revisions.yaml is preserved ---
+
+OTHER_ID = "6f1b9c8e-3c1a-4f0e-9a43-1d2e3f4a5b6c"
+
+
+def _two_rule_pack(out_dir, description="d"):
+    rules = (_rule().replace("status: test", f"status: test\ndescription: {description}"),
+             _rule(title="Second Rule", rule_id=OTHER_ID))
+    _pack_convert(out_dir, collection=_collection(*rules))
+
+
+def _styled_revisions(out_dir):
+    """Run a conversion, then rewrite revisions.yaml in the hand-formatted crowdstrike style."""
+    import hashlib
+    _two_rule_pack(out_dir)
+    names = sorted(p.name for p in Path(out_dir).iterdir() if p.is_dir())
+    hashes = {n: hashlib.sha256((Path(out_dir) / n / f"{n}.yaml").read_bytes()).hexdigest() for n in names}
+    first, second = names
+    text = (f"rules:\n- name: {first}\n  latestVersion: 3\n  contentHash: {hashes[first]}\n"
+            f"  versionNote: >\n    v3: first line of the note,\n    second line of the note.\n"
+            f"- name: {second}\n  latestVersion: 1\n  contentHash: {hashes[second]}\n")
+    (Path(out_dir) / "revisions.yaml").write_text(text)
+    return first, second, hashes, text
+
+
+def test_revisions_preserves_hand_formatting(tmp_path):
+    _, _, _, text = _styled_revisions(tmp_path)
+    _two_rule_pack(tmp_path)
+    assert (tmp_path / "revisions.yaml").read_text() == text
+
+
+def test_revisions_bump_drops_only_that_note(tmp_path):
+    import hashlib
+    first, second, hashes, text = _styled_revisions(tmp_path)
+    _two_rule_pack(tmp_path, description="changed")
+    new_hash = hashlib.sha256((tmp_path / first / f"{first}.yaml").read_bytes()).hexdigest()
+    assert new_hash != hashes[first]
+    expected = (f"rules:\n- name: {first}\n  latestVersion: 4\n  contentHash: {new_hash}\n"
+                + text[text.index(f"- name: {second}"):])
+    assert (tmp_path / "revisions.yaml").read_text() == expected
+
+
+def test_revisions_new_entry_appended_in_style(tmp_path):
+    import hashlib
+    first, second, hashes, text = _styled_revisions(tmp_path)
+    (tmp_path / second / f"{second}.yaml").unlink()
+    (tmp_path / second).rmdir()
+    text = text[:text.index(f"- name: {second}")]
+    (tmp_path / "revisions.yaml").write_text(text)
+    _two_rule_pack(tmp_path)
+    new_hash = hashlib.sha256((tmp_path / second / f"{second}.yaml").read_bytes()).hexdigest()
+    assert (tmp_path / "revisions.yaml").read_text() == (
+        text + f"- name: {second}\n  latestVersion: 1\n  contentHash: {new_hash}\n")
+
+
+def test_revisions_unsupported_layout_fails(tmp_path):
+    _pack_convert(tmp_path)
+    name = _pack_name(tmp_path)
+    flow = f"rules: [{{name: {name}, latestVersion: 1, contentHash: stale}}]\n"
+    (tmp_path / "revisions.yaml").write_text(flow)
+    with pytest.raises(SigmaConfigurationError, match="unsupported revisions.yaml layout"):
+        _pack_convert(tmp_path)
+    assert (tmp_path / "revisions.yaml").read_text() == flow
