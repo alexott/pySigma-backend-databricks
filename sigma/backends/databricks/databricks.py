@@ -1274,9 +1274,7 @@ class DatabricksBackend(TextQueryBackend):
         """Return the SELECT list: ``*``, the entity as sigma_entity, then the select entries."""
         assert self._current_profile is not None
         profile, schema, _ = self._current_profile
-        reserved = self._schema_columns(schema)
-        if profile.entity:
-            reserved.add("sigma_entity")
+        reserved = self._schema_columns(schema) | {"sigma_entity"}
         seen: Set[str] = set()
         for alias in select:
             if not PLACEHOLDER_IDENTIFIER.match(alias) or alias.lower() in reserved | seen:
@@ -1307,8 +1305,11 @@ class DatabricksBackend(TextQueryBackend):
         profile, schema, _ = self._current_profile
         block = self._current_block
         fail = f"output value {value} {{}} (profile {profile.profile})"
-        mappings = {k.lower(): m for k, m in profile.mappings_for(block).items() if not k.endswith(".*")}
-        mapping = mappings.get(value.lower())
+        mappings = {k: m for k, m in profile.mappings_for(block).items() if not k.endswith(".*")}
+        # Like the pipeline: an exact-case key, or any case only under lenient ``event_data: any``.
+        mapping = mappings.get(value)
+        if mapping is None and profile.event_data_any(block):
+            mapping = next((m for k, m in mappings.items() if k.lower() == value.lower()), None)
         candidate = value
         if mapping is not None:
             if mapping.transforms or mapping.select is not None:

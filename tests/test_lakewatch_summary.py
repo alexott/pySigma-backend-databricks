@@ -1,5 +1,6 @@
 """Tests for the default summary, the sigma_entity column and output-expression resolution."""
 
+import dataclasses
 import json
 import warnings
 from pathlib import Path
@@ -54,6 +55,30 @@ def _convert(parser, title="Encoded PowerShell", **options):
         queries = backend.convert_rule(_rule(parser, title), "lakewatch")
     assert len(queries) == 1
     return json.loads(queries[0])
+
+
+def _resolver_for(parser, product, service_line):
+    """Return a backend set up for a rule of the given logsource."""
+    backend = _backend(parser)
+    rule = SigmaCollection.from_yaml(
+        f"""
+title: T
+status: test
+logsource:
+    product: {product}
+    {service_line}
+detection:
+    sel:
+        EventID: 1
+    condition: sel
+"""
+    ).rules[0]
+    backend._parsed_setup()
+    profile, schema, table = next(s for s in backend._selected if s[0].profile == parser)
+    backend._current_profile = (profile, schema, table)
+    backend._current_block = profile.block_for(rule.logsource)
+    backend._current_rule = rule
+    return backend
 
 
 def _resolver(parser):
@@ -184,3 +209,26 @@ def test_output_helpers():
     assert placeholders("x {a} y { b } {c}") == ["a", "b", "c"]
     assert PLACEHOLDER_IDENTIFIER.match("abc_1")
     assert not PLACEHOLDER_IDENTIFIER.match("a.b")
+
+
+def test_select_alias_sigma_entity_clashes_without_entity():
+    backend = _resolver(SYSMON)
+    profile, schema, table = backend._current_profile
+    backend._current_profile = (dataclasses.replace(profile, entity=None), schema, table)
+    with pytest.raises(
+        SigmaConversionError,
+        match=f"select alias sigma_entity clashes with an output column of profile {SYSMON}",
+    ):
+        backend._select_list({"sigma_entity": "Computer"})
+
+
+def test_resolve_output_expr_case_sensitive_without_any():
+    backend = _resolver(CS)
+    with pytest.raises(SigmaConversionError, match=rf"commandline.*profile {CS}"):
+        backend._resolve_output_expr("commandline")
+
+
+def test_resolve_output_expr_case_insensitive_with_any():
+    backend = _resolver_for("windows_application", "windows", "service: application")
+    assert backend._current_block.event_data == "any"
+    assert backend._resolve_output_expr("computer") == backend._resolve_output_expr("Computer")
