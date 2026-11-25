@@ -18,8 +18,7 @@ It supports the following output formats:
 * default: plain Databricks/Apache Spark SQL queries
 * dbsql: Databricks SQL queries with rules metadata (title, status) embedded as comment
 * detection_yaml: Yaml markup for my own detection framework
-* lakewatch: Lakewatch detection rules in the v1 format (`kind: Rule` YAML), batch by default
-* lakewatch_v2: Lakewatch detection rules in the v2 (Beta) format, batch by default
+* lakewatch: Lakewatch detection rules (v2 format, Unity Catalog governed), batch by default
 
 ## CIDR Matching
 
@@ -128,13 +127,14 @@ Generates: `raw rlike '.*evil(cmd|powershell).*'`
 
 ## Lakewatch Output
 
-Generate [Lakewatch](https://docs.databricks.com) detection rules (`kind: Rule` YAML)
-from Sigma rules. Intended to run **after** the
+Generate [Lakewatch](https://docs.databricks.com) detection rules from Sigma rules. Each rule is a
+Unity Catalog governed resource. With OCSF, the backend runs **after** the
 [OCSF pipeline](https://github.com/SigmaHQ/pySigma-pipeline-ocsf), which normalizes
 fields and injects the OCSF class, so the backend can pick the gold table.
 
 ```bash
-sigma convert -t databricks -f lakewatch -p ocsf rules/ -o detections.yaml
+sigma convert -t databricks -f lakewatch -p ocsf \
+  -O catalog_name=main -O schema_name=security -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
 ```
 
 Multiple rules are emitted as separate `---` documents in one file.
@@ -144,55 +144,26 @@ Multiple rules are emitted as separate `---` documents in one file.
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `table_name` | *(derived)* | FROM table. If unset, derived from the OCSF class the pipeline injected; error if neither is available. |
-| `lookback` | `25 HOUR` | Batch window (Spark interval syntax) in the `time >= now - INTERVAL <lookback>` predicate. |
-| `schedule` | `24h` | `spec.schedule.atLeastEvery` (Lakewatch duration). |
-| `compute_group` | `automatic` | `spec.schedule.computeGroup`. |
-| `default_fidelity` | *(from status)* | Override `spec.metadata.fidelity`. |
-| `default_category` | `Static Signature` | `spec.metadata.category`. |
-
-```bash
-sigma convert -t databricks -f lakewatch -p ocsf \
-  -O table_name=main.security.authentication -O lookback="1 DAY" -O schedule=12h rule.yml
-```
-
-Sigma metadata maps to Lakewatch as: `title`→`displayName`, `description`→`comment`/`objective`,
-`level`→`severity`, `status`→`fidelity`, and `attack.*` tags→`mitre`. Only batch rules are
-generated (streaming is future work).
-
-### Lakewatch v2 format
-
-The `lakewatch` format generates rules in the v1 format. Use `-f lakewatch_v2` for the v2 (Beta)
-format, where each rule is a Unity Catalog governed resource:
-
-```bash
-sigma convert -t databricks -f lakewatch_v2 -p ocsf \
-  -O catalog_name=main -O schema_name=security -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
-```
-
-The `table_name`, `schedule`, `default_fidelity` and `default_category` options work as for v1.
-`compute_group` is ignored, with a warning, because the v2 API removed `schedule.compute_group`.
-The v2 format has these additional options:
-
-| Option | Default | Meaning |
-|--------|---------|---------|
+| `schedule` | `24h` | Rule schedule (Lakewatch duration). |
+| `default_fidelity` | *(from status)* | Override the rule fidelity. Accepts both `Investigative` and `FIDELITY_INVESTIGATIVE`. |
+| `default_category` | `Static Signature` | Rule category. |
 | `catalog_name` | *(required)* | `catalog_name` of the rule, also used as `batch.sql.default_catalog_name` to resolve unqualified tables. Conversion fails if unset or empty. |
 | `schema_name` | *(required)* | `schema_name` of the rule, also used as `batch.sql.default_schema_name`. Conversion fails if unset or empty. |
 | `warehouse_id` | *(none)* | `batch.warehouse_id`: SQL warehouse that runs the rule. The server rejects enabled batch rules without one, so conversion warns if it's unset. |
 | `extend_lookback` | *(none)* | `timerange.extend_lookback`: widens the time window beyond the schedule. |
 | `enabled` | `false` | `schedule.enabled`. Converted rules are disabled by default so that they can be reviewed and tested first; set `-O enabled=true` to schedule them immediately. |
 
-Differences from v1:
+Only batch rules are generated (streaming is future work). Sigma metadata maps to Lakewatch as
+follows:
 
-* The SQL filters on `IN_TIMERANGE(time)`, which follows the schedule, instead of a fixed
-  `lookback` interval (the `lookback` option is ignored).
+* The SQL filters on `IN_TIMERANGE(time)`, which follows the schedule.
 * `rule_name` is derived from the title in snake_case (e.g. `Encoded PowerShell` →
   `encoded_powershell`). Duplicate names within one output get `_2`, `_3`, … suffixes.
 * Up to three Sigma `references` (each up to 512 characters) are emitted as `references`.
-* Fidelity values use the v2 enum names. Converted rules haven't been tested against your data, so
+* Fidelity values use the enum names. Converted rules haven't been tested against your data, so
   Sigma `stable` maps to `FIDELITY_INVESTIGATIVE` and every other status to `FIDELITY_DEVELOPMENT`.
-  `default_fidelity` overrides this and accepts both `Investigative` and `FIDELITY_INVESTIGATIVE`.
-* Rules are emitted with `schedule.enabled: false` (see the `enabled` option), and without
-  `schedule.compute_group`.
+  `default_fidelity` overrides this.
+* Rules are emitted with `schedule.enabled: false` (see the `enabled` option).
 * `output.event_time_column` is `time`.
 * `description` is cut to 4096 characters and `objective` to 65536. Cut values end with `...`.
 * Sigma `falsepositives` become the `runbook` ("Known false positives: …", up to 4096 characters).
@@ -200,15 +171,25 @@ Differences from v1:
   `sigma_tags` (tags other than ATT&CK) and `converter_version`. Values are cut to 256 characters,
   and empty values are left out.
 
-### Lakewatch v2 parsed tables
+### Breaking changes in 0.2.0
 
-**Breaking change in the next release (0.2.0).** For `lakewatch_v2`, parsed-table mode is now the
-default. Rules are converted against the columns of a Lakewatch parser's table instead of OCSF
-gold tables. `-f lakewatch_v2` without `-p ocsf` therefore needs `-O parsers=...`. To keep the
-previous OCSF behavior, pass `-O ocsf=true` (or `-p ocsf`, which still selects OCSF).
+* **Parsed tables are the default.** Rules are converted against the columns of a Lakewatch
+  parser's table instead of OCSF gold tables. `-f lakewatch` without `-p ocsf` therefore needs
+  `-O parsers=...`. To keep the OCSF behavior, pass `-O ocsf=true` (or `-p ocsf`, which still
+  selects OCSF). See [Lakewatch parsed tables](#lakewatch-parsed-tables).
+* The v1 format (`kind: Rule` YAML) was removed.
+* The `lakewatch_v2` format was renamed to `lakewatch`. There is no alias: `-f lakewatch_v2` fails
+  with the unknown-format error.
+* The `compute_group` and `lookback` options were removed. Passing either one is now a
+  configuration error. To widen the time window, use `-O extend_lookback=...`.
+* The failure message for keywords changed.
+* `fieldref|startswith`, `fieldref|endswith` and `fieldref|contains` now convert in every format.
+* The SQL for named entries has a single-object fallback.
+
+### Lakewatch parsed tables
 
 ```bash
-sigma convert -s -t databricks -f lakewatch_v2 -O parsers=aws_cloudtrail \
+sigma convert -s -t databricks -f lakewatch -O parsers=aws_cloudtrail \
   -O table_name=main.sec.aws_cloudtrail -O catalog_name=main -O schema_name=sec \
   -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
 ```
@@ -228,7 +209,7 @@ Each selected parser produces one rule per Sigma rule, named `<rule_name>__<prof
 By default all rules go into one multi-document YAML file (`-o file.yaml`, or stdout). With
 `-O output_dir=<dir>` each rule is written to its own `<dir>/<rule_name>.yaml`, and only a
 one-line summary is printed. Files with the same name are overwritten, and other files in the
-directory are left as they are. `output_dir` works only with `lakewatch_v2`. Don't use the
+directory are left as they are. `output_dir` works only with the `lakewatch` format. Don't use the
 `--output-dir`/`-od` option of sigma-cli with Lakewatch formats: it writes only the bare SQL condition
 of each rule, not the rule documents.
 
@@ -542,9 +523,8 @@ according to the OCSF attribute types (tables bundled from OCSF 1.9.0, refresh t
 * Unbound keywords search the OCSF `raw_data` field unless `raw_log_field` is set explicitly.
 
 This is controlled by the `ocsf` option (`-O ocsf=true|false|auto`). With the default `auto` it is
-enabled for the `lakewatch` format and for rules processed by the OCSF pipeline (`-p ocsf`). For
-`lakewatch_v2` it is enabled only by `-O ocsf=true` or an OCSF pipeline; otherwise
-[parsed tables](#lakewatch-v2-parsed-tables) are used.
+enabled for rules processed by the OCSF pipeline (`-p ocsf`). For `lakewatch` without OCSF,
+[parsed tables](#lakewatch-parsed-tables) are used.
 
 ## Maintainer
 
