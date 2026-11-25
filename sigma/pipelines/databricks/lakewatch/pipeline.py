@@ -103,6 +103,7 @@ class ProfileFieldMapping(FieldMappingTransformation):
     special: Dict[str, FieldMapping] = field(default_factory=dict)
     profile_id: str = ""
     any_column: Optional[str] = None
+    prefixes: Tuple[str, ...] = ()
 
     def _canonical(self, field: Optional[str]) -> Optional[str]:
         """Return the explicit mapping key equal to ``field`` when case is ignored, else ``field``."""
@@ -141,7 +142,9 @@ class ProfileFieldMapping(FieldMappingTransformation):
                 if len(dsts) == 1:
                     return dsts[0] + rest
                 return [dst + rest for dst in dsts]
-        if self.any_column is not None and field not in self.special:
+        if self.any_column is not None and field not in self.special and not any(
+            field.startswith(p) and len(field) > len(p) for p in self.prefixes
+        ):
             target = f"{self.any_column}[{field}]"
             self._warn_any(field, target)
             return target
@@ -157,7 +160,7 @@ class ProfileFieldMapping(FieldMappingTransformation):
         if field != detection_item.field:
             detection_item.field = field
         for value in detection_item.value:
-            if isinstance(value, SigmaFieldReference) and self._transformed(value.field):
+            if isinstance(value, SigmaFieldReference) and self._transformed(self._canonical(value.field)):
                 # Name the rule's field; the referenced one is the transformed field.
                 self._fail(
                     str(field), f"field reference to transformed field {value.field} is not supported"
@@ -295,6 +298,7 @@ def build_profile_pipeline(
                 special=special,
                 profile_id=pid,
                 any_column=any_column,
+                prefixes=tuple(prefix_maps),
             ),
             identifier=f"lakewatch_{pid}_fields",
         )

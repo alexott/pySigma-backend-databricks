@@ -530,7 +530,7 @@ def test_any_case_insensitive_explicit():
 
 def test_any_rejects_brackets():
     profile, block = make_top(block_extra={"event_data": "any"})
-    with pytest.raises(SigmaTransformationError, match="is not mapped"):
+    with pytest.raises(SigmaTransformationError, match=r"field a\[b\] is not mapped by profile p$"):
         run(profile, block, "    sel:\n        a[b]: x\n    condition: sel")
 
 
@@ -544,5 +544,24 @@ def test_any_fieldref_maps():
 
 def test_unmapped_hint():
     profile, block = make_top({"unmapped_hint": "header only"})
-    with pytest.raises(SigmaTransformationError, match="is not mapped by profile p1?; header only"):
+    with pytest.raises(SigmaTransformationError, match=r"field Other is not mapped by profile p; header only$"):
         run(profile, block, "    sel:\n        Other: x\n    condition: sel")
+
+
+def test_any_identity_prefix_not_overridden():
+    import warnings
+
+    profile, block = make_top(block_extra={"event_data": "any"}, fields={"x.*": "x.*"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, r = run(profile, block, "    sel:\n        x.y: v\n    condition: sel")
+    assert r.detection.detections["sel"].detection_items[0].field == "x.y"
+
+
+def test_fieldref_to_transformed_field_case_insensitive_fails():
+    profile, block = make_top(
+        block_extra={"event_data": "any"},
+        fields={"Image": {"field": "a", "transform": "basename"}},
+    )
+    with pytest.raises(SigmaTransformationError, match="transformed field"):
+        run(profile, block, "    sel:\n        Other|fieldref: image\n    condition: sel")
