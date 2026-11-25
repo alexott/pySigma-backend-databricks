@@ -220,15 +220,48 @@ class CaseTransform(Transform):
         return [(targets, string.upper() if self.mode == "upper" else string.lower())]
 
 
-class BasenameTransform(_NoParams):
-    """Keep only the last path component."""
+def _optional_bool(kind: str, params: Dict[str, Any], name: str) -> bool:
+    value = params.get(name, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"transform {kind}: {name} must be a boolean")
+    return value
+
+
+class BasenameTransform(Transform):
+    r"""Keep only the last path component.
+
+    With ``also_suffix`` a concrete base name ``N`` also yields endswith ``\N``, which matches a
+    column holding the full path: with the separator in front it means "base name equals N".
+    """
 
     kind = "basename"
     _CANNOT = "basename cannot express a pattern on the directory"
 
+    def __init__(self, also_suffix: bool = False):
+        """Store the validated parameters."""
+        self.also_suffix = also_suffix
+
+    @classmethod
+    def from_params(cls, params: Any) -> "BasenameTransform":
+        """Build the transform from validated profile parameters."""
+        if params is None:
+            return cls()
+        params = _require_params(cls.kind, params)
+        _require_keys(cls.kind, params, [], ["also_suffix"])
+        return cls(_optional_bool(cls.kind, params, "also_suffix"))
+
     def apply(self, value, targets, *, field, all_values):
         """Apply the transform to one value."""
-        parts = _string(value).s
+        name = self._base_name(_string(value))
+        if name is None:
+            return [(targets, value)]
+        if not self.also_suffix:
+            return [(targets, name)]
+        return [(targets, name), (targets, _make([_WILD, "\\", *name.s]))]
+
+    def _base_name(self, value: SigmaString) -> Optional[SigmaString]:
+        """Return the base name, or None for a value kept as is (empty, or *cmd.exe without a separator)."""
+        parts = value.s
         index = pos = -1
         for i, part in enumerate(parts):
             if isinstance(part, str):
@@ -240,7 +273,8 @@ class BasenameTransform(_NoParams):
             # A trailing wildcard (startswith, contains) matches the directory part of a full path.
             if len(parts) > 1 and parts[-1] is _WILD:
                 raise TransformFailure(self._CANNOT)
-            return [(targets, value)]
+            # A plain name is the base name; an endswith shape already matches both forms.
+            return value if len(parts) == 1 and isinstance(parts[0], str) else None
         head: List[_Part] = [*parts[:index], str(parts[index])[: pos + 1]]
         tail: List[_Part] = [str(parts[index])[pos + 1 :], *parts[index + 1 :]]
         tail = [p for p in tail if p != ""]
@@ -250,15 +284,15 @@ class BasenameTransform(_NoParams):
             warnings.warn(
                 "basename: directory dropped; the match is broader than the rule's",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
         if any(not isinstance(p, str) for p in tail):
             warnings.warn(
                 "basename: a wildcard in the file name may span directories; the match is narrower than the rule's",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
-        return [(targets, _make(tail))]
+        return _make(tail)
 
 
 class PathPrefixTransform(Transform):
@@ -266,15 +300,17 @@ class PathPrefixTransform(Transform):
 
     kind = "path_prefix"
 
-    def __init__(self, rules: Tuple[Tuple["re.Pattern[str]", str], ...]):
+    def __init__(self, rules: Tuple[Tuple["re.Pattern[str]", str], ...], keep_original: bool = False):
         """Store the validated parameters."""
         self.rules = rules
+        self.keep_original = keep_original
 
     @classmethod
     def from_params(cls, params: Any) -> "PathPrefixTransform":
         """Build the transform from validated profile parameters."""
         params = _require_params(cls.kind, params)
-        _require_keys(cls.kind, params, ["rewrite"])
+        _require_keys(cls.kind, params, ["rewrite"], ["keep_original"])
+        keep_original = _optional_bool(cls.kind, params, "keep_original")
         rewrite = params["rewrite"]
         if not isinstance(rewrite, list) or not rewrite:
             raise ValueError("transform path_prefix: rewrite must be a non-empty list")
@@ -289,7 +325,7 @@ class PathPrefixTransform(Transform):
             except re.error as e:
                 raise ValueError(f"transform path_prefix: bad regex '{rule['from']}': {e}") from e
             rules.append((pattern, rule["to"]))
-        return cls(tuple(rules))
+        return cls(tuple(rules), keep_original)
 
     def apply(self, value, targets, *, field, all_values):
         """Apply the transform to one value."""
@@ -303,7 +339,10 @@ class PathPrefixTransform(Transform):
             m = pattern.match(parts[0])
             if m:
                 new = _from_text(to)
-                return [(targets, _make([*new.s, parts[0][m.end() :], *parts[1:]]))]
+                rewritten = _make([*new.s, parts[0][m.end() :], *parts[1:]])
+                if self.keep_original:
+                    return [(targets, value), (targets, rewritten)]
+                return [(targets, rewritten)]
         return [(targets, value)]
 
 

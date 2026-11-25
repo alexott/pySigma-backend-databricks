@@ -9,9 +9,11 @@ profile: crowdstrike_fdr_event
 version: 1
 parser: crowdstrike_fdr_event
 transforms:
-  # FDR records Windows paths in NT device form: \Device\HarddiskVolumeN\...
+  # The dictionary gives Windows paths in NT device form (\Device\HarddiskVolumeN\...), but
+  # live FDR data also holds drive-letter paths (C:\...), so both forms are matched.
   devpath:
     path_prefix:
+      keep_original: true
       rewrite:
         - from: '[A-Za-z]:'
           to: '\Device\HarddiskVolume*'
@@ -45,9 +47,13 @@ logsources:
         field: event.ImageFileName
         transform: devpath
       CommandLine: event.CommandLine
+      # ParentBaseFileName is documented as a base name, but live data can hold a full path:
+      # match the base name exactly or as a \name suffix.
       ParentImage:
         field: event.ParentBaseFileName
-        transform: basename
+        transform:
+          basename:
+            also_suffix: true
       OriginalFileName: event.OriginalFilename
       ProcessId: event.RawProcessId
       # IntegrityLevel holds the numeric level (dictionary: LOW 0x1000 ... SYSTEM 0x4000).
@@ -127,8 +133,10 @@ logsources:
   - match:
       product: windows
       category: file_event
+    # FileCreateInfo: "generated when a file is created by a process" (Falcon Events Data
+    # Dictionary); live data delivers file creations as this event. It carries TargetFileName.
     conditions:
-      event_simpleName: [NewExecutableWritten, NewScriptWritten, GenericFileWritten, PeFileWritten]
+      event_simpleName: [NewExecutableWritten, NewScriptWritten, GenericFileWritten, PeFileWritten, FileCreateInfo]
     fields:
       TargetFilename:
         field: event.TargetFileName

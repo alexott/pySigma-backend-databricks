@@ -282,8 +282,8 @@ library and are configured in the profile:
 |-----------|------------|--------------|
 | `map` | `values: {from: to \| [to, ...]}`, `default: keep \| fail` (`fail`) | Replaces a value; a list becomes an OR. Keys are case-insensitive. |
 | `case` | `upper` or `lower` | Changes the case of string values. |
-| `basename` | none | `C:\dir\cmd.exe` and `*\cmd.exe` become `cmd.exe`; `*cmd.exe` is kept. Fails for patterns on the directory, such as `startswith`, or `contains` without a separator (`*Microsoft Office*`). |
-| `path_prefix` | `rewrite: [{from: <regex>, to: <prefix>}]` | Rewrites the start of a path, for example `C:` to `\Device\HarddiskVolume*`. Fails when a `from` match follows a leading wildcard (`*C:\...`). |
+| `basename` | none, or optional `also_suffix: true \| false` (`false`) | `C:\dir\cmd.exe` and `*\cmd.exe` become `cmd.exe`; `*cmd.exe` is kept. Fails for patterns on the directory, such as `startswith`, or `contains` without a separator (`*Microsoft Office*`). With `also_suffix`, a base name such as `cmd.exe` (also a plain `cmd.exe`) matches either exactly or as the suffix `*\cmd.exe`, for a column that holds a base name or a full path. |
+| `path_prefix` | `rewrite: [{from: <regex>, to: <prefix>}]`, optional `keep_original: true \| false` (`false`) | Rewrites the start of a path, for example `C:` to `\Device\HarddiskVolume*`. With `keep_original`, a rewritten value matches the original or the rewritten form. Fails when a `from` match follows a leading wildcard (`*C:\...`). |
 | `registry_path` | `hive: short \| long \| kernel`, optional `split: {key: <path>, value: <path>}` | Normalizes the hive name (`HKLM`, `HKEY_LOCAL_MACHINE`, `\REGISTRY\MACHINE`, ...) at the start of a value. Fails when a hive follows a leading wildcard (`*HKLM\SOFTWARE\...`). With `split`, see below. |
 | `hashes` | `algos: {MD5: <path>, SHA1: <path>, SHA256: <path>, IMPHASH: <path>}` | Routes `ALGO=digest` values (or a bare digest, by its length) to the column of the algorithm. |
 | `domain_user` | `{domain: <path>, user: <path>}` | Matches `DOMAIN\user` values, see below. |
@@ -364,8 +364,10 @@ Built-in profiles:
 
 `crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
 events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from
-the `event` VARIANT. Windows paths are rewritten to the NT device form
-(`C:` becomes `\Device\HarddiskVolume*`). Its limitations:
+the `event` VARIANT. Live FDR data holds Windows paths both with drive letters and in the NT
+device form, so a path with a drive letter matches either form (`C:\Windows\` also matches
+`\Device\HarddiskVolume*\Windows\`). `file_event` includes `FileCreateInfo`, the event live
+data uses for file creations. Its limitations:
 
 * `Details` matches only string registry values (`RegStringValue`). Sysmon-style numeric and
   binary values (`DWORD (0x...)`, `QWORD (0x...)`, `Binary Data`) fail the rule.
@@ -379,7 +381,8 @@ the `event` VARIANT. Windows paths are rewritten to the NT device form
 * Drive letters (`C:`) are rewritten only at the start of a value. A pattern with a drive letter
   later in the value, such as `Image|contains: 'C:\Users\'`, fails the rule.
 * `ParentImage` matches the parent's base name (`ParentBaseFileName`), so a full parent path
-  drops its directory with a warning. `ParentCommandLine`, `ParentProcessId` (FDR's is a Falcon
+  drops its directory with a warning. As live data can hold a full path there, the base name is
+  matched exactly or as a `\name` suffix. `ParentCommandLine`, `ParentProcessId` (FDR's is a Falcon
   process id), `User`, `CurrentDirectory`, `Description`, `Product` and `Company` aren't
   supported.
 

@@ -338,3 +338,57 @@ def test_expansion_message():
 
     with pytest.raises(TransformFailure, match=r"^expanded values \(windash/base64offset\) are not supported$"):
         run("basename", SigmaExpansion([SigmaString("a"), SigmaString("b")]))
+
+
+DEVPATH_KEEP = {
+    "path_prefix": {"rewrite": [{"from": "[A-Za-z]:", "to": r"\Device\HarddiskVolume*"}], "keep_original": True}
+}
+
+
+def _strs(alternatives):
+    return [str(v) for _, v in alternatives]
+
+
+def test_path_prefix_keep_original():
+    assert _strs(run(DEVPATH_KEEP, SigmaString(r"C:\x\y.exe"))) == [r"C:\x\y.exe", r"\Device\HarddiskVolume*\x\y.exe"]
+    assert _strs(run(DEVPATH_KEEP, SigmaString(r"*\y.exe"))) == [r"*\y.exe"]
+    # The drive letter inside a leading-wildcard pattern still fails.
+    with pytest.raises(TransformFailure, match="cannot be rewritten"):
+        run(DEVPATH_KEEP, SigmaString(r"*C:\Users\*"))
+
+
+def test_path_prefix_keep_original_must_be_bool():
+    with pytest.raises(ValueError, match="keep_original"):
+        parse_transform({"path_prefix": {"rewrite": [{"from": "C:", "to": "D:"}], "keep_original": "yes"}}, {})
+
+
+SUFFIX = {"basename": {"also_suffix": True}}
+
+
+def test_basename_also_suffix():
+    with pytest.warns(UserWarning, match="directory dropped"):
+        assert _strs(run(SUFFIX, SigmaString(r"C:\x\cmd.exe"))) == ["cmd.exe", r"*\cmd.exe"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _strs(run(SUFFIX, SigmaString(r"*\cmd.exe"))) == ["cmd.exe", r"*\cmd.exe"]
+        assert _strs(run(SUFFIX, SigmaString("cmd.exe"))) == ["cmd.exe", r"*\cmd.exe"]
+        # An endswith value without a separator already matches both forms.
+        assert _strs(run(SUFFIX, SigmaString("*cmd.exe"))) == ["*cmd.exe"]
+    alternatives = run(SUFFIX, SigmaString(r"*\cmd.exe"))
+    assert alternatives[1][1].s[0] is SpecialChars.WILDCARD_MULTI
+    with pytest.warns(UserWarning, match="may span directories"):
+        assert _strs(run(SUFFIX, SigmaString(r"*\py*.exe"))) == ["py*.exe", r"*\py*.exe"]
+    with pytest.raises(TransformFailure, match="basename cannot express"):
+        run(SUFFIX, SigmaString("cmd*"))
+
+
+def test_basename_params():
+    assert len(parse_transform("basename", {})) == 1
+    assert len(parse_transform({"basename": {}}, {})) == 1
+    assert len(parse_transform({"basename": {"also_suffix": False}}, {})) == 1
+    with pytest.raises(ValueError, match="unknown parameter"):
+        parse_transform({"basename": {"nope": True}}, {})
+    with pytest.raises(ValueError, match="also_suffix"):
+        parse_transform({"basename": {"also_suffix": 1}}, {})
+    # Without also_suffix the result is a single alternative, as before.
+    assert _strs(run("basename", SigmaString("cmd.exe"))) == ["cmd.exe"]

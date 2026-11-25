@@ -93,7 +93,8 @@ def test_cs_image_startswith_device_path():
         "try_variant_get(event, '$.ImageFileName', 'string') rlike "
         "'(?isu)^\\\\\\\\Device\\\\\\\\HarddiskVolume.*\\\\\\\\Users\\\\\\\\.*$'"
     ) in sql
-    assert "C:" not in sql
+    # The drive form is kept too: live FDR data holds both.
+    assert "startswith(lower(try_variant_get(event, '$.ImageFileName', 'string')), lower('C:\\\\Users\\\\'))" in sql
 
 
 def test_cs_network_initiated():
@@ -232,7 +233,9 @@ def test_cs_file_event_device_path():
         "try_variant_get(event, '$.TargetFileName', 'string') rlike "
         "'(?isu)^\\\\\\\\Device\\\\\\\\HarddiskVolume.*\\\\\\\\Users\\\\\\\\.*$'"
     ) in sql
-    assert _names_selected(sql, ["NewExecutableWritten", "NewScriptWritten", "GenericFileWritten", "PeFileWritten"])
+    assert _names_selected(
+        sql, ["NewExecutableWritten", "NewScriptWritten", "GenericFileWritten", "PeFileWritten", "FileCreateInfo"]
+    )
 
 
 def test_cs_dns_query_name():
@@ -297,6 +300,27 @@ def test_cs_parent_image_contains_fails():
     msg = "field ParentImage: transform basename: basename cannot express"
     with pytest.raises(SigmaTransformationError, match=msg):
         _sql(CS, "windows", "process_creation", _sel("ParentImage|contains", "tomcat"))
+
+
+def test_cs_image_startswith_drive_and_device():
+    sql = _sql(CS, "windows", "process_creation", _sel("Image|startswith", "C:\\Windows\\"))
+    drive = "startswith(lower(try_variant_get(event, '$.ImageFileName', 'string')), lower('C:\\\\Windows\\\\'))"
+    device = (
+        "try_variant_get(event, '$.ImageFileName', 'string') rlike "
+        "'(?isu)^\\\\\\\\Device\\\\\\\\HarddiskVolume.*\\\\\\\\Windows\\\\\\\\.*$'"
+    )
+    assert f"{drive} OR {device}" in sql
+
+
+def test_cs_parent_image_base_name_or_full_path():
+    sql = _sql(CS, "windows", "process_creation", _sel("ParentImage|endswith", "\\explorer.exe"))
+    col = "lower(try_variant_get(event, '$.ParentBaseFileName', 'string'))"
+    assert f"{col} = lower('explorer.exe') OR endswith({col}, lower('\\\\explorer.exe'))" in sql
+
+
+def test_cs_file_event_file_create_info():
+    sql = _sql(CS, "windows", "file_event", _sel("TargetFilename|endswith", ".dll"))
+    assert _names_selected(sql, ["FileCreateInfo"])
 
 
 def test_cs_cased_transformed_field_fails():
