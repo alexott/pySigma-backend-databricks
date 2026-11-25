@@ -162,3 +162,26 @@ def test_last_report_is_plain_yaml_data():
     backend = _backend(SYSMON)
     backend.convert(_rules(SYSMON_RULE), "lakewatch")
     yaml.safe_dump(backend.last_report)
+
+
+def test_capture_warnings_reemits_when_block_raises():
+    with pytest.warns(UserWarning, match="before the error"):
+        with pytest.raises(RuntimeError):
+            with capture_warnings():
+                warnings.warn("before the error", UserWarning, stacklevel=1)
+                raise RuntimeError("fatal")
+
+
+def test_ocsf_errors_are_per_result():
+    bad = _rule_yaml(SYSMON_LS, "sel:\n    Image|expand: '%foo%'", title="Bad Rule")
+    good = _rule_yaml(SYSMON_LS, "sel:\n    Image: x", title="Good Rule").replace("000000000001", "000000000002")
+    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", ocsf=True,
+                                collect_errors=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        backend.convert(_rules(bad + "\n---\n" + good), "lakewatch")
+    assert backend.errors
+    first, second = (r["results"][0] for r in backend.last_report["rules"])
+    assert first["status"] == "failed"
+    assert second["status"] == "converted"
+    assert second["reason"] is None

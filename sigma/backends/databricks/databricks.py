@@ -485,6 +485,7 @@ class DatabricksBackend(TextQueryBackend):
         # OCSF-mode Lakewatch conversion: one result without a profile.
         key, result = self._report.result(rule, None)
         self._current_report_key = key
+        first_error = len(self.errors)
         try:
             with capture_warnings() as caught:
                 try:
@@ -493,7 +494,7 @@ class DatabricksBackend(TextQueryBackend):
                     self._record_warnings(result, caught)
         finally:
             self._current_report_key = None
-        self._record_errors(result, rule, 0)
+        self._record_errors(result, rule, first_error)
         return queries
 
     @staticmethod

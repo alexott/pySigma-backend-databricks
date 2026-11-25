@@ -19,15 +19,19 @@ class LakewatchApproximateWarning(UserWarning):
 @contextmanager
 def capture_warnings(reemit: bool = True) -> Iterator[List[warnings.WarningMessage]]:
     """Record the warnings raised inside the block; re-emit them on exit unless ``reemit`` is False."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        try:
-            yield caught
-        finally:
-            recorded = list(caught)
-    if reemit:
-        for w in recorded:
-            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+    recorded: List[warnings.WarningMessage] = []
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                yield caught
+            finally:
+                recorded.extend(caught)
+    finally:
+        # Outside catch_warnings, so that the outer filters apply; also when the block raised.
+        if reemit:
+            for w in recorded:
+                warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
 
 def _collect_fields(detection: Any, found: List[str]) -> None:
