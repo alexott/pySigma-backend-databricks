@@ -5,7 +5,7 @@ import json
 import re
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Pattern, Sequence, Tuple, Type, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, FrozenSet, List, Optional, Pattern, Sequence, Tuple, Type, Union
 
 import yaml
 from sigma.conditions import ConditionAND, ConditionFieldEqualsValueExpression, ConditionItem, ConditionNOT, ConditionOR
@@ -29,7 +29,7 @@ from sigma.types import (
     SpecialChars,
 )
 
-from .field_paths import FieldPath, UnknownFieldError, resolve_schema_path
+from .field_paths import FieldPath, UnknownFieldError, resolve_schema_path, split_join_field_name
 from .lakewatch_maps import (
     FIDELITY_MAP,
     SEVERITY_MAP,
@@ -317,6 +317,8 @@ class DatabricksBackend(TextQueryBackend):
         # on the first parsed-mode rule, and the one the current rule is converted for.
         self._selected: Optional[List[Tuple["Profile", ParserSchema, str]]] = None
         self._current_profile: Optional[Tuple["Profile", ParserSchema, str]] = None
+        # Targets of the current profile block's mappings with ``undeclared: true``.
+        self._current_undeclared: FrozenSet[str] = frozenset()
 
     @staticmethod
     def _parse_bool_option(name: str, value: Optional[Union[bool, str]]) -> Optional[bool]:
@@ -417,6 +419,12 @@ class DatabricksBackend(TextQueryBackend):
         """
         if path.entry is not None:
             return [], self._named_entry(path)
+        if path.join:
+            # Scalar parts (no arrays), each extracted as a string; an empty part is skipped.
+            parts = ", ".join(
+                f"nullif({self._render_path(part, SigmaString(''))[1]}, '')" for part in path.join
+            )
+            return [], f"concat_ws('{self.sql_quote_regex(path.join_sep)}', {parts})"
         levels: List[Tuple[str, str]] = []
         base: Optional[str] = None
         for depth, segments in enumerate(path.arrays):
@@ -464,6 +472,7 @@ class DatabricksBackend(TextQueryBackend):
                 self._check_parsed_field_reference(path, cond.value)
                 return super().convert_condition_field_eq_val(cond, state)
             self._check_parsed_struct(path, cond.field, cond.value)
+            self._warn_parsed_allowed(path, cond)
             cond = self._coerce_parsed_value(path, cond)
         if path is None or isinstance(cond.value, SigmaFieldReference):
             return super().convert_condition_field_eq_val(cond, state)
@@ -956,6 +965,7 @@ class DatabricksBackend(TextQueryBackend):
         finally:
             self.last_processing_pipeline = previous
             self._current_profile = None
+            self._current_undeclared = frozenset()
             self._current_rule = rule
         return results
 
@@ -977,6 +987,11 @@ class DatabricksBackend(TextQueryBackend):
         pipeline.vars["output_format"] = output_format
         self.last_processing_pipeline = pipeline
         self._current_profile = selected
+        self._current_undeclared = frozenset(
+            target
+            for mapping in selected[0].mappings_for(block).values() if mapping.undeclared
+            for target in mapping.targets
+        )
         rule_copy = copy.deepcopy(rule)
         self._current_rule = rule_copy
         first_error = len(self.errors)
@@ -997,11 +1012,28 @@ class DatabricksBackend(TextQueryBackend):
                     collected.rule = rule
 
     def _resolve_parsed_field(self, field: str) -> FieldPath:
-        """Resolve a field against the current profile's parser schema, failing closed."""
+        """Resolve a field against the current profile's parser schema, failing closed.
+
+        Keys not declared under a VARIANT are accepted only for targets of ``undeclared: true``
+        mappings, also for each part of a join field.
+        """
         assert self._current_profile is not None
         profile, schema, _ = self._current_profile
         try:
-            path = resolve_schema_path(schema, field)
+            allow_undeclared = field in self._current_undeclared
+            join = split_join_field_name(field)
+            if join is not None:
+                allow_undeclared = False
+                for part in join[1]:
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            resolve_schema_path(schema, part)
+                    except UnknownFieldError:
+                        if part not in self._current_undeclared:
+                            raise
+                        allow_undeclared = True
+            path = resolve_schema_path(schema, field, allow_undeclared)
         except UnknownFieldError as e:
             raise self._parsed_error(f"{e} (profile {profile.profile})") from None
         if path.whole_variant:
@@ -1036,6 +1068,11 @@ class DatabricksBackend(TextQueryBackend):
         """Field references are only supported between plain columns and STRUCT members."""
         assert self._current_profile is not None
         ref_path = self._resolve_parsed_field(ref.field)
+        if path.join or ref_path.join:
+            raise self._parsed_error(
+                "field references to joined fields are not supported "
+                f"(profile {self._current_profile[0].profile})"
+            )
         if any(p.arrays or p.json_path or p.entry is not None for p in (path, ref_path)):
             raise self._parsed_error(
                 "field references to nested ARRAY/VARIANT fields are not supported "
@@ -1049,6 +1086,25 @@ class DatabricksBackend(TextQueryBackend):
         return (
             self._struct_ref(None, self._resolve_parsed_field(field1).leaf),
             self._struct_ref(None, self._resolve_parsed_field(field2).leaf),
+        )
+
+    def _warn_parsed_allowed(self, path: FieldPath, cond: ConditionFieldEqualsValueExpression) -> None:
+        """Warn when a plain string or number can never match the field's declared values."""
+        assert self._current_profile is not None
+        value = cond.value
+        if path.allowed is None or not (
+            isinstance(value, SigmaNumber)
+            or (isinstance(value, SigmaString) and not value.contains_special())
+        ):
+            return
+        if str(value).lower() in {a.lower() for a in path.allowed}:
+            return
+        title = getattr(self._current_rule, "title", None)
+        warnings.warn(
+            f"rule '{title}': {cond.field} = '{value}' never matches parser "
+            f"{self._current_profile[0].parser}; allowed: {list(path.allowed)}",
+            UserWarning,
+            stacklevel=2,
         )
 
     @staticmethod

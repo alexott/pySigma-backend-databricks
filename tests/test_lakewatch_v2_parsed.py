@@ -21,7 +21,7 @@ SCHEMA = {
                 "eventName": {"type": "STRING", "storage": "column"},
                 "eventSource": {"type": "STRING", "storage": "column"},
                 "eventType": {"type": "STRING", "storage": "column"},
-                "EventID": {"type": "STRING", "storage": "column"},
+                "EventID": {"type": "STRING", "storage": "column", "allowed": ["1", "7"]},
                 "userIdentity": {"type": "VARIANT", "storage": "column"},
                 "userIdentity.arn": {"type": "STRING", "storage": "variant"},
                 "userIdentity.type": {"type": "STRING", "storage": "variant"},
@@ -42,6 +42,12 @@ SCHEMA = {
                 "Data": {"type": "ARRAY", "storage": "column", "element": "STRUCT"},
                 "Data[]._Name": {"type": "STRING", "storage": "struct"},
                 "Data[]._VALUE": {"type": "STRING", "storage": "struct"},
+                "event": {"type": "VARIANT", "storage": "column"},
+                "RegKey": {"type": "STRING", "storage": "column"},
+                "RegVal": {"type": "STRING", "storage": "column"},
+                "meta": {"type": "VARIANT", "storage": "column"},
+                "meta.a": {"type": "STRING", "storage": "variant"},
+                "hashes_arr": {"type": "ARRAY", "storage": "column", "element": "STRING"},
             },
         }
     }
@@ -861,3 +867,160 @@ def test_parsed_missing_catalog_or_schema_is_configuration_error(env, options):
     with pytest.raises(SigmaConfigurationError, match="catalog_name and schema_name"):
         backend.convert(SigmaCollection([_rule(SEL)]), "lakewatch_v2")
     assert backend.errors == []
+
+
+# --- joins, undeclared VARIANT keys, allowed values -----------------------------------------
+
+REG_SPLIT = {"TargetObject": {"transform": {"registry_path": {
+    "hive": "kernel", "split": {"key": "RegKey", "value": "RegVal"}}}}}
+REG_JOIN = "concat_ws('\\\\', nullif(RegKey, ''), nullif(RegVal, ''))"
+
+
+def test_join_rendering_startswith(env):
+    sql = _one(env, r"""    sel:
+        TargetObject|startswith: 'HKLM\SOFTWARE\'
+    condition: sel""", extra_fields=REG_SPLIT)
+    assert (
+        f"startswith(lower({REG_JOIN}), "
+        r"lower('\\REGISTRY\\MACHINE\\SOFTWARE\\'))"
+    ) in sql
+
+
+def test_join_variant_parts(env):
+    sql = _one(env, r"""    sel:
+        TargetObject|contains: 'CurrentVersion\Run'
+    condition: sel""", extra_fields={"TargetObject": {"transform": {"registry_path": {
+        "hive": "kernel", "split": {"key": "event.RegObjectName", "value": "event.RegValueName"}}}}})
+    assert "nullif(try_variant_get(event, '$.RegObjectName', 'string'), '')" in sql
+    assert "nullif(try_variant_get(event, '$.RegValueName', 'string'), '')" in sql
+
+
+def test_join_regex_or_optimization(env):
+    sql = _one(env, """    sel:
+        TargetObject|contains: [a, b, c]
+    condition: sel""", extra_fields=REG_SPLIT)
+    assert f"{REG_JOIN} rlike '(?iu).*(a|b|c).*'" in sql
+    assert sql.count("rlike") == 1
+
+
+def _parsed_backend(env, undeclared=()):
+    """Return a backend set up for direct calls in parsed mode with profile p_ct."""
+    backend = env(parsers="p_ct", table_name="ct_table")
+    backend._parsed_setup()
+    backend._current_profile = backend._selected[0]
+    backend._current_rule = None
+    backend._current_undeclared = frozenset(undeclared)
+    return backend
+
+
+def _convert_cond(backend, field, value):
+    from sigma.conditions import ConditionFieldEqualsValueExpression
+    from sigma.conversion.state import ConversionState
+
+    cond = ConditionFieldEqualsValueExpression(field, value)
+    return backend.convert_condition_field_eq_val(cond, ConversionState())
+
+
+def _reg_join():
+    from sigma.backends.databricks.field_paths import join_field_name
+
+    return join_field_name("\\", ["RegKey", "RegVal"])
+
+
+def test_join_number_bool_coerced_and_compare_cast(env):
+    from sigma.types import CompareOperators, SigmaBool, SigmaCompareExpression, SigmaNumber
+
+    backend = _parsed_backend(env)
+    assert _convert_cond(backend, _reg_join(), SigmaNumber(5)) == f"lower({REG_JOIN}) = lower('5')"
+    assert _convert_cond(backend, _reg_join(), SigmaBool(True)) == f"lower({REG_JOIN}) = lower('true')"
+    expr = SigmaCompareExpression(SigmaNumber(3), CompareOperators.GT)
+    assert _convert_cond(backend, _reg_join(), expr) == f"try_cast({REG_JOIN} AS DOUBLE) > 3"
+
+
+def test_join_null(env):
+    from sigma.types import SigmaNull
+
+    assert _convert_cond(_parsed_backend(env), _reg_join(), SigmaNull()) == f"{REG_JOIN} is null"
+
+
+@pytest.mark.parametrize("swap", [False, True])
+def test_join_fieldref_fails(env, swap):
+    from sigma.types import SigmaFieldReference
+
+    backend = _parsed_backend(env)
+    field, ref = (_reg_join(), "eventName")
+    if swap:
+        field, ref = ref, field
+    with pytest.raises(SigmaConversionError, match="field references to joined fields are not supported"):
+        _convert_cond(backend, field, SigmaFieldReference(ref))
+
+
+def test_undeclared_mapping_renders(env):
+    sql = _one(env, """    sel:
+        X: foo
+    condition: sel""", extra_fields={"X": {"field": "meta.custom", "undeclared": True}})
+    assert "lower(try_variant_get(meta, '$.custom', 'string')) = lower('foo')" in sql
+
+
+def test_undeclared_needs_mapping_flag(env):
+    backend = _parsed_backend(env)
+    with pytest.raises(SigmaConversionError, match="'custom' is not declared under 'meta'"):
+        backend._resolve_parsed_field("meta.custom")
+    backend._current_undeclared = frozenset({"meta.custom"})
+    assert backend._resolve_parsed_field("meta.custom").json_path == ("custom",)
+
+
+def test_undeclared_join_part(env):
+    from sigma.backends.databricks.field_paths import join_field_name
+
+    backend = _parsed_backend(env)
+    name = join_field_name("\\", ["RegKey", "meta.custom"])
+    with pytest.raises(SigmaConversionError, match="custom"):
+        backend._resolve_parsed_field(name)
+    backend._current_undeclared = frozenset({"meta.custom"})
+    path = backend._resolve_parsed_field(name)
+    assert path.join[1].json_path == ("custom",)
+    backend._current_undeclared = frozenset({"RegKey"})
+    with pytest.raises(SigmaConversionError, match="custom"):
+        backend._resolve_parsed_field(name)
+
+
+def test_allowed_value_warning(env):
+    backend = env(parsers="p_ct", table_name="ct_table")
+    rule = _rule("""    sel:
+        EventID: '11'
+    condition: sel""", title="Allowed Rule")
+    with pytest.warns(UserWarning, match="never matches") as record:
+        sqls = _sqls(backend, rule)
+    assert len(sqls) == 1 and "lower(EventID) = lower('11')" in sqls[0]
+    messages = [str(w.message) for w in record if "never matches" in str(w.message)]
+    assert messages == [
+        "rule 'Allowed Rule': EventID = '11' never matches parser fx_ct; allowed: ['1', '7']"
+    ]
+
+
+@pytest.mark.parametrize("value", ["'7'", "7", "'*1*'", "null"])
+def test_allowed_value_no_warning(env, value):
+    backend = env(parsers="p_ct", table_name="ct_table")
+    rule = _rule(f"""    sel:
+        EventID: {value}
+    condition: sel""")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _sqls(backend, rule)
+
+
+def test_allowed_value_warning_number(env):
+    backend = env(parsers="p_ct", table_name="ct_table")
+    with pytest.warns(UserWarning, match="EventID = '4688' never matches parser fx_ct"):
+        _sqls(backend, _rule("""    sel:
+        EventID: 4688
+    condition: sel"""))
+
+
+def test_hashes_end_to_end_array_column(env):
+    md5 = "d41d8cd98f00b204e9800998ecf8427e"
+    sql = _one(env, f"""    sel:
+        Hashes: 'MD5={md5}'
+    condition: sel""", extra_fields={"Hashes": {"transform": {"hashes": {"algos": {"MD5": "hashes_arr"}}}}})
+    assert f"exists(hashes_arr, x0 -> lower(x0) = lower('{md5}'))" in sql

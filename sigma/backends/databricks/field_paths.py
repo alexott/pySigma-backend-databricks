@@ -52,6 +52,25 @@ def join_field_name(sep: str, parts: Sequence[str]) -> str:
     return JOIN_PREFIX + json.dumps([sep, *parts])
 
 
+def split_join_field_name(name: str) -> Optional[Tuple[str, List[str]]]:
+    """Return ``(sep, parts)`` of a name built by ``join_field_name``, or None if it isn't one.
+
+    A name with the join prefix that doesn't decode to a separator and two parts gives None too.
+    """
+    if not name.startswith(JOIN_PREFIX):
+        return None
+    try:
+        decoded = json.loads(name[len(JOIN_PREFIX):])
+    except ValueError:
+        return None
+    if (
+        not isinstance(decoded, list) or len(decoded) != 3
+        or not all(isinstance(x, str) for x in decoded)
+    ):
+        return None
+    return decoded[0], decoded[1:]
+
+
 class UnknownFieldError(ValueError):
     """A field path that is not part of a parser's output schema."""
 
@@ -158,16 +177,10 @@ def _resolve_named_entry(schema: ParserSchema, path: str, base: str, name: str) 
 def _resolve_join(schema: ParserSchema, path: str, allow_undeclared: bool) -> FieldPath:
     """Resolve a name built by ``join_field_name`` into a FieldPath with two scalar parts."""
     not_scalar = "join parts must be scalar fields"
-    try:
-        decoded = json.loads(path[len(JOIN_PREFIX):])
-    except ValueError:
-        decoded = None
-    if (
-        not isinstance(decoded, list) or len(decoded) != 3
-        or not all(isinstance(x, str) for x in decoded)
-    ):
+    split = split_join_field_name(path)
+    if split is None:
         raise UnknownFieldError(path, schema.name, not_scalar + " (exactly 2 parts)")
-    sep, *names = decoded
+    sep, names = split
     parts = []
     for name in names:
         part = resolve_schema_path(schema, name, allow_undeclared)
