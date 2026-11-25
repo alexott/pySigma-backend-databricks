@@ -16,3 +16,9 @@ def escape_title(title: str) -> str:
 def placeholders(template: str) -> List[str]:
     """Return the stripped contents of each ``{...}`` in ``template``, in order."""
     return [m.group(1).strip() for m in _PLACEHOLDER.finditer(template)]
+
+
+def unbalanced_braces(template: str) -> bool:
+    """Return True when a ``{`` or ``}`` is left after removing the ``{...}`` placeholders."""
+    rest = _PLACEHOLDER.sub("", template)
+    return "{" in rest or "}" in rest

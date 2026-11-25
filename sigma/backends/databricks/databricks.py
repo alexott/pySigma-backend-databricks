@@ -62,7 +62,7 @@ from .lakewatch_maps import (
     to_v2_rule_name,
     truncate,
 )
-from .lakewatch_output import PLACEHOLDER_IDENTIFIER, escape_title, placeholders
+from .lakewatch_output import PLACEHOLDER_IDENTIFIER, escape_title, placeholders, unbalanced_braces
 from .lakewatch_overrides import OutputOverride, OverridesFile, parse_override, resolve_output
 from .lakewatch_pack import content_resource_id, write_pack
 from .ocsf_fields import split_ocsf_path
@@ -448,6 +448,12 @@ class DatabricksBackend(TextQueryBackend):
         if normalized in ("false", "no", "0"):
             return False
         raise ValueError(f"Invalid value for backend option {name}: {value!r} (expected true, false or auto)")
+
+    def convert(self, rule_collection, *args, **kwargs):
+        """Convert a collection, first resetting the per-run state so an aborted run doesn't leak."""
+        self._converted_ids = set()
+        self._raw_warned = False
+        return super().convert(rule_collection, *args, **kwargs)
 
     def convert_rule(self, rule: SigmaRule, *args, **kwargs):
         """Convert a rule, remembering it and the output format to decide on OCSF field rendering.
@@ -1182,10 +1188,11 @@ class DatabricksBackend(TextQueryBackend):
                 f"no table for Lakewatch parser profiles {', '.join(missing)}: set "
                 "-O table_map=<profile>:<table>,... (or -O table_name=... with exactly one parser)"
             )
-        self._selected = selected
+        overrides_file = OverridesFile.load(self.overrides) if self.overrides else None
+        # Assign the state only after everything succeeded, so that a failed setup is retried.
         self._known_profiles = set(profiles)
-        if self.overrides:
-            self._overrides_file = OverridesFile.load(self.overrides)
+        self._overrides_file = overrides_file
+        self._selected = selected
 
     def _convert_rule_parsed(self, rule: SigmaRule, output_format: str,
                              args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> List[Any]:
@@ -1308,10 +1315,12 @@ class DatabricksBackend(TextQueryBackend):
             for path, info in schema.paths.items() if info.storage == "column"
         }
 
-    def _check_placeholders(self, template: str, columns: Set[str]) -> None:
+    def _check_placeholders(self, template: str, columns: Set[str], what: str = "summary") -> None:
         """Fail unless each ``{x}`` in ``template`` is a bare identifier naming an output column."""
         assert self._current_profile is not None
         pid = self._current_profile[0].profile
+        if unbalanced_braces(template):
+            raise self._parsed_error(f"unbalanced braces in {what} of profile {pid}")
         for name in placeholders(template):
             if not PLACEHOLDER_IDENTIFIER.match(name) or name.lower() not in columns:
                 raise self._parsed_error(
@@ -1337,7 +1346,7 @@ class DatabricksBackend(TextQueryBackend):
         items = ["*"]
         if profile.entity:
             items.append(f"{self._resolve_output_expr(profile.entity)} AS sigma_entity")
-        items.extend(f"{self._resolve_output_expr(value)} AS {alias}" for alias, value in select.items())
+        items.extend(f"{self._resolve_output_expr(value)} AS `{alias}`" for alias, value in select.items())
         return ", ".join(items)
 
     def _resolve_output_expr(self, value: str) -> str:
@@ -1595,7 +1604,7 @@ class DatabricksBackend(TextQueryBackend):
         """Build a Lakewatch v2 batch rule document (workspace or content pack) for a Sigma query."""
         status, sql, core = self._lakewatch_body(rule, query)
         if self.target == "content_pack":
-            doc = self._content_pack_document(rule, core)
+            doc = self._content_pack_document(rule, core, index)
         else:
             doc = self._workspace_document(core)
         return json.dumps({"status": status, "sql": sql, "rule_name": core["rule_name"], "doc": doc})
@@ -1639,7 +1648,7 @@ class DatabricksBackend(TextQueryBackend):
             columns = self._output_columns(list(select))
             self._check_placeholders(summary, columns)
             for value in (context or {}).values():
-                self._check_placeholders(value, columns)
+                self._check_placeholders(value, columns, "context value")
         sql = "" if not query.strip() else (
             f"SELECT {select_list}\nFROM {table}\n"
             f"WHERE IN_TIMERANGE(time)\n"
@@ -1706,7 +1715,7 @@ class DatabricksBackend(TextQueryBackend):
             doc[key] = value
         return doc
 
-    def _content_pack_document(self, rule: SigmaRule, core: Dict[str, Any]) -> Dict[str, Any]:
+    def _content_pack_document(self, rule: SigmaRule, core: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
         """Build the content-pack document: description, metadata and the rule body."""
         if rule.id is None:
             raise self._parsed_error(
@@ -1714,7 +1723,7 @@ class DatabricksBackend(TextQueryBackend):
         assert self._current_profile is not None
         profile, schema, _ = self._current_profile
         body: Dict[str, Any] = {"rule_name": core["rule_name"],
-                                "content_resource_id": content_resource_id(str(rule.id), profile.profile)}
+                                "content_resource_id": content_resource_id(str(rule.id), profile.profile, index)}
         body.update((k, v) for k, v in core.items() if k != "rule_name")
         return {
             "description": core["description"],
@@ -1768,6 +1777,7 @@ class DatabricksBackend(TextQueryBackend):
             self._warn_lakewatch_options()
         # rule_name must be unique within the target schema: suffix duplicates.
         used = set()
+        resource_ids: Dict[str, str] = {}
         named: List[Tuple[str, Dict[str, Any]]] = []
         for name, doc in documents:
             candidate = name
@@ -1778,6 +1788,13 @@ class DatabricksBackend(TextQueryBackend):
                 candidate = name[:V2_RULE_NAME_MAX_LEN - len(suffix)] + suffix
             used.add(candidate)
             if self.target == "content_pack":
+                resource_id = doc["rule"]["content_resource_id"]
+                if resource_id in resource_ids:
+                    raise SigmaConfigurationError(
+                        f"duplicate content_resource_id {resource_id} for rules "
+                        f"{resource_ids[resource_id]}, {candidate}: "
+                        "Sigma ids must be unique per profile")
+                resource_ids[resource_id] = candidate
                 doc["rule"]["rule_name"] = candidate
             else:
                 doc["rule_name"] = candidate
@@ -1811,6 +1828,12 @@ class DatabricksBackend(TextQueryBackend):
         if self._target_given and output_format != "lakewatch":
             warnings.warn(
                 f"The target option is supported only by the lakewatch format and is "
+                f"ignored for {output_format}.",
+                UserWarning, stacklevel=2,
+            )
+        if self.overrides and output_format != "lakewatch":
+            warnings.warn(
+                f"The overrides option is supported only by the lakewatch format and is "
                 f"ignored for {output_format}.",
                 UserWarning, stacklevel=2,
             )

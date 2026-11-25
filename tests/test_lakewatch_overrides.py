@@ -73,8 +73,8 @@ def test_rule_attribute_override():
     assert output["default_context"] is False
     assert list(output)[:2] == ["summary", "context"]
     assert out["sql"].startswith(
-        f"SELECT *, Computer AS sigma_entity, {_expr(SYSMON, 'User')} AS sigma_user, "
-        f"{_expr(SYSMON, 'CommandLine')} AS sigma_cmd\nFROM")
+        f"SELECT *, Computer AS sigma_entity, {_expr(SYSMON, 'User')} AS `sigma_user`, "
+        f"{_expr(SYSMON, 'CommandLine')} AS `sigma_cmd`\nFROM")
 
 
 def test_overrides_file_wins_over_rule_attribute(tmp_path):
@@ -189,3 +189,45 @@ def test_unit_parse_and_resolve():
     assert [o.summary for o in file.lookup(RULE_ID, CS)] == ["c", "d"]
     assert [o.summary for o in file.lookup(RULE_ID.upper(), SYSMON)] == ["d"]
     assert file.lookup(None, CS) == []
+
+
+@pytest.mark.parametrize("content", [
+    {"summary": ""},
+    {"summary": "   "},
+    {"context": {"": "{sigma_entity}"}},
+    {"context": {" ": "{sigma_entity}"}},
+    {"context": {"k": ""}},
+    {"context": {"k": "  "}},
+])
+def test_empty_summary_and_context_rejected(tmp_path, content):
+    with pytest.raises(ValueError, match="non-empty"):
+        parse_override(content, "x")
+    with pytest.raises(SigmaConfigurationError, match="overrides file .*non-empty"):
+        _convert(_backend(tmp_path, {RULE_ID: content}))
+    with pytest.raises(SigmaConversionError, match="lakewatch attribute.*non-empty"):
+        _convert(_backend(), content)
+
+
+def test_failed_overrides_load_fails_every_convert(tmp_path):
+    backend = DatabricksBackend(parsers=SYSMON, table_name="t", catalog_name="c", schema_name="s",
+                                overrides=str(tmp_path / "missing.yml"))
+    for _ in range(2):
+        with pytest.raises(SigmaConfigurationError, match="overrides file .*missing.yml"):
+            backend.convert(_collection(), "lakewatch")
+
+
+def test_convert_resets_run_state(tmp_path):
+    backend = _backend(tmp_path, {OTHER_ID: {"summary": "z"}})
+    backend._converted_ids.add(OTHER_ID)
+    backend._raw_warned = True
+    with pytest.warns(UserWarning) as record:
+        backend.convert(_collection(), "lakewatch")
+    assert any("unknown Sigma ids" in str(w.message) for w in record)
+
+
+def test_overrides_with_other_format_warns(tmp_path):
+    path = tmp_path / "o.yml"
+    path.write_text(yaml.safe_dump({RULE_ID: {"summary": "x"}}))
+    backend = DatabricksBackend(overrides=str(path))
+    with pytest.warns(UserWarning, match="overrides option is supported only by the lakewatch format"):
+        backend.convert(_collection(), "default")

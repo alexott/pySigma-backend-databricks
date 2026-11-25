@@ -13,9 +13,14 @@ CONTENT_RESOURCE_NAMESPACE = uuid5(
     NAMESPACE_URL, "https://github.com/alexott/databricks-sigma-backend#lakewatch-content-resource")
 
 
-def content_resource_id(sigma_id: str, profile: str) -> str:
-    """Stable content_resource_id of the rule converted for a profile (from the Sigma id)."""
-    return str(uuid5(CONTENT_RESOURCE_NAMESPACE, f"{sigma_id.lower()}:{profile}"))
+def content_resource_id(sigma_id: str, profile: str, index: int = 0) -> str:
+    """Stable content_resource_id of the rule converted for a profile (from the Sigma id).
+
+    ``index`` is the position of the query when a rule yields several (a condition list); index 0
+    keeps the plain ``<id>:<profile>`` name.
+    """
+    name = f"{sigma_id.lower()}:{profile}" + (f":{index}" if index else "")
+    return str(uuid5(CONTENT_RESOURCE_NAMESPACE, name))
 
 
 def merge_revisions(existing: Optional[Dict[str, Any]], hashes: Mapping[str, str]) -> Dict[str, Any]:
@@ -153,14 +158,17 @@ def write_pack(documents: Sequence[Dict[str, Any]], output_dir: str,
         revisions_path = directory / "revisions.yaml"
         existing = _load_revisions(revisions_path)
         hashes: Dict[str, str] = {}
+        payloads: Dict[str, bytes] = {}
         for doc in documents:
             name = doc["rule"]["rule_name"]
-            data = dump(doc).encode("utf-8")
+            payloads[name] = dump(doc).encode("utf-8")
+            hashes[name] = hashlib.sha256(payloads[name]).hexdigest()
+        # Validate the revisions layout before anything is written.
+        merged = _merge_revisions_text(revisions_path, existing, hashes)
+        for name, data in payloads.items():
             rule_dir = directory / name
             rule_dir.mkdir(exist_ok=True)
             (rule_dir / f"{name}.yaml").write_bytes(data)
-            hashes[name] = hashlib.sha256(data).hexdigest()
-        merged = _merge_revisions_text(revisions_path, existing, hashes)
         if not revisions_path.is_file() or revisions_path.read_text(encoding="utf-8") != merged:
             revisions_path.write_text(merged, encoding="utf-8")
         fragment = yaml.safe_dump({"rules": [{"name": n} for n in rule_dirs(directory)]}, sort_keys=False)

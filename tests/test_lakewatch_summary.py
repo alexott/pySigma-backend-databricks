@@ -232,3 +232,20 @@ def test_resolve_output_expr_case_insensitive_with_any():
     backend = _resolver_for("windows_application", "windows", "service: application")
     assert backend._current_block.event_data == "any"
     assert backend._resolve_output_expr("computer") == backend._resolve_output_expr("Computer")
+
+
+@pytest.mark.parametrize("template", ["x {sigma_entity", "x } y", "{{sigma_entity}}"])
+def test_unbalanced_braces_rejected(template):
+    backend = _resolver(SYSMON)
+    cols = backend._output_columns([])
+    with pytest.raises(SigmaConversionError, match=f"unbalanced braces in summary of profile {SYSMON}"):
+        backend._check_placeholders(template, cols)
+    with pytest.raises(SigmaConversionError,
+                       match=f"unbalanced braces in context value of profile {SYSMON}"):
+        backend._check_placeholders(template, cols, "context value")
+
+
+def test_select_alias_is_quoted():
+    backend = _resolver(SYSMON)
+    assert backend._select_list({"from": "CommandLine"}).endswith(" AS `from`")
+    assert "Computer AS sigma_entity" in backend._select_list({})

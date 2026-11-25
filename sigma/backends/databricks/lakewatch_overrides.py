@@ -27,6 +27,8 @@ def _string_map(value: Any, key: str, where: str) -> Dict[str, str]:
     for name, item in value.items():
         if not isinstance(name, str) or not isinstance(item, str):
             raise ValueError(f"{where}: {key} entry {name!r} must map a string to a string")
+        if key == "context" and (not name.strip() or not item.strip()):
+            raise ValueError(f"{where}: context entry {name!r} must have a non-empty key and value")
     return dict(value)
 
 
@@ -40,6 +42,8 @@ def parse_override(data: Any, where: str) -> OutputOverride:
     summary = data.get("summary")
     if "summary" in data and not isinstance(summary, str):
         raise ValueError(f"{where}: summary must be a string")
+    if isinstance(summary, str) and not summary.strip():
+        raise ValueError(f"{where}: summary must be a non-empty string")
     context = _string_map(data["context"], "context", where) if "context" in data else None
     select = _string_map(data["select"], "select", where) if "select" in data else None
     return OutputOverride(summary=summary, context=context, select=select)

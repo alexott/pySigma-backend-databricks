@@ -230,8 +230,9 @@ logsources:
     unsupported: [Destination]              # fail with a clear message
 ```
 
-`entity` is a schema path, a Sigma field of the profile or an SQL expression, for example
-`coalesce(nullif(ComputerName, ''), aid)`. Every query selects it as `sigma_entity`, and the
+`entity` is a schema path (a column or a nested path, no arrays) or an SQL expression, for example
+`coalesce(nullif(ComputerName, ''), aid)`. An identifier-like value must be a schema path; anything
+else is SQL used verbatim. Every query selects it as `sigma_entity`, and the
 default alert summary groups alerts by it (see [Alert summaries](#alert-summaries)). All built-in
 profiles have an `entity`.
 
@@ -371,6 +372,10 @@ a1b2c3d4-0000-4000-8000-000000000001:        # per profile
 
 Mixing the keys with profile ids in one entry is an error.
 
+A flat entry applies to every selected profile, so its `select` values must resolve on each one
+(`sigma_user: User` fails on `crowdstrike_fdr_event`, which has no `User` field). Scope the entry per
+profile otherwise.
+
 * **Precedence** applies per key. For each of `summary`, `context` and `select`, the first of these
   that sets the key wins: the file's entry for the profile, the file's `default` entry, the rule
   attribute. So an override file can replace the summary of a rule and still use its `select`.
@@ -415,7 +420,7 @@ my_pack/rules/
   entries stay byte-identical, as do comments, ordering and the entries of rules that weren't
   converted in this run. The file is edited as text, not re-serialized, so your formatting stays.
   A layout the merge doesn't support (for example a flow-style list) stops the run with a
-  configuration error and leaves the file alone, rather than guessing.
+  configuration error and writes nothing (no rule files either), rather than guessing.
 * **`appIndex.rules.yaml`** is a fragment that lists every rule directory in `output_dir`, sorted:
   `rules: [{name: <rule>}, ...]` (written as a block list of `- name: <rule>`). The backend doesn't touch `appIndex.yaml`. Paste the fragment into it.
 

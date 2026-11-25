@@ -327,3 +327,46 @@ def test_revisions_unsupported_layout_fails(tmp_path):
     with pytest.raises(SigmaConfigurationError, match="unsupported revisions.yaml layout"):
         _pack_convert(tmp_path)
     assert (tmp_path / "revisions.yaml").read_text() == flow
+
+
+def test_content_resource_id_index():
+    first = content_resource_id(SIGMA_ID, SYSMON, 0)
+    assert first == "5974b21f-2777-59c9-8945-d30f12810a8e" == content_resource_id(SIGMA_ID, SYSMON)
+    assert content_resource_id(SIGMA_ID, SYSMON, 1) != first
+
+
+def test_content_pack_multi_query_rule_unique_ids():
+    rule = _rule(cond="Image|endswith: '\\powershell.exe'").replace(
+        "condition: sel", "condition:\n        - sel\n        - sel and sel")
+    backend = DatabricksBackend(target="content_pack", parsers=CS)
+    docs = _docs(backend, _collection(rule))
+    ids = [d["rule"]["content_resource_id"] for d in docs]
+    assert len(ids) == 2 and len(set(ids)) == 2
+    assert ids[0] == content_resource_id(SIGMA_ID, CS, 0)
+    assert ids[1] == content_resource_id(SIGMA_ID, CS, 1)
+
+
+def test_content_pack_duplicate_sigma_id_fails():
+    backend = DatabricksBackend(target="content_pack", parsers=CS)
+    with pytest.raises(SigmaConfigurationError) as e:
+        _docs(backend, _collection(_rule(), _rule(title="Other")))
+    assert str(e.value).startswith(
+        f"duplicate content_resource_id {content_resource_id(SIGMA_ID, CS)} for rules ")
+    assert str(e.value).endswith(": Sigma ids must be unique per profile")
+
+
+def test_unsupported_layout_writes_nothing(tmp_path):
+    _pack_convert(tmp_path)
+    name = _pack_name(tmp_path)
+    flow = f"rules: [{{name: {name}, latestVersion: 1, contentHash: stale}}]\n"
+    (tmp_path / "revisions.yaml").write_text(flow)
+    rule_file = tmp_path / name / f"{name}.yaml"
+    before = rule_file.read_text()
+    before_dirs = sorted(p.name for p in tmp_path.iterdir())
+    index_before = (tmp_path / "appIndex.rules.yaml").read_text()
+    other = _rule(title="Brand new", rule_id="6f1b9c8e-3c1a-4f0e-9a43-1d2e3f4a5b6c")
+    with pytest.raises(SigmaConfigurationError, match="unsupported revisions.yaml layout"):
+        _pack_convert(tmp_path, description="changed", collection=_collection(_rule(), other))
+    assert rule_file.read_text() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == before_dirs
+    assert (tmp_path / "appIndex.rules.yaml").read_text() == index_before
