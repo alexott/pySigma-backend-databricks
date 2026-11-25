@@ -5,7 +5,7 @@ This project includes material derived from the following third-party software.
 --------------------------------------------------------------------------------
 pySigma-backend-panther
 https://github.com/panther-labs/pySigma-backend-panther
-Copyright Panther Labs Inc.
+Copyright 2023 Panther Labs, Inc.
 Licensed under the Apache License, Version 2.0 (full text below).
 
 Derived files: the field mappings and event-type conditions of

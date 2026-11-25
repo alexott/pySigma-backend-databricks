@@ -144,8 +144,14 @@ logsources:
     fields:
       TargetObject:
         transform: reg
-      # Only string registry values (RegStringValue); numeric and binary data are not matched.
-      Details: event.RegStringValue
+      # Only string registry values (RegStringValue). Sysmon-style numeric and binary values
+      # (DWORD (0x...), QWORD (0x...), Binary Data) fail the rule instead of never matching.
+      Details:
+        field: event.RegStringValue
+        transform:
+          reject:
+            pattern: '^\*?(DWORD|QWORD) \(|^\*?Binary Data'
+            reason: numeric/binary registry values are not stored as text in crowdstrike_fdr_event
     unsupported:
       - Image
       - EventType

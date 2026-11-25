@@ -219,6 +219,82 @@ def test_cs_image_contains_drive_fails():
         )
 
 
+def test_cs_file_event_device_path():
+    sql = _sql(
+        CS,
+        "windows",
+        "file_event",
+        """    sel:
+        TargetFilename|startswith: 'C:\\Users\\'
+    condition: sel""",
+    )
+    assert (
+        "try_variant_get(event, '$.TargetFileName', 'string') rlike "
+        "'(?isu)^\\\\\\\\Device\\\\\\\\HarddiskVolume.*\\\\\\\\Users\\\\\\\\.*$'"
+    ) in sql
+    assert _names_selected(sql, ["NewExecutableWritten", "NewScriptWritten", "GenericFileWritten", "PeFileWritten"])
+
+
+def test_cs_dns_query_name():
+    sql = _sql(CS, "windows", "dns_query", "    sel:\n        QueryName|endswith: '.onion'\n    condition: sel")
+    assert "endswith(lower(try_variant_get(event, '$.DomainName', 'string')), lower('.onion'))" in sql
+    assert _names_selected(sql, ["DnsRequest"])
+
+
+def _sel(key, value):
+    """Return a one-item detection ``sel: {key: value}``."""
+    return f"    sel:\n        {key}: '{value}'\n    condition: sel"
+
+
+def test_cs_hashes_sha256():
+    digest = "ab" * 32
+    sql = _sql(CS, "windows", "process_creation", _sel("Hashes|contains", f"SHA256={digest}"))
+    assert f"lower(try_variant_get(event, '$.SHA256HashData', 'string')) = lower('{digest}')" in sql
+
+
+@pytest.mark.parametrize("parser", [CS, "sentinelone_deep_visibility"])
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("Details", "DWORD (0x00000001)"),
+        ("Details|contains", "QWORD (0x00000000)"),
+        ("Details|startswith", "Binary Data"),
+    ],
+)
+def test_registry_numeric_details_fail(parser, key, value):
+    msg = f"field Details: transform reject: numeric/binary registry values are not stored as text in {parser}"
+    with pytest.raises(SigmaTransformationError, match=msg):
+        _sql(parser, "windows", "registry_set", _sel(key, value))
+
+
+@pytest.mark.parametrize("parser", [CS, "sentinelone_deep_visibility"])
+def test_registry_string_details_ok(parser):
+    sql = _sql(parser, "windows", "registry_set", _sel("Details|contains", "powershell"))
+    assert "lower('powershell')" in sql
+
+
+def test_cs_registry_hive_inside_pattern_fails():
+    msg = "field TargetObject: transform registry_path: hive inside the pattern"
+    with pytest.raises(SigmaTransformationError, match=msg):
+        _sql(CS, "windows", "registry_set", _sel("TargetObject|contains", "HKLM\\SOFTWARE\\x"))
+
+
+def test_cs_registry_default_value_fails():
+    with pytest.raises(SigmaTransformationError, match=r"the \(Default\) value name cannot be matched"):
+        _sql(CS, "windows", "registry_set", _sel("TargetObject|endswith", "\\Run\\(Default)"))
+
+
+def test_cs_parent_image_contains_fails():
+    msg = "field ParentImage: transform basename: basename cannot express"
+    with pytest.raises(SigmaTransformationError, match=msg):
+        _sql(CS, "windows", "process_creation", _sel("ParentImage|contains", "tomcat"))
+
+
+def test_cs_cased_transformed_field_fails():
+    with pytest.raises(SigmaTransformationError, match="field Image: case-sensitive matching is not supported"):
+        _sql(CS, "windows", "process_creation", _sel("Image|cased", "C:\\x.exe"))
+
+
 # --- sentinelone_deep_visibility -----------------------------------------------------------
 
 S1 = "sentinelone_deep_visibility"
@@ -384,27 +460,20 @@ def test_cb_process_creation_child_vs_parent():
         ParentCommandLine|contains: 'doc'
     condition: sel""",
     )
-    low = sql.lower()
     # Image is the child process; the parent is the actor process.
-    assert "childproc_name" in low
-    assert "process_path" in low
-    assert "target_cmdline" in low
-    assert "process_cmdline" in low
-    assert "parent_path" not in low
-    assert "type = 'endpoint.event.procstart'" in low or "lower(type) = lower('endpoint.event.procstart')" in low
-    assert "device_os" in low
+    assert "endswith(lower(childproc_name), lower('\\\\cmd.exe'))" in sql
+    assert "endswith(lower(process_path), lower('\\\\winword.exe'))" in sql
+    assert "contains(lower(target_cmdline), lower('whoami'))" in sql
+    assert "contains(lower(process_cmdline), lower('doc'))" in sql
+    assert "parent_path" not in sql
+    assert "lower(type) = lower('endpoint.event.procstart')" in sql
+    assert "lower(device_os) = lower('WINDOWS')" in sql
 
 
 def test_cb_hashes_array():
-    sql = _sql(
-        CB,
-        "windows",
-        "process_creation",
-        """    sel:
-        Hashes|contains: 'MD5=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-    condition: sel""",
-    )
-    assert "exists(childproc_hash, x0 ->" in sql
+    for algo, digest in (("MD5", "A" * 32), ("SHA256", "b" * 64)):
+        sql = _sql(CB, "windows", "process_creation", _sel("Hashes|contains", f"{algo}={digest}"))
+        assert f"exists(childproc_hash, x0 -> lower(x0) = lower('{digest}'))" in sql
 
 
 def test_cb_initiated_bool_column():
@@ -454,7 +523,9 @@ def test_cb_protocol_map_ok():
         Protocol: udp
     condition: sel""",
     )
-    assert "PROTO_UDP" in sql
+    assert "lower(netconn_protocol) = lower('PROTO_UDP')" in sql
+    sql = _sql(CB, "windows", "network_connection", "    sel:\n        Protocol: TCP\n    condition: sel")
+    assert "lower(netconn_protocol) = lower('PROTO_TCP')" in sql
 
 
 def test_cb_file_event_and_products():

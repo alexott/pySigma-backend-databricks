@@ -282,13 +282,14 @@ library and are configured in the profile:
 |-----------|------------|--------------|
 | `map` | `values: {from: to \| [to, ...]}`, `default: keep \| fail` (`fail`) | Replaces a value; a list becomes an OR. Keys are case-insensitive. |
 | `case` | `upper` or `lower` | Changes the case of string values. |
-| `basename` | none | `C:\dir\cmd.exe` and `*\cmd.exe` become `cmd.exe`. Fails for patterns on the directory, such as `startswith`. |
+| `basename` | none | `C:\dir\cmd.exe` and `*\cmd.exe` become `cmd.exe`; `*cmd.exe` is kept. Fails for patterns on the directory, such as `startswith`, or `contains` without a separator (`*Microsoft Office*`). |
 | `path_prefix` | `rewrite: [{from: <regex>, to: <prefix>}]` | Rewrites the start of a path, for example `C:` to `\Device\HarddiskVolume*`. Fails when a `from` match follows a leading wildcard (`*C:\...`). |
-| `registry_path` | `hive: short \| long \| kernel`, optional `split: {key: <path>, value: <path>}` | Normalizes the hive name (`HKLM`, `HKEY_LOCAL_MACHINE`, `\REGISTRY\MACHINE`, ...). With `split`, see below. |
+| `registry_path` | `hive: short \| long \| kernel`, optional `split: {key: <path>, value: <path>}` | Normalizes the hive name (`HKLM`, `HKEY_LOCAL_MACHINE`, `\REGISTRY\MACHINE`, ...) at the start of a value. Fails when a hive follows a leading wildcard (`*HKLM\SOFTWARE\...`). With `split`, see below. |
 | `hashes` | `algos: {MD5: <path>, SHA1: <path>, SHA256: <path>, IMPHASH: <path>}` | Routes `ALGO=digest` values (or a bare digest, by its length) to the column of the algorithm. |
 | `domain_user` | `{domain: <path>, user: <path>}` | Matches `DOMAIN\user` values, see below. |
 | `regex_replace` | `pattern`, `replacement` | Regex substitution on the literal parts of a string. |
 | `to_int`, `to_str` | none | Converts digit strings to numbers, or numbers and booleans to strings. |
+| `reject` | `pattern: <regex>`, `reason: <text>` | Fails the rule with `reason` when a value matches `pattern` (`re.search`, case-insensitive), for values the target column never holds. Wildcards are matched as `*` and `?`; a regex value is checked on its text without a leading `^` and backslash escapes. |
 
 ```yaml
 transforms:                                  # named transforms, usable in every block
@@ -317,10 +318,16 @@ fields:
 * `registry_path` with `split` and `domain_user` compare the value with the joined expression
   `concat_ws('\\', nullif(<key>, ''), nullif(<value>, ''))`, so every modifier keeps its meaning.
   An empty value name (the key's default value) or a missing domain gives the other part alone.
+  A value ending with `\(Default)` fails the rule, because the joined columns never hold that
+  name.
 * `select_condition` maps each value (case-insensitive; `true`/`false` for booleans) to
   conditions that are ANDed. Several values are ORed, and `not` works as usual. Another value,
   or a wildcard, fails the rule. When the rule doesn't use the field, only the block conditions
-  apply.
+  apply. Negating a value whose selection equals the block's own conditions gives a rule that
+  can't match, for example `not Initiated: 'true'` on an outbound-only profile.
+* Fields with a transform or `select_condition` don't support `|cased`: the rule fails with
+  `field <F>: case-sensitive matching is not supported`. Expanded values (`|windash`,
+  `|base64offset`) on transformed fields fail as well.
 * `modifiers` lists the Sigma modifiers allowed on a field (`eq` for none). Any other modifier
   fails the rule with `field <F>: modifier <m> is not supported`.
 * `undeclared: true` allows a target inside a VARIANT column that declares sub-fields, but not
@@ -360,8 +367,10 @@ events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and rea
 the `event` VARIANT. Windows paths are rewritten to the NT device form
 (`C:` becomes `\Device\HarddiskVolume*`). Its limitations:
 
-* `Details` matches only string registry values (`RegStringValue`). Numeric and binary values
-  aren't matched.
+* `Details` matches only string registry values (`RegStringValue`). Sysmon-style numeric and
+  binary values (`DWORD (0x...)`, `QWORD (0x...)`, `Binary Data`) fail the rule.
+* A `TargetObject` value ending with `\(Default)` fails the rule, and so does a hive after a
+  leading wildcard (`*HKLM\SOFTWARE\...`).
 * `Image`, and the other fields of the acting process, are available only in `process_creation`.
   FDR links the other events to their process by `ContextProcessId`, which needs a join.
 * `network_connection` covers outbound connections only (`NetworkConnectIP4`/`IP6`), where FDR's
@@ -389,6 +398,11 @@ Its limitations:
   rule, and `DestinationHostname` isn't supported (hostnames are on DNS events).
 * `CurrentDirectory`, `Product`, `Protocol` and `record_type` aren't supported, and neither is
   `OriginalFileName` in `process_creation`.
+* `Details` (`registry_value`) rejects Sysmon-style numeric and binary values (`DWORD (0x...)`,
+  `QWORD (0x...)`, `Binary Data`). `TargetObject` is compared as written: the hive format of
+  `registry_keyPath` is unverified.
+* `file_event` selects `File Creation` only. The `endpoint_os` values (`windows`, `linux`,
+  `osx`) come from Panther's pipeline and are unverified.
 
 `carbonblack_endpoint_event` is ported from the Apache-2.0 Panther pipeline (see
 `THIRD_PARTY_NOTICES`) and checked against the Carbon Black Cloud Data Forwarder `endpoint.event`
@@ -403,8 +417,11 @@ Its limitations:
   `CurrentDirectory` aren't supported.
 * `network_connection` covers outbound connections only (`netconn_inbound = false`), because the
   schema's `local_*`/`remote_*` fields equal Sigma's source and destination only for outbound
-  connections. `Initiated: 'false'` fails the rule. `Protocol` accepts `tcp` and `udp`; `PROTO_TCP`
-  is inferred from the documented `PROTO_UDP`.
+  connections. `Initiated: 'false'` fails the rule. `Protocol` accepts `tcp` and `udp`
+  (`PROTO_TCP`, `PROTO_UDP`, as listed for `netconn_protocol` in the Carbon Black Cloud Platform
+  Search Fields reference); other values fail the rule.
+* `file_event` selects every `endpoint.event.filemod` record: creations, deletions,
+  modifications and renames. That is broader than Sysmon FileCreate.
 * Only `process_creation`, `file_event` and `network_connection` have blocks. Other categories
   (`image_load`, `registry_set`, `dns_query`, ...) fail with the no-profile reason.
 

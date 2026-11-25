@@ -2,15 +2,21 @@
 # Deep Visibility / Singularity Data Lake events).
 #
 # Derived from pySigma-backend-panther, sigma/pipelines/panther/sentinelone_panther_pipeline.py
-# (Apache-2.0, Copyright Panther Labs Inc.; see THIRD_PARTY_NOTICES). The field groups and the
+# (Apache-2.0, Copyright 2023 Panther Labs, Inc.; see THIRD_PARTY_NOTICES). The field groups and the
 # event-type conditions are ported, with these changes:
 #   * Panther's EventType/ObjectType conditions become event_type conditions (see below).
 #   * Panther's `pipe_creation` block is removed (see below).
 #   * CurrentDirectory, Product, record_type and Protocol are `unsupported` (Panther mapped
 #     CurrentDirectory onto the image path and Product onto the display name, which changes the
 #     meaning of the rule).
-#   * User and ParentUser are added (src_process_user); Panther did not map ParentUser, and
-#     mapped User only in some groups.
+#   * User and ParentUser are added: in process_creation User is tgt_process_user (the new
+#     process) and ParentUser is src_process_user; in the other blocks User is src_process_user
+#     (the acting process). Panther did not map ParentUser, and mapped User only in some groups.
+#   * file_event is narrowed to the `File Creation` event type (Sysmon FileCreate); Panther
+#     selected every file event (ObjectType File). The other file event types have their own
+#     categories (file_change, file_rename, file_delete).
+#   * Details (registry_set) rejects Sysmon-style numeric/binary values (DWORD (0x...),
+#     QWORD (0x...), Binary Data), which registry_value, compared as text, never matches.
 #   * Hashes is mapped per algorithm; OriginalFileName is unsupported in process_creation
 #     (tgt_process has no originalFileName column).
 #   * network_connection is outbound-only, see below. DestinationHostname is unsupported there:
@@ -21,7 +27,9 @@
 # https://github.com/Sentinel-One/ai-siem/blob/main/plugins/s1-secops-skills/skills/powerquery/references/fields-and-schema.md
 # (event.type: Process Creation, File Creation, File Deletion, File Modification, File Rename,
 # Registry Value Modified, IP Connect, DNS Resolved, Module Load; event.category: process, file,
-# network, logins; event.network.direction: INCOMING, OUTGOING). Sources per selector:
+# network, logins; event.network.direction: INCOMING, OUTGOING). The endpoint_os product values
+# (windows, linux, osx) are from Panther, unverified: the reference does not list them.
+# Sources per selector:
 #   process_creation: event_type Process Creation        file_event: File Creation
 #   file_change: File Modification   file_rename: File Rename   file_delete: File Deletion
 #   image_load: Module Load          registry_set: Registry Value Modified
@@ -32,6 +40,8 @@
 # REMOVED, awaiting verification against real data (their rules fail with the no-profile
 # reason): pipe_created (`Named Pipe Creation` is unverified), registry_add, registry_delete and
 # registry_event (only `Registry Value Modified` is verified).
+# The hive format of registry_keyPath (TargetObject is compared as written, e.g. HKLM\...
+# versus \REGISTRY\MACHINE\...) is unverified, so no hive rewrite is applied.
 #
 # Network direction: the reference describes src.ip.address as the "process side" address, so
 # S1 src/dst look like local/remote, not initiator/responder (no explicit statement was found).
@@ -157,7 +167,14 @@ logsources:
       ParentCommandLine: src_process_parent_cmdline
       User: src_process_user
       TargetObject: registry_keyPath
-      Details: registry_value
+      # Sysmon-style numeric and binary values (DWORD (0x...), QWORD (0x...), Binary Data) fail
+      # the rule: registry_value is compared as text and would never match them.
+      Details:
+        field: registry_value
+        transform:
+          reject:
+            pattern: '^\*?(DWORD|QWORD) \(|^\*?Binary Data'
+            reason: numeric/binary registry values are not stored as text in sentinelone_deep_visibility
   - match:
       category: dns_query
     conditions:

@@ -2,7 +2,7 @@
 # Cloud Data Forwarder, endpoint.event schema 1.2.0).
 #
 # Derived from pySigma-backend-panther, sigma/pipelines/panther/carbon_black_panther_pipeline.py
-# (Apache-2.0, Copyright Panther Labs Inc.; see THIRD_PARTY_NOTICES). The event types, the OS
+# (Apache-2.0, Copyright 2023 Panther Labs, Inc.; see THIRD_PARTY_NOTICES). The event types, the OS
 # values and the netconn/filemod field names are ported, with these changes:
 #   * process_creation actor/child mapping is corrected (see below). Panther mapped
 #     ParentImage to parent_path and Image to process_path, and so matched the wrong processes.
@@ -24,8 +24,11 @@
 #   ("alongside WINDOWS, MAC, LINUX"). The field table says "Windows/OSX/Linux" but the values
 #   are the uppercase ones used here.
 #   netconn_protocol: the table says "String UDP or TCP protocol identifier"; the example shows
-#   PROTO_UDP. PROTO_TCP is inferred from that pattern (not shown in a doc), and only the Protocol
-#   value map depends on it, not event selection.
+#   PROTO_UDP. The values PROTO_TCP, PROTO_UDP, PROTO_ICMP, PROTO_ICMPV6 are listed for the same
+#   field (netconn_protocol, "Network protocol of the network connection") in the Carbon Black
+#   Cloud Platform Search Fields reference
+#   https://developer.carbonblack.com/reference/carbon-black-cloud/platform/latest/platform-search-fields/
+#   Only tcp and udp are mapped; any other Protocol value fails the rule.
 #
 # procstart semantics (from the field descriptions): process_path / process_cmdline /
 # process_username describe the ACTOR process, "command line executed by the actor process",
@@ -39,6 +42,11 @@
 # Sigma's Source is the connection initiator, so remote = Destination only for outbound
 # connections. network_connection is therefore outbound-only (netconn_inbound = false) and
 # `Initiated: 'false'` fails the rule instead of matching the wrong side.
+#
+# file_event selects every endpoint.event.filemod record: creations, deletions, modifications
+# and renames (the parser schema has no filemod action field to filter on). This is broader than
+# Sysmon FileCreate, so a file_event rule also matches deletes, writes and renames of matching
+# files.
 #
 # Not covered: only procstart, filemod and netconn have blocks; the other categories (image_load,
 # registry_set, dns_query, ...) fail with the no-profile reason, because no other event type was
