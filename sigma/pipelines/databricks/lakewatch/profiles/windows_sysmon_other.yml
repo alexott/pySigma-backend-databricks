@@ -1,0 +1,64 @@
+# Built-in Lakewatch profile for the windows_sysmon_other parser: Sysmon the remaining Sysmon events (service state, pipes, WMI, clipboard, errors) and any other EventID.
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Sysmon configuration schema ("sysmon -s", schema version 4.90, Sysmon 15),
+# as published in Microsoft's SysmonCommon manifest
+# (https://github.com/microsoft/SysmonCommon/blob/main/manifest.xml) and a public copy of the
+# "sysmon -s" 4.90 dump
+# (https://gist.github.com/olafhartong/328474bf273842c20a162c015f09bd61), which also covers
+# EventIDs 27-29. Event descriptions and the category -> EventID mapping follow
+# https://learn.microsoft.com/sysinternals/downloads/sysmon. Field names are facts of the Sysmon
+# schema; no LGPL Sigma pipeline source was used.
+#
+# The Sysmon fields live in EventData as named entries ({_Name, _VALUE}); each EventData name
+# listed under `event_data` maps to EventData[<name>]. Values pass through unchanged (Sigma's
+# Sysmon taxonomy is Sysmon's own). EventID is a STRING column.
+profile: windows_sysmon_other
+version: 1
+parser: windows_sysmon_other
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      category: sysmon_status
+    conditions:
+      EventID: ['4', '16']
+    event_data: [UtcTime, State, Version, SchemaVersion, Configuration, ConfigurationFileHash]
+  - match:
+      product: windows
+      category: pipe_created
+    conditions:
+      EventID: ['17', '18']
+    event_data: [RuleName, EventType, UtcTime, ProcessGuid, ProcessId, PipeName, Image, User]
+  - match:
+      product: windows
+      category: wmi_event
+    conditions:
+      EventID: ['19', '20', '21']
+    event_data: [RuleName, EventType, UtcTime, Operation, User, EventNamespace, Name, Query, Type, Destination, Consumer, Filter]
+  - match:
+      product: windows
+      category: clipboard_capture
+    conditions:
+      EventID: '24'
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, Image, Session, ClientInfo, Hashes, Archived, User]
+  - match:
+      product: windows
+      category: sysmon_error
+    conditions:
+      EventID: '255'
+    event_data: [UtcTime, ID, Description]
+  - match:
+      product: windows
+      service: sysmon
+    route:
+      field: EventID
+      not_in: ['1', '2', '3', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '22', '23', '25', '26', '27', '28', '29']
+    event_data: any

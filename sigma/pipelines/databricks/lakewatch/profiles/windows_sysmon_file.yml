@@ -1,0 +1,75 @@
+# Built-in Lakewatch profile for the windows_sysmon_file parser: Sysmon file events (EventIDs 2, 11, 15, 23, 26, 27, 28, 29).
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Sysmon configuration schema ("sysmon -s", schema version 4.90, Sysmon 15),
+# as published in Microsoft's SysmonCommon manifest
+# (https://github.com/microsoft/SysmonCommon/blob/main/manifest.xml) and a public copy of the
+# "sysmon -s" 4.90 dump
+# (https://gist.github.com/olafhartong/328474bf273842c20a162c015f09bd61), which also covers
+# EventIDs 27-29. Event descriptions and the category -> EventID mapping follow
+# https://learn.microsoft.com/sysinternals/downloads/sysmon. Field names are facts of the Sysmon
+# schema; no LGPL Sigma pipeline source was used.
+#
+# The Sysmon fields live in EventData as named entries ({_Name, _VALUE}); each EventData name
+# listed under `event_data` maps to EventData[<name>]. Values pass through unchanged (Sigma's
+# Sysmon taxonomy is Sysmon's own). EventID is a STRING column.
+profile: windows_sysmon_file
+version: 1
+parser: windows_sysmon_file
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      category: file_change
+    conditions:
+      EventID: '2'
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, Image, TargetFilename, CreationUtcTime, PreviousCreationUtcTime, User]
+  - match:
+      product: windows
+      category: file_event
+    conditions:
+      EventID: '11'
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, Image, TargetFilename, CreationUtcTime, User]
+  - match:
+      product: windows
+      category: create_stream_hash
+    conditions:
+      EventID: '15'
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, Image, TargetFilename, CreationUtcTime, Hash, Contents, User]
+  - match:
+      product: windows
+      category: file_delete
+    conditions:
+      EventID: ['23', '26']
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, User, Image, TargetFilename, Hashes, IsExecutable, Archived]
+  - match:
+      product: windows
+      category: file_block_executable
+    conditions:
+      EventID: '27'
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, User, Image, TargetFilename, Hashes]
+  - match:
+      product: windows
+      category: file_block_shredding
+    conditions:
+      EventID: '28'
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, User, Image, TargetFilename, Hashes, IsExecutable]
+  - match:
+      product: windows
+      category: file_executable_detected
+    conditions:
+      EventID: '29'
+    event_data: [RuleName, UtcTime, ProcessGuid, ProcessId, User, Image, TargetFilename, Hashes]
+  - match:
+      product: windows
+      service: sysmon
+    route:
+      field: EventID
+    event_data: any

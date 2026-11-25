@@ -363,6 +363,21 @@ Built-in profiles:
 | `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
 | `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
 | `carbonblack_endpoint_event` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event` or `network_connection` | `carbonblack_endpoint_event` |
+| `windows_sysmon_process` | `product: windows` with `category: process_creation`, `process_termination`, `driver_load`, `image_load`, `create_remote_thread`, `raw_access_thread`, `process_access` or `process_tampering`; `service: sysmon` (EventIDs 1, 5-10, 25) | `windows_sysmon_process` (requires the custom Windows parsers) |
+| `windows_sysmon_network` | `product: windows` with `category: network_connection`; `service: sysmon` (EventID 3) | `windows_sysmon_network` (requires the custom Windows parsers) |
+| `windows_sysmon_dns` | `product: windows` with `category: dns_query`; `service: sysmon` (EventID 22) | `windows_sysmon_dns` (requires the custom Windows parsers) |
+| `windows_sysmon_file` | `product: windows` with `category: file_change`, `file_event`, `create_stream_hash`, `file_delete`, `file_block_executable`, `file_block_shredding` or `file_executable_detected`; `service: sysmon` | `windows_sysmon_file` (requires the custom Windows parsers) |
+| `windows_sysmon_registry` | `product: windows` with `category: registry_add`, `registry_delete`, `registry_set`, `registry_rename` or `registry_event`; `service: sysmon` (EventIDs 12-14) | `windows_sysmon_registry` (requires the custom Windows parsers) |
+| `windows_sysmon_other` | `product: windows` with `category: sysmon_status`, `pipe_created`, `wmi_event`, `clipboard_capture` or `sysmon_error`; `service: sysmon` for any EventID not served by the other five | `windows_sysmon_other` (requires the custom Windows parsers) |
+
+The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
+(`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which
+aren't Lakewatch built-ins yet. Field names come from the Sysmon schema (`sysmon -s`, schema
+version 4.90). Values pass through unchanged. A Sigma field that Sysmon doesn't log for the
+category (for example `CommandLine` on `file_event`) fails the rule with `field <F> is not mapped
+by profile <id>`. `file_access` and `file_rename` rules have no Sysmon event and fail with the
+no-profile reason. A rule with `service: sysmon` is routed to the profile that serves its
+EventID values, so select all six profiles to cover it.
 
 `crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
 events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from

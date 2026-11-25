@@ -1,0 +1,65 @@
+# Built-in Lakewatch profile for the windows_sysmon_registry parser: Sysmon registry events (EventIDs 12, 13, 14).
+# Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
+# Lakewatch built-in yet.
+#
+# Field-name source: the Sysmon configuration schema ("sysmon -s", schema version 4.90, Sysmon 15),
+# as published in Microsoft's SysmonCommon manifest
+# (https://github.com/microsoft/SysmonCommon/blob/main/manifest.xml) and a public copy of the
+# "sysmon -s" 4.90 dump
+# (https://gist.github.com/olafhartong/328474bf273842c20a162c015f09bd61), which also covers
+# EventIDs 27-29. Event descriptions and the category -> EventID mapping follow
+# https://learn.microsoft.com/sysinternals/downloads/sysmon. Field names are facts of the Sysmon
+# schema; no LGPL Sigma pipeline source was used.
+#
+# The Sysmon fields live in EventData as named entries ({_Name, _VALUE}); each EventData name
+# listed under `event_data` maps to EventData[<name>]. Values pass through unchanged (Sigma's
+# Sysmon taxonomy is Sysmon's own). EventID is a STRING column.
+profile: windows_sysmon_registry
+version: 1
+parser: windows_sysmon_registry
+raw:
+  entries: EventData
+fields:
+  EventID: EventID
+  Channel: Channel
+  Computer: Computer
+  Provider_Name: Provider
+logsources:
+  - match:
+      product: windows
+      category: registry_add
+    conditions:
+      EventID: '12'
+      EventData[EventType]: CreateKey
+    event_data: [RuleName, EventType, UtcTime, ProcessGuid, ProcessId, Image, TargetObject, User]
+  - match:
+      product: windows
+      category: registry_delete
+    conditions:
+      EventID: '12'
+      EventData[EventType]: [DeleteKey, DeleteValue]
+    event_data: [RuleName, EventType, UtcTime, ProcessGuid, ProcessId, Image, TargetObject, User]
+  - match:
+      product: windows
+      category: registry_set
+    conditions:
+      EventID: '13'
+    event_data: [RuleName, EventType, UtcTime, ProcessGuid, ProcessId, Image, TargetObject, Details, User]
+  - match:
+      product: windows
+      category: registry_rename
+    conditions:
+      EventID: '14'
+    event_data: [RuleName, EventType, UtcTime, ProcessGuid, ProcessId, Image, TargetObject, NewName, User]
+  - match:
+      product: windows
+      category: registry_event
+    conditions:
+      EventID: ['12', '13', '14']
+    event_data: [RuleName, EventType, UtcTime, ProcessGuid, ProcessId, Image, TargetObject, User, Details, NewName]
+  - match:
+      product: windows
+      service: sysmon
+    route:
+      field: EventID
+    event_data: any
