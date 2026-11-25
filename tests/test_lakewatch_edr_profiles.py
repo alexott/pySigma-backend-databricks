@@ -8,6 +8,7 @@ from sigma.collection import SigmaCollection
 from sigma.exceptions import SigmaTransformationError
 
 from sigma.backends.databricks import DatabricksBackend
+from sigma.backends.databricks.databricks import LakewatchConversionError
 from sigma.backends.databricks.schema_catalog import SchemaCatalog
 from sigma.pipelines.databricks.lakewatch.profile import load_profiles, validate_profile
 
@@ -216,3 +217,125 @@ def test_cs_image_contains_drive_fails():
         Image|contains: 'C:\\Users\\'
     condition: sel""",
         )
+
+
+# --- sentinelone_deep_visibility -----------------------------------------------------------
+
+S1 = "sentinelone_deep_visibility"
+
+
+def test_s1_profile_validates():
+    profile = load_profiles()[S1]
+    assert profile.version == 1
+    assert profile.parser == S1
+    validate_profile(profile, SchemaCatalog.load().get(S1))
+
+
+def test_s1_process_creation():
+    sql = _sql(
+        S1,
+        "windows",
+        "process_creation",
+        """    sel:
+        Image|endswith: '\\rundll32.exe'
+        ParentCommandLine|contains: 'winword'
+    condition: sel""",
+    )
+    low = sql.lower()
+    assert "endswith(lower(tgt_process_image_path), lower('\\\\rundll32.exe'))" in low
+    assert "contains(lower(src_process_cmdline), lower('winword'))" in low
+    assert "lower(endpoint_os) = lower('windows')" in low
+    assert "lower(event_type) = lower('process creation')" in low
+
+
+def test_s1_pipe_created_category():
+    sql = _sql(
+        S1,
+        "windows",
+        "pipe_created",
+        """    sel:
+        PipeName|startswith: '\\msagent_'
+    condition: sel""",
+    )
+    low = sql.lower()
+    assert "namedpipe_name" in low
+    assert "lower(event_type) = lower('named pipe creation')" in low
+    # Panther's category name "pipe_creation" is not a Sigma category.
+    with pytest.raises(LakewatchConversionError, match="no selected Lakewatch parser profile matches"):
+        _sql(
+            S1,
+            "windows",
+            "pipe_creation",
+            """    sel:
+        PipeName: x
+    condition: sel""",
+        )
+
+
+def test_s1_hashes():
+    sql = _sql(
+        S1,
+        "windows",
+        "process_creation",
+        """    sel:
+        Hashes|contains: 'SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    condition: sel""",
+    )
+    assert "tgt_process_image_sha256" in sql
+    sql = _sql(
+        S1,
+        "windows",
+        "image_load",
+        """    sel:
+        Hashes|contains: 'MD5=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    condition: sel""",
+    )
+    assert "module_md5" in sql
+
+
+def test_s1_unsupported_current_directory():
+    with pytest.raises(SigmaTransformationError, match=f"field CurrentDirectory is not supported by profile {S1}"):
+        _sql(
+            S1,
+            "windows",
+            "process_creation",
+            """    sel:
+        CurrentDirectory|contains: 'temp'
+    condition: sel""",
+        )
+
+
+def test_s1_network_outgoing_only():
+    sql = _sql(
+        S1,
+        "windows",
+        "network_connection",
+        """    sel:
+        Initiated: 'true'
+        DestinationPort: 4444
+    condition: sel""",
+    )
+    low = sql.lower()
+    assert "dst_port_number = 4444" in low
+    assert "lower(event_network_direction) = lower('outgoing')" in low
+    with pytest.raises(SigmaTransformationError, match="field Initiated: value 'false' is not one of"):
+        _sql(
+            S1,
+            "windows",
+            "network_connection",
+            """    sel:
+        Initiated: 'false'
+    condition: sel""",
+        )
+
+
+def test_s1_file_delete_event_type():
+    sql = _sql(
+        S1,
+        "windows",
+        "file_delete",
+        """    sel:
+        TargetFilename|endswith: '.log'
+    condition: sel""",
+    )
+    assert "lower(event_type) = lower('file deletion')" in sql.lower()

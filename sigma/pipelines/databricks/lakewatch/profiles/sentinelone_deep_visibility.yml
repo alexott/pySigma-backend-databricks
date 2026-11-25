@@ -1,0 +1,285 @@
+# Built-in Lakewatch profile for the sentinelone_deep_visibility parser (SentinelOne
+# Deep Visibility / Singularity Data Lake events).
+#
+# Derived from pySigma-backend-panther, sigma/pipelines/panther/sentinelone_panther_pipeline.py
+# (Apache-2.0, Copyright Panther Labs Inc.; see THIRD_PARTY_NOTICES). The field groups and the
+# event-type conditions are ported, with these changes:
+#   * Panther's EventType/ObjectType conditions become event_type/event_category.
+#   * Panther's `pipe_creation` category is the Sigma category `pipe_created`.
+#   * CurrentDirectory, Product, record_type and Protocol are `unsupported` (Panther mapped
+#     CurrentDirectory onto the image path and Product onto the display name, which changes the
+#     meaning of the rule).
+#   * Hashes is mapped per algorithm; OriginalFileName is unsupported in process_creation
+#     (tgt_process has no originalFileName column).
+#   * network_connection is outbound-only, see below.
+#
+# Enum verification (2026-11-25), against the SentinelOne powerquery field reference
+# https://github.com/Sentinel-One/ai-siem/blob/main/plugins/s1-secops-skills/skills/powerquery/references/fields-and-schema.md
+# (event.type: Process Creation, File Creation, File Deletion, File Modification, File Rename,
+# Registry Value Modified, IP Connect, DNS Resolved, Module Load; event.category: process, file,
+# network, logins; event.network.direction: INCOMING, OUTGOING):
+#   verified:   Process Creation, File Modification, File Rename, event_category File (the
+#               backend compares case-insensitively, so File matches `file`).
+#   corrected:  Panther's `File Delete` is `File Deletion`; Panther's `ModuleLoad` is `Module Load`.
+#   unverified: `Named Pipe Creation` (event_type), and the event_category values Registry, DNS,
+#               Url and IP. Panther's values are kept. The reference lists `network` as the
+#               category of IP and DNS events, so those four may match nothing; check them
+#               against real data.
+#
+# Network direction: the reference describes src.ip.address as the "process side" address, so
+# S1 src/dst look like local/remote, not initiator/responder (no explicit statement was found).
+# As for CrowdStrike, network_connection is outbound-only (event_network_direction = OUTGOING)
+# and `Initiated: 'false'` fails the rule.
+profile: sentinelone_deep_visibility
+version: 1
+parser: sentinelone_deep_visibility
+products:
+  windows:
+    endpoint_os: windows
+  linux:
+    endpoint_os: linux
+  macos:
+    endpoint_os: osx
+logsources:
+  - match:
+      category: process_creation
+    conditions:
+      event_type: Process Creation
+    fields:
+      ProcessId: tgt_process_pid
+      Image: tgt_process_image_path
+      Description: tgt_process_displayName
+      Company: tgt_process_publisher
+      CommandLine: tgt_process_cmdline
+      User: tgt_process_user
+      TerminalSessionId: tgt_process_sessionId
+      IntegrityLevel: tgt_process_integrityLevel
+      md5: tgt_process_image_md5
+      sha1: tgt_process_image_sha1
+      sha256: tgt_process_image_sha256
+      Hashes:
+        transform:
+          hashes:
+            algos:
+              MD5: tgt_process_image_md5
+              SHA1: tgt_process_image_sha1
+              SHA256: tgt_process_image_sha256
+      ParentProcessId: src_process_pid
+      ParentImage: src_process_image_path
+      ParentCommandLine: src_process_cmdline
+      ParentUser: src_process_user
+    unsupported:
+      - CurrentDirectory
+      - Product
+      - OriginalFileName
+  - match:
+      category: file_event
+    conditions:
+      event_category: File
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      TargetFilename: tgt_file_path
+      SourceFilename: tgt_file_oldPath
+      User: src_process_user
+  - match:
+      category: file_change
+    conditions:
+      event_type: File Modification
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      TargetFilename: tgt_file_path
+      SourceFilename: tgt_file_oldPath
+      User: src_process_user
+  - match:
+      category: file_rename
+    conditions:
+      event_type: File Rename
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      TargetFilename: tgt_file_path
+      SourceFilename: tgt_file_oldPath
+      User: src_process_user
+  - match:
+      category: file_delete
+    conditions:
+      event_type: File Deletion
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      TargetFilename: tgt_file_path
+      SourceFilename: tgt_file_oldPath
+      User: src_process_user
+  - match:
+      category: image_load
+    conditions:
+      event_type: Module Load
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      ImageLoaded: module_path
+      sha1: module_sha1
+      md5: module_md5
+      Hashes:
+        transform:
+          hashes:
+            algos:
+              MD5: module_md5
+              SHA1: module_sha1
+  - match:
+      category: pipe_created
+    conditions:
+      event_type: Named Pipe Creation
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      PipeName: namedPipe_name
+  - match:
+      category: registry_add
+    conditions:
+      event_category: Registry
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      TargetObject: registry_keyPath
+      Details: registry_value
+  - match:
+      category: registry_delete
+    conditions:
+      event_category: Registry
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      TargetObject: registry_keyPath
+      Details: registry_value
+  - match:
+      category: registry_event
+    conditions:
+      event_category: Registry
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      TargetObject: registry_keyPath
+      Details: registry_value
+  - match:
+      category: registry_set
+    conditions:
+      event_category: Registry
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      TargetObject: registry_keyPath
+      Details: registry_value
+  - match:
+      category: dns_query
+    conditions:
+      event_category: DNS
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      query: event_dns_request
+      answer: event_dns_response
+      QueryName: event_dns_request
+    unsupported:
+      - record_type
+  - match:
+      category: dns
+    conditions:
+      event_category: DNS
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      User: src_process_user
+      query: event_dns_request
+      answer: event_dns_response
+      QueryName: event_dns_request
+    unsupported:
+      - record_type
+  # Outbound connections only; see the header.
+  - match:
+      category: network_connection
+    conditions:
+      event_category: [DNS, Url, IP]
+      event_network_direction: OUTGOING
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      DestinationHostname: [url_address, event_dns_request]
+      DestinationPort: dst_port_number
+      DestinationIp: dst_ip_address
+      User: src_process_user
+      SourceIp: src_ip_address
+      SourcePort: src_port_number
+      dst_ip: dst_ip_address
+      src_ip: src_ip_address
+      dst_port: dst_port_number
+      src_port: src_port_number
+      Initiated:
+        select_condition:
+          'true':
+            event_network_direction: OUTGOING
+
+    unsupported:
+      - Protocol
+  - match:
+      category: firewall
+    conditions:
+      event_category: IP
+      event_network_direction: OUTGOING
+    fields:
+      Image: src_process_image_path
+      CommandLine: src_process_cmdline
+      ParentImage: src_process_parent_image_path
+      ParentCommandLine: src_process_parent_cmdline
+      DestinationHostname: [url_address, event_dns_request]
+      DestinationPort: dst_port_number
+      DestinationIp: dst_ip_address
+      User: src_process_user
+      SourceIp: src_ip_address
+      SourcePort: src_port_number
+      dst_ip: dst_ip_address
+      src_ip: src_ip_address
+      dst_port: dst_port_number
+      src_port: src_port_number
+      Initiated:
+        select_condition:
+          'true':
+            event_network_direction: OUTGOING
+
+    unsupported:
+      - Protocol
