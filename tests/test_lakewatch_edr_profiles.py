@@ -248,28 +248,47 @@ def test_s1_process_creation():
     assert "lower(event_type) = lower('process creation')" in low
 
 
-def test_s1_pipe_created_category():
+def test_s1_unverified_blocks_removed():
+    # The selectors of these categories are unverified, so the blocks are removed.
+    for category in ("pipe_created", "pipe_creation", "registry_add", "registry_delete", "registry_event"):
+        with pytest.raises(LakewatchConversionError, match="no selected Lakewatch parser profile matches"):
+            _sql(
+                S1,
+                "windows",
+                category,
+                """    sel:
+        TargetObject: x
+    condition: sel""",
+            )
+
+
+def test_s1_users():
     sql = _sql(
         S1,
         "windows",
-        "pipe_created",
+        "process_creation",
         """    sel:
-        PipeName|startswith: '\\msagent_'
+        User: bob
+        ParentUser: alice
     condition: sel""",
     )
     low = sql.lower()
-    assert "namedpipe_name" in low
-    assert "lower(event_type) = lower('named pipe creation')" in low
-    # Panther's category name "pipe_creation" is not a Sigma category.
-    with pytest.raises(LakewatchConversionError, match="no selected Lakewatch parser profile matches"):
-        _sql(
-            S1,
-            "windows",
-            "pipe_creation",
-            """    sel:
-        PipeName: x
-    condition: sel""",
-        )
+    assert "lower(tgt_process_user) = lower('bob')" in low
+    assert "lower(src_process_user) = lower('alice')" in low
+
+
+def test_s1_registry_set_and_dns_event_types():
+    sql = _sql(S1, "windows", "registry_set", "    sel:\n        TargetObject|contains: 'Run'\n    condition: sel")
+    assert "lower(event_type) = lower('registry value modified')" in sql.lower()
+    sql = _sql(S1, "windows", "dns_query", "    sel:\n        QueryName: x.test\n    condition: sel")
+    assert "lower(event_type) = lower('dns resolved')" in sql.lower()
+
+
+def test_s1_network_hostname_unsupported():
+    for category in ("network_connection", "firewall"):
+        msg = f"field DestinationHostname is not supported by profile {S1}"
+        with pytest.raises(SigmaTransformationError, match=msg):
+            _sql(S1, "windows", category, "    sel:\n        DestinationHostname: x.test\n    condition: sel")
 
 
 def test_s1_hashes():
@@ -281,7 +300,7 @@ def test_s1_hashes():
         Hashes|contains: 'SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
     condition: sel""",
     )
-    assert "tgt_process_image_sha256" in sql
+    assert f"lower(tgt_process_image_sha256) = lower('{'A' * 64}')" in sql
     sql = _sql(
         S1,
         "windows",
@@ -290,7 +309,7 @@ def test_s1_hashes():
         Hashes|contains: 'MD5=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
     condition: sel""",
     )
-    assert "module_md5" in sql
+    assert "lower(module_md5) = lower('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')" in sql
 
 
 def test_s1_unsupported_current_directory():

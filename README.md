@@ -352,7 +352,7 @@ Built-in profiles:
 | `aws_cloudtrail` | `product: aws`, `service: cloudtrail` | `aws_cloudtrail` |
 | `okta_system_log` | `product: okta`, `service: okta` | `okta_system_log` |
 | `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
-| `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `pipe_created`, `registry_add`, `registry_delete`, `registry_event`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
+| `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
 
 `crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
 events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from
@@ -374,18 +374,20 @@ the `event` VARIANT. Windows paths are rewritten to the NT device form
   supported.
 
 `sentinelone_deep_visibility` is ported from the Apache-2.0 Panther pipeline (see
-`THIRD_PARTY_NOTICES`). It selects events by `endpoint_os`, `event_type` and `event_category`.
+`THIRD_PARTY_NOTICES`). It selects events by `endpoint_os` and `event_type`, using only the event
+types listed in SentinelOne's powerquery field reference (the header of the profile cites it).
 Its limitations:
 
-* `network_connection` and `firewall` cover outbound connections only
-  (`event_network_direction = OUTGOING`), because S1's `src_*`/`dst_*` columns appear to be the
+* `pipe_created`, `registry_add`, `registry_delete` and `registry_event` have no profile block
+  and fail with the no-profile reason. Their event types (`Named Pipe Creation`, registry key
+  events) aren't in the reference, so they wait for verification against real data.
+  `registry_set` selects `Registry Value Modified`.
+* `network_connection` and `firewall` select `IP Connect` with
+  `event_network_direction = OUTGOING`, because S1's `src_*`/`dst_*` columns appear to be the
   process side and remote side, not the initiator and responder. `Initiated: 'false'` fails the
-  rule.
+  rule, and `DestinationHostname` isn't supported (hostnames are on DNS events).
 * `CurrentDirectory`, `Product`, `Protocol` and `record_type` aren't supported, and neither is
   `OriginalFileName` in `process_creation`.
-* `File Deletion` and `Module Load` were checked against SentinelOne's field reference. The
-  `event_category` values `Registry`, `DNS`, `Url` and `IP`, and the event type
-  `Named Pipe Creation`, are taken from Panther and are unverified.
 
 ## OCSF field rendering
 

@@ -4,27 +4,34 @@
 # Derived from pySigma-backend-panther, sigma/pipelines/panther/sentinelone_panther_pipeline.py
 # (Apache-2.0, Copyright Panther Labs Inc.; see THIRD_PARTY_NOTICES). The field groups and the
 # event-type conditions are ported, with these changes:
-#   * Panther's EventType/ObjectType conditions become event_type/event_category.
-#   * Panther's `pipe_creation` category is the Sigma category `pipe_created`.
+#   * Panther's EventType/ObjectType conditions become event_type conditions (see below).
+#   * Panther's `pipe_creation` block is removed (see below).
 #   * CurrentDirectory, Product, record_type and Protocol are `unsupported` (Panther mapped
 #     CurrentDirectory onto the image path and Product onto the display name, which changes the
 #     meaning of the rule).
+#   * User and ParentUser are added (src_process_user); Panther did not map ParentUser, and
+#     mapped User only in some groups.
 #   * Hashes is mapped per algorithm; OriginalFileName is unsupported in process_creation
 #     (tgt_process has no originalFileName column).
-#   * network_connection is outbound-only, see below.
+#   * network_connection is outbound-only, see below. DestinationHostname is unsupported there:
+#     hostnames live on DNS/Url events, which an outbound IP Connect selector never matches.
 #
-# Enum verification (2026-11-25), against the SentinelOne powerquery field reference
+# Enum verification (2026-11-25). Every selector below uses an event.type value listed in the
+# SentinelOne powerquery field reference
 # https://github.com/Sentinel-One/ai-siem/blob/main/plugins/s1-secops-skills/skills/powerquery/references/fields-and-schema.md
 # (event.type: Process Creation, File Creation, File Deletion, File Modification, File Rename,
 # Registry Value Modified, IP Connect, DNS Resolved, Module Load; event.category: process, file,
-# network, logins; event.network.direction: INCOMING, OUTGOING):
-#   verified:   Process Creation, File Modification, File Rename, event_category File (the
-#               backend compares case-insensitively, so File matches `file`).
-#   corrected:  Panther's `File Delete` is `File Deletion`; Panther's `ModuleLoad` is `Module Load`.
-#   unverified: `Named Pipe Creation` (event_type), and the event_category values Registry, DNS,
-#               Url and IP. Panther's values are kept. The reference lists `network` as the
-#               category of IP and DNS events, so those four may match nothing; check them
-#               against real data.
+# network, logins; event.network.direction: INCOMING, OUTGOING). Sources per selector:
+#   process_creation: event_type Process Creation        file_event: File Creation
+#   file_change: File Modification   file_rename: File Rename   file_delete: File Deletion
+#   image_load: Module Load          registry_set: Registry Value Modified
+#   dns_query, dns: DNS Resolved     network_connection, firewall: IP Connect + OUTGOING
+# Corrections to Panther: `File Delete` is `File Deletion`; `ModuleLoad` is `Module Load`;
+# Panther's category-based selectors (ObjectType File/Registry/DNS/Url/IP) are replaced by the
+# event types above, because the reference lists the categories as process/file/network/logins.
+# REMOVED, awaiting verification against real data (their rules fail with the no-profile
+# reason): pipe_created (`Named Pipe Creation` is unverified), registry_add, registry_delete and
+# registry_event (only `Registry Value Modified` is verified).
 #
 # Network direction: the reference describes src.ip.address as the "process side" address, so
 # S1 src/dst look like local/remote, not initiator/responder (no explicit statement was found).
@@ -75,7 +82,7 @@ logsources:
   - match:
       category: file_event
     conditions:
-      event_category: File
+      event_type: File Creation
     fields:
       Image: src_process_image_path
       CommandLine: src_process_cmdline
@@ -140,56 +147,9 @@ logsources:
               MD5: module_md5
               SHA1: module_sha1
   - match:
-      category: pipe_created
-    conditions:
-      event_type: Named Pipe Creation
-    fields:
-      Image: src_process_image_path
-      CommandLine: src_process_cmdline
-      ParentImage: src_process_parent_image_path
-      ParentCommandLine: src_process_parent_cmdline
-      User: src_process_user
-      PipeName: namedPipe_name
-  - match:
-      category: registry_add
-    conditions:
-      event_category: Registry
-    fields:
-      Image: src_process_image_path
-      CommandLine: src_process_cmdline
-      ParentImage: src_process_parent_image_path
-      ParentCommandLine: src_process_parent_cmdline
-      User: src_process_user
-      TargetObject: registry_keyPath
-      Details: registry_value
-  - match:
-      category: registry_delete
-    conditions:
-      event_category: Registry
-    fields:
-      Image: src_process_image_path
-      CommandLine: src_process_cmdline
-      ParentImage: src_process_parent_image_path
-      ParentCommandLine: src_process_parent_cmdline
-      User: src_process_user
-      TargetObject: registry_keyPath
-      Details: registry_value
-  - match:
-      category: registry_event
-    conditions:
-      event_category: Registry
-    fields:
-      Image: src_process_image_path
-      CommandLine: src_process_cmdline
-      ParentImage: src_process_parent_image_path
-      ParentCommandLine: src_process_parent_cmdline
-      User: src_process_user
-      TargetObject: registry_keyPath
-      Details: registry_value
-  - match:
       category: registry_set
     conditions:
-      event_category: Registry
+      event_type: Registry Value Modified
     fields:
       Image: src_process_image_path
       CommandLine: src_process_cmdline
@@ -201,7 +161,7 @@ logsources:
   - match:
       category: dns_query
     conditions:
-      event_category: DNS
+      event_type: DNS Resolved
     fields:
       Image: src_process_image_path
       CommandLine: src_process_cmdline
@@ -216,7 +176,7 @@ logsources:
   - match:
       category: dns
     conditions:
-      event_category: DNS
+      event_type: DNS Resolved
     fields:
       Image: src_process_image_path
       CommandLine: src_process_cmdline
@@ -232,14 +192,13 @@ logsources:
   - match:
       category: network_connection
     conditions:
-      event_category: [DNS, Url, IP]
+      event_type: IP Connect
       event_network_direction: OUTGOING
     fields:
       Image: src_process_image_path
       CommandLine: src_process_cmdline
       ParentImage: src_process_parent_image_path
       ParentCommandLine: src_process_parent_cmdline
-      DestinationHostname: [url_address, event_dns_request]
       DestinationPort: dst_port_number
       DestinationIp: dst_ip_address
       User: src_process_user
@@ -256,17 +215,17 @@ logsources:
 
     unsupported:
       - Protocol
+      - DestinationHostname
   - match:
       category: firewall
     conditions:
-      event_category: IP
+      event_type: IP Connect
       event_network_direction: OUTGOING
     fields:
       Image: src_process_image_path
       CommandLine: src_process_cmdline
       ParentImage: src_process_parent_image_path
       ParentCommandLine: src_process_parent_cmdline
-      DestinationHostname: [url_address, event_dns_request]
       DestinationPort: dst_port_number
       DestinationIp: dst_ip_address
       User: src_process_user
@@ -283,3 +242,4 @@ logsources:
 
     unsupported:
       - Protocol
+      - DestinationHostname
