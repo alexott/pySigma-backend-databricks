@@ -1189,6 +1189,8 @@ def test_allowed_value_no_warning(env, value):
     condition: sel""")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
+        # The fixture profile has no entity: that warning is not what this test is about.
+        warnings.filterwarnings("ignore", message=".*has no entity")
         _sqls(backend, rule)
 
 

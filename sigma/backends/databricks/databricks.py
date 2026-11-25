@@ -13,6 +13,7 @@ from typing import (
     Dict,
     FrozenSet,
     List,
+    Mapping,
     Optional,
     Pattern,
     Sequence,
@@ -61,6 +62,7 @@ from .lakewatch_maps import (
     to_v2_rule_name,
     truncate,
 )
+from .lakewatch_output import PLACEHOLDER_IDENTIFIER, escape_title, placeholders
 from .ocsf_fields import split_ocsf_path
 from .schema_catalog import ParserSchema, SchemaCatalog
 
@@ -394,6 +396,8 @@ class DatabricksBackend(TextQueryBackend):
         # on the first parsed-mode rule, and the one the current rule is converted for.
         self._selected: Optional[List[Tuple["Profile", ParserSchema, str]]] = None
         self._current_profile: Optional[Tuple["Profile", ParserSchema, str]] = None
+        # The profile block matching the current rule's logsource.
+        self._current_block: Any = None
         # Targets of the current profile block's mappings with ``undeclared: true``.
         self._current_undeclared: FrozenSet[str] = frozenset()
         # Raw event source of the current profile (keyword searches) and whether the approximate
@@ -1183,6 +1187,7 @@ class DatabricksBackend(TextQueryBackend):
         finally:
             self.last_processing_pipeline = previous
             self._current_profile = None
+            self._current_block = None
             self._current_raw = None
             self._current_undeclared = frozenset()
             self._current_rule = rule
@@ -1208,6 +1213,7 @@ class DatabricksBackend(TextQueryBackend):
         pipeline.vars["output_format"] = output_format
         self.last_processing_pipeline = pipeline
         self._current_profile = selected
+        self._current_block = block
         self._current_raw = (
             RawSource("column", self.raw_log_field, "text") if self._raw_log_field_set else selected[0].raw
         )
@@ -1235,6 +1241,97 @@ class DatabricksBackend(TextQueryBackend):
             for _, collected in self.errors[first_error:]:
                 if isinstance(collected, LakewatchConversionError) and collected.rule is rule_copy:
                     collected.rule = rule
+
+    def _output_columns(self, aliases: Sequence[str]) -> Set[str]:
+        """Lower-case output columns: top-level schema columns, select aliases and sigma_entity."""
+        assert self._current_profile is not None
+        profile, schema, _ = self._current_profile
+        columns = self._schema_columns(schema)
+        columns.update(a.lower() for a in aliases)
+        if profile.entity:
+            columns.add("sigma_entity")
+        return columns
+
+    @staticmethod
+    def _schema_columns(schema: ParserSchema) -> Set[str]:
+        """Lower-case names of the top-level columns of a parser schema."""
+        return {
+            path.split(".", 1)[0].replace("[]", "").lower()
+            for path, info in schema.paths.items() if info.storage == "column"
+        }
+
+    def _check_placeholders(self, template: str, columns: Set[str]) -> None:
+        """Fail unless each ``{x}`` in ``template`` is a bare identifier naming an output column."""
+        assert self._current_profile is not None
+        pid = self._current_profile[0].profile
+        for name in placeholders(template):
+            if not PLACEHOLDER_IDENTIFIER.match(name) or name.lower() not in columns:
+                raise self._parsed_error(
+                    f"placeholder {{{name}}} is not an output column of profile {pid}; add it under select"
+                )
+
+    def _select_list(self, select: Mapping[str, str]) -> str:
+        """Return the SELECT list: ``*``, the entity as sigma_entity, then the select entries."""
+        assert self._current_profile is not None
+        profile, schema, _ = self._current_profile
+        reserved = self._schema_columns(schema)
+        if profile.entity:
+            reserved.add("sigma_entity")
+        seen: Set[str] = set()
+        for alias in select:
+            if not PLACEHOLDER_IDENTIFIER.match(alias) or alias.lower() in reserved | seen:
+                raise self._parsed_error(
+                    f"select alias {alias} clashes with an output column of profile {profile.profile}"
+                )
+            seen.add(alias.lower())
+        if profile.entity and "sigma_entity" in self._schema_columns(schema):
+            raise self._parsed_error(
+                f"select alias sigma_entity clashes with an output column of profile {profile.profile}"
+            )
+        items = ["*"]
+        if profile.entity:
+            items.append(f"{self._resolve_output_expr(profile.entity)} AS sigma_entity")
+        items.extend(f"{self._resolve_output_expr(value)} AS {alias}" for alias, value in select.items())
+        return ", ".join(items)
+
+    def _resolve_output_expr(self, value: str) -> str:
+        """Resolve an ``entity`` or ``select`` value to SQL: a Sigma field, an EventData name or a path.
+
+        A value that isn't identifier-like is SQL and is used as it is.
+        """
+        from sigma.pipelines.databricks.lakewatch.profile import OUTPUT_IDENTIFIER
+
+        if not OUTPUT_IDENTIFIER.match(value):
+            return value
+        assert self._current_profile is not None
+        profile, schema, _ = self._current_profile
+        block = self._current_block
+        fail = f"output value {value} {{}} (profile {profile.profile})"
+        mappings = {k.lower(): m for k, m in profile.mappings_for(block).items() if not k.endswith(".*")}
+        mapping = mappings.get(value.lower())
+        candidate = value
+        if mapping is not None:
+            if mapping.transforms or mapping.select is not None:
+                raise self._parsed_error(
+                    fail.format("is mapped with a transform or a select_condition; use an SQL expression"))
+            if len(mapping.targets) != 1:
+                raise self._parsed_error(fail.format("maps to several targets; use an SQL expression"))
+            candidate = mapping.targets[0]
+        candidates = [candidate]
+        if mapping is None and profile.event_data_any(block):
+            candidates.insert(0, f"{profile.event_data_column}[{value}]")
+        path: Optional[FieldPath] = None
+        for name in candidates:
+            try:
+                path = resolve_schema_path(schema, name, name in self._current_undeclared)
+                break
+            except UnknownFieldError:
+                continue
+        if path is None:
+            raise self._parsed_error(fail.format("is not a Sigma field or a schema path"))
+        if path.arrays:
+            raise self._parsed_error(fail.format("is inside an array; use an SQL expression"))
+        return self._render_path(path, SigmaString(""))[1]
 
     def _resolve_parsed_field(self, field: str) -> FieldPath:
         """Resolve a field against the current profile's parser schema, failing closed.
@@ -1464,8 +1561,23 @@ class DatabricksBackend(TextQueryBackend):
         rule_status = self._rule_status(rule)
         # The rule time window follows the schedule via IN_TIMERANGE(); use the
         # extend_lookback option to widen it.
+        select_list = "*"
+        summary = rule.title
+        if self._current_profile is not None:
+            select_list = self._select_list({})
+            profile = self._current_profile[0]
+            aliases: List[str] = []
+            if profile.entity:
+                summary = f"{escape_title(rule.title)} on {{sigma_entity}}"
+            else:
+                summary = escape_title(rule.title)
+                self._warn(
+                    f"no summary override and profile {profile.profile} has no entity: "
+                    f"all signals of this rule group into one alert"
+                )
+            self._check_placeholders(summary, self._output_columns(aliases))
         sql = "" if not query.strip() else (
-            f"SELECT *\nFROM {table}\n"
+            f"SELECT {select_list}\nFROM {table}\n"
             f"WHERE IN_TIMERANGE(time)\n"
             f"  AND ({query})"
         )
@@ -1507,7 +1619,7 @@ class DatabricksBackend(TextQueryBackend):
         }
         doc["batch"] = batch
         doc["output"] = {
-            "summary": rule.title,
+            "summary": summary,
             "event_time_column": "time",
             "default_context": True,
         }
