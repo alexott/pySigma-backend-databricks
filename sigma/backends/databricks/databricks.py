@@ -171,7 +171,7 @@ class DatabricksBackend(TextQueryBackend):
         "default": "Plain Databricks SQL queries",
         "dbsql": "Databricks SQL queries with additional metadata as comments",
         "detection_yaml": "Yaml markup for Alex's own detection framework",
-        "lakewatch": "Lakewatch detection rules (v2 format, Unity Catalog governed)",
+        "lakewatch": "Lakewatch detection rules (Unity Catalog governed)",
     }
     # TODO: does the backend requires that a processing pipeline is provided? This information can be used by user
     # interface programs like Sigma CLI to warn users about inappropriate usage of the backend.

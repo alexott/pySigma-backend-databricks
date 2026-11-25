@@ -425,7 +425,7 @@ def test_lakewatch_v2_format_is_unknown():
 
 
 def test_lakewatch_format_is_v2():
-    assert DatabricksBackend.formats["lakewatch"] == "Lakewatch detection rules (v2 format, Unity Catalog governed)"
+    assert DatabricksBackend.formats["lakewatch"] == "Lakewatch detection rules (Unity Catalog governed)"
 
 
 def test_v2_unsupported_rule_skipped():

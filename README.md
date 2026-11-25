@@ -13,12 +13,14 @@ Further, it contains the following processing pipelines in `sigma.pipelines.data
 
 * `snake_case`: convert column names into snake case format
 
+See [CHANGELOG.md](CHANGELOG.md) for the changes in each release.
+
 It supports the following output formats:
 
 * default: plain Databricks/Apache Spark SQL queries
 * dbsql: Databricks SQL queries with rules metadata (title, status) embedded as comment
 * detection_yaml: Yaml markup for my own detection framework
-* lakewatch: Lakewatch detection rules (v2 format, Unity Catalog governed), batch by default
+* lakewatch: Lakewatch detection rules (Unity Catalog governed), batch by default
 
 ## CIDR Matching
 
@@ -172,22 +174,11 @@ follows:
   `sigma_tags` (tags other than ATT&CK) and `converter_version`. Values are cut to 256 characters,
   and empty values are left out.
 
-### Breaking changes in 0.2.0
-
-* **Parsed tables are the default.** Rules are converted against the columns of a Lakewatch
-  parser's table instead of OCSF gold tables. `-f lakewatch` without `-p ocsf` therefore needs
-  `-O parsers=...`. To keep the OCSF behavior, pass `-O ocsf=true` (or `-p ocsf`, which still
-  selects OCSF). See [Lakewatch parsed tables](#lakewatch-parsed-tables).
-* The v1 format (`kind: Rule` YAML) was removed.
-* The `lakewatch_v2` format was renamed to `lakewatch`. There is no alias: `-f lakewatch_v2` fails
-  with the unknown-format error.
-* The `compute_group` and `lookback` options were removed. Passing either one is now a
-  configuration error. To widen the time window, use `-O extend_lookback=...`.
-* The failure message for keywords changed.
-* `fieldref|startswith`, `fieldref|endswith` and `fieldref|contains` now convert in every format.
-* The SQL for named entries has a single-object fallback.
-
 ### Lakewatch parsed tables
+
+By default, `-f lakewatch` converts rules against the columns of a Lakewatch parser's table.
+`-O parsers=...` selects the parsers. To convert against OCSF gold tables instead, pass
+`-O ocsf=true` or `-p ocsf`.
 
 ```bash
 sigma convert -s -t databricks -f lakewatch -O parsers=aws_cloudtrail \
