@@ -413,13 +413,15 @@ work and any other field fails. `windows_event_logs` is the built-in header-only
 need EventData fields fail with a hint to use the custom `windows_*` parsers. Sysmon `file_access`
 and `file_rename` rules stay uncovered.
 
-Measured on a Lakewatch workspace: 85 SigmaHQ Windows rules (Sysmon process, network, DNS and file
-events, 4688, 4624/4625/4720/4728, PowerShell script blocks) all ran as valid SQL against the
-custom `windows_*` tables, and 14 hand-written rules built from the demo data all matched rows
-(synthetic data). A six-field Sysmon `process_creation` rule over 16M rows ran in about 4 s as
-converted and about 3 s with `EventData` cast once in a subquery. Converting the whole SigmaHQ
-`rules/windows` tree with all 24 `windows_*` profiles yields queries for about 2,390 of 2,427 rule files
-(the rest fail closed, mostly on fields a profile can't express).
+Measured on a Lakewatch workspace with synthetic data: 85 queries from 78 SigmaHQ Windows rule
+files (Sysmon process, network, DNS and file events, 4688, 4624/4625/4720/4728, PowerShell script
+blocks) all ran as valid SQL against the custom `windows_*` tables (3 of the sampled rules fail
+closed). 14 hand-written rules built from values in the demo data each matched rows; the 7 other
+positive queries target values the synthetic data doesn't hold, and returned 0 as expected. A
+six-field Sysmon `process_creation` rule over 16M rows ran within 2x of a hand-written query that
+casts `EventData` once in a subquery, so the profiles don't use a per-rule CTE. Converting the
+whole SigmaHQ `rules/windows` tree with all 24 `windows_*` profiles yields queries for about 2,390
+of 2,427 rule files (the rest fail closed, mostly on fields a profile can't express).
 
 `crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
 events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from
