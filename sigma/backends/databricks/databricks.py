@@ -65,6 +65,13 @@ from .lakewatch_maps import (
 from .lakewatch_output import PLACEHOLDER_IDENTIFIER, escape_title, placeholders, unbalanced_braces
 from .lakewatch_overrides import OutputOverride, OverridesFile, parse_override, resolve_output
 from .lakewatch_pack import content_resource_id, write_pack
+from .lakewatch_report import (
+    ConversionReport,
+    LakewatchApproximateWarning,
+    capture_warnings,
+    describe_fields,
+    rule_fields,
+)
 from .ocsf_fields import split_ocsf_path
 from .schema_catalog import ParserSchema, SchemaCatalog
 
@@ -425,6 +432,11 @@ class DatabricksBackend(TextQueryBackend):
         # warning was already issued for the current rule and profile.
         self._current_raw: Optional["RawSource"] = None
         self._raw_warned = False
+        # Conversion report of the current run, its last finished form and the report key of the
+        # result being converted (put into the envelopes of its queries).
+        self._report = ConversionReport()
+        self.last_report: Optional[Dict[str, Any]] = None
+        self._current_report_key: Optional[str] = None
 
     @staticmethod
     def _parse_target(value: Optional[str]) -> str:
@@ -453,6 +465,8 @@ class DatabricksBackend(TextQueryBackend):
         """Convert a collection, first resetting the per-run state so an aborted run doesn't leak."""
         self._converted_ids = set()
         self._raw_warned = False
+        self._report = ConversionReport()
+        self._current_report_key = None
         return super().convert(rule_collection, *args, **kwargs)
 
     def convert_rule(self, rule: SigmaRule, *args, **kwargs):
@@ -466,7 +480,34 @@ class DatabricksBackend(TextQueryBackend):
         self._current_format = output_format or self.default_format
         if self._parsed_mode(self._current_format):
             return self._convert_rule_parsed(rule, self._current_format, args, kwargs)
-        return super().convert_rule(rule, *args, **kwargs)
+        if self._current_format != "lakewatch":
+            return super().convert_rule(rule, *args, **kwargs)
+        # OCSF-mode Lakewatch conversion: one result without a profile.
+        key, result = self._report.result(rule, None)
+        self._current_report_key = key
+        try:
+            with capture_warnings() as caught:
+                try:
+                    queries = super().convert_rule(rule, *args, **kwargs)
+                finally:
+                    self._record_warnings(result, caught)
+        finally:
+            self._current_report_key = None
+        self._record_errors(result, rule, 0)
+        return queries
+
+    @staticmethod
+    def _record_warnings(result: Dict[str, Any], caught: Sequence[warnings.WarningMessage]) -> None:
+        """Store the captured warnings in the result and set its ``approximate`` flag."""
+        result["warnings"] = [str(w.message) for w in caught]
+        result["approximate"] = any(issubclass(w.category, LakewatchApproximateWarning) for w in caught)
+
+    def _record_errors(self, result: Dict[str, Any], rule: SigmaRule, first_error: int) -> None:
+        """Fail the result with the first error collected since ``first_error``."""
+        collected = self.errors[first_error:]
+        if collected:
+            result["status"] = "failed"
+            result["reason"] = str(collected[0][1])
 
     def _ocsf_enabled(self) -> bool:
         """Whether field names are OCSF attribute paths that need array/free-form aware rendering."""
@@ -517,14 +558,15 @@ class DatabricksBackend(TextQueryBackend):
             return
         self._raw_warned = True
         self._warn(f"keyword search over the {raw.kind} source of profile "
-                   f"{self._current_profile[0].profile} is approximate")
+                   f"{self._current_profile[0].profile} is approximate",
+                   LakewatchApproximateWarning)
 
-    def _warn(self, message: str) -> None:
+    def _warn(self, message: str, category: Type[Warning] = UserWarning) -> None:
         """Issue a UserWarning naming the current rule and, in parsed mode, the profile."""
         rule = self._current_rule
         title = rule.title if rule is not None else "?"
         pid = f" (profile {self._current_profile[0].profile})" if self._current_profile else ""
-        warnings.warn(f"rule '{title}'{pid}: {message}", UserWarning, stacklevel=2)
+        warnings.warn(f"rule '{title}'{pid}: {message}", category, stacklevel=2)
 
     def _field_path(self, field: Optional[str]) -> Optional[FieldPath]:
         """Path of a field that needs backend rendering, or None to render it as a plain name.
@@ -1281,13 +1323,22 @@ class DatabricksBackend(TextQueryBackend):
         rule_copy = copy.deepcopy(rule)
         self._current_rule = rule_copy
         first_error = len(self.errors)
+        key, result = self._report.result(rule, f"{selected[0].profile}@{selected[0].version}")
+        self._current_report_key = key
+        result["fields"], result["lint"] = describe_fields(
+            selected[0], block, selected[1], rule_fields(rule))
         try:
-            return super().convert_rule(rule_copy, *args, **kwargs)
+            with capture_warnings() as caught:
+                try:
+                    return super().convert_rule(rule_copy, *args, **kwargs)
+                finally:
+                    self._record_warnings(result, caught)
         except LakewatchConversionError as error:
             if error.rule is rule_copy:
                 error.rule = rule
             raise
         finally:
+            self._current_report_key = None
             # Report collected errors against the rule that was passed in, not its copy.
             self.errors[first_error:] = [
                 (rule if failed is rule_copy else failed, error)
@@ -1296,6 +1347,7 @@ class DatabricksBackend(TextQueryBackend):
             for _, collected in self.errors[first_error:]:
                 if isinstance(collected, LakewatchConversionError) and collected.rule is rule_copy:
                     collected.rule = rule
+            self._record_errors(result, rule, first_error)
 
     def _output_columns(self, aliases: Sequence[str]) -> Set[str]:
         """Lower-case output columns: top-level schema columns, select aliases and sigma_entity."""
@@ -1462,7 +1514,8 @@ class DatabricksBackend(TextQueryBackend):
         """Prepare a contains match over the JSON text of a VARIANT: to_json() and an escaped value."""
         assert isinstance(cond.value, SigmaString)
         levels, leaf = self._render_path(path, cond.value, as_type="variant")
-        self._warn(f"{cond.field} is matched against the JSON text of a VARIANT (approximate)")
+        self._warn(f"{cond.field} is matched against the JSON text of a VARIANT (approximate)",
+                   LakewatchApproximateWarning)
         escaped = copy.copy(cond)
         escaped.value = json_escape_string(cond.value)
         return escaped, levels, f"to_json({leaf})"
@@ -1575,14 +1628,14 @@ class DatabricksBackend(TextQueryBackend):
         return to_v2_fidelity(self.default_fidelity or V2_FIDELITY_MAP.get(rule_status, "Development"))
 
     @staticmethod
-    def _lakewatch_documents(queries: List[str]) -> List[Tuple[str, Dict[str, Any]]]:
-        """(rule_name, document) of the per-rule envelopes, without deprecated, unsupported and empty rules."""
-        documents: List[Tuple[str, Dict[str, Any]]] = []
+    def _lakewatch_documents(queries: List[str]) -> List[Tuple[str, Dict[str, Any], Optional[str]]]:
+        """(rule_name, document, report_key) of the envelopes, without deprecated, unsupported and empty rules."""
+        documents: List[Tuple[str, Dict[str, Any], Optional[str]]] = []
         for query in queries:
             envelope = json.loads(query)
             if envelope["status"] in ("deprecated", "unsupported") or not envelope["sql"]:
                 continue
-            documents.append((envelope["rule_name"], envelope["doc"]))
+            documents.append((envelope["rule_name"], envelope["doc"], envelope.get("report_key")))
         return documents
 
     @staticmethod
@@ -1607,7 +1660,11 @@ class DatabricksBackend(TextQueryBackend):
             doc = self._content_pack_document(rule, core, index)
         else:
             doc = self._workspace_document(core)
-        return json.dumps({"status": status, "sql": sql, "rule_name": core["rule_name"], "doc": doc})
+        envelope: Dict[str, Any] = {"status": status, "sql": sql, "rule_name": core["rule_name"], "doc": doc}
+        if (self._current_report_key is not None and sql
+                and status not in ("deprecated", "unsupported")):
+            envelope["report_key"] = self._current_report_key
+        return json.dumps(envelope)
 
     def _lakewatch_body(self, rule: SigmaRule, query: str) -> Tuple[str, str, Dict[str, Any]]:
         """Build the rule document shared by both targets: status, SQL and the target-neutral body.
@@ -1779,7 +1836,7 @@ class DatabricksBackend(TextQueryBackend):
         used = set()
         resource_ids: Dict[str, str] = {}
         named: List[Tuple[str, Dict[str, Any]]] = []
-        for name, doc in documents:
+        for name, doc, report_key in documents:
             candidate = name
             count = 1
             while candidate in used:
@@ -1787,6 +1844,8 @@ class DatabricksBackend(TextQueryBackend):
                 suffix = f"_{count}"
                 candidate = name[:V2_RULE_NAME_MAX_LEN - len(suffix)] + suffix
             used.add(candidate)
+            if report_key is not None:
+                self._report.set_rule_name(report_key, candidate)
             if self.target == "content_pack":
                 resource_id = doc["rule"]["content_resource_id"]
                 if resource_id in resource_ids:
@@ -1799,6 +1858,7 @@ class DatabricksBackend(TextQueryBackend):
             else:
                 doc["rule_name"] = candidate
             named.append((candidate, doc))
+        self.last_report = self._report.to_dict()
         if self.output_dir:
             if self.target == "content_pack":
                 return write_pack([doc for _, doc in named], self.output_dir,
