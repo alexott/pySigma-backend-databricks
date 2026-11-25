@@ -259,12 +259,21 @@ def test_cs_hashes_sha256():
         ("Details", "DWORD (0x00000001)"),
         ("Details|contains", "QWORD (0x00000000)"),
         ("Details|startswith", "Binary Data"),
+        ("Details|contains", "0x00000001"),
+        ("Details|endswith", "(0x00000001)"),
     ],
 )
 def test_registry_numeric_details_fail(parser, key, value):
     msg = f"field Details: transform reject: numeric/binary registry values are not stored as text in {parser}"
     with pytest.raises(SigmaTransformationError, match=msg):
         _sql(parser, "windows", "registry_set", _sel(key, value))
+
+
+@pytest.mark.parametrize("parser", [CS, "sentinelone_deep_visibility"])
+def test_registry_regex_details_inline_flag_fails(parser):
+    detection = "    sel:\n        Details|re: '(?i)^DWORD \\(0x'\n    condition: sel"
+    with pytest.raises(SigmaTransformationError, match="numeric/binary registry values"):
+        _sql(parser, "windows", "registry_set", detection)
 
 
 @pytest.mark.parametrize("parser", [CS, "sentinelone_deep_visibility"])

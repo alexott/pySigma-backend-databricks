@@ -236,8 +236,9 @@ class BasenameTransform(_NoParams):
                 if found >= 0:
                     index, pos = i, found
         if index < 0:
-            # A contains-shaped value (*text*) may match the directory; endswith (*cmd.exe) is kept.
-            if len(parts) > 1 and parts[0] is _WILD and parts[-1] is _WILD:
+            # Without a separator only a plain value or an endswith-shaped one (*cmd.exe) is kept.
+            # A trailing wildcard (startswith, contains) matches the directory part of a full path.
+            if len(parts) > 1 and parts[-1] is _WILD:
                 raise TransformFailure(self._CANNOT)
             return [(targets, value)]
         head: List[_Part] = [*parts[:index], str(parts[index])[: pos + 1]]
@@ -340,7 +341,7 @@ _HIVE_INSIDE = re.compile(
     r"(?<![A-Za-z0-9_])(?:" + "|".join(re.escape(s) for s, _ in _HIVE_INPUTS) + r")\\",
     re.IGNORECASE,
 )
-_DEFAULT_VALUE = "\\(default)"
+_DEFAULT_VALUE = "(default)"
 
 
 class RegistryPathTransform(Transform):
@@ -578,8 +579,10 @@ class RejectTransform(Transform):
         elif isinstance(value, (SigmaNumber, SigmaBool)):
             text = str(value)
         elif isinstance(value, SigmaRegularExpression):
-            # Best effort: drop a leading anchor and backslash escapes, so ^DWORD \( is DWORD (.
-            text = re.sub(r"\\(.)", r"\1", str(value.regexp).removeprefix("^"))
+            # Best effort: drop a leading inline flag group such as (?i), a leading anchor and
+            # backslash escapes, so (?i)^DWORD \( is DWORD (.
+            regexp = re.sub(r"^\(\?[a-zA-Z]+\)", "", str(value.regexp)).removeprefix("^")
+            text = re.sub(r"\\(.)", r"\1", regexp)
         else:
             raise _unsupported(value)
         if self.pattern.search(text):

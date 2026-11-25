@@ -173,7 +173,7 @@ logsources:
         field: registry_value
         transform:
           reject:
-            pattern: '^\*?(DWORD|QWORD) \(|^\*?Binary Data'
+            pattern: '^\*?(DWORD|QWORD) \(|^\*?Binary Data|^\*?\(?0x[0-9a-f]{1,16}\)?\*?$'
             reason: numeric/binary registry values are not stored as text in sentinelone_deep_visibility
   - match:
       category: dns_query

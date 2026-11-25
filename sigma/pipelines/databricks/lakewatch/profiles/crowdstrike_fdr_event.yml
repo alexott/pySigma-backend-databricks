@@ -150,7 +150,7 @@ logsources:
         field: event.RegStringValue
         transform:
           reject:
-            pattern: '^\*?(DWORD|QWORD) \(|^\*?Binary Data'
+            pattern: '^\*?(DWORD|QWORD) \(|^\*?Binary Data|^\*?\(?0x[0-9a-f]{1,16}\)?\*?$'
             reason: numeric/binary registry values are not stored as text in crowdstrike_fdr_event
     unsupported:
       - Image

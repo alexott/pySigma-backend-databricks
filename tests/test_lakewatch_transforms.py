@@ -174,8 +174,11 @@ def test_basename_keeps_directory_warning_unless_bare_wildcard():
 def test_basename_wildcard_in_file_name_warns():
     with pytest.warns(UserWarning, match="wildcard in the file name"):
         assert str(one("basename", r"*\py*.exe")[1]) == "py*.exe"
-    with pytest.warns(UserWarning, match="wildcard in the file name"):
+    with pytest.warns(UserWarning) as record:
         assert str(one("basename", r"C:\x\a*b.exe")[1]) == "a*b.exe"
+    messages = [str(w.message) for w in record]
+    assert any("wildcard in the file name" in m for m in messages)
+    assert any("directory dropped" in m for m in messages)
 
 
 def test_hashes_validate_prefixed_digests():
@@ -236,7 +239,8 @@ def test_target_transforms_fail_on_null_and_exists(spec, value):
         run(spec, value)
 
 
-REJECT = {"reject": {"pattern": r"^\*?(DWORD|QWORD) \(|^\*?Binary Data", "reason": "numeric values are not text"}}
+REJECT_PATTERN = r"^\*?(DWORD|QWORD) \(|^\*?Binary Data|^\*?\(?0x[0-9a-f]{1,16}\)?\*?$"
+REJECT = {"reject": {"pattern": REJECT_PATTERN, "reason": "numeric values are not text"}}
 
 
 def test_reject_matching_values_fail():
@@ -254,6 +258,21 @@ def test_reject_other_values_pass():
     assert run(REJECT, SigmaRegularExpression("power.*shell"))[0][0] == T
 
 
+def test_reject_bare_hex_numbers_fail():
+    for text in ("0x00000001", "*0x00000001*", "*(0x00000001)", "(0x1)", "0xDEADBEEFDEADBEEF", "*0xff"):
+        with pytest.raises(TransformFailure, match="^numeric values are not text$"):
+            run(REJECT, SigmaString(text))
+    for text in ("0x", "0x12345678901234567", "*0xzz*", "*x0x1*y", "1234", "*ab0x1*"):
+        assert run(REJECT, SigmaString(text)) == [(T, SigmaString(text))]
+
+
+def test_reject_regex_inline_flags():
+    for rx in ("(?i)^DWORD \\(0x", "(?is)^DWORD \\(0x", "^DWORD \\(0x", "(?i)^Binary Data"):
+        with pytest.raises(TransformFailure, match="numeric values"):
+            run(REJECT, SigmaRegularExpression(rx))
+    assert run(REJECT, SigmaRegularExpression("(?i)power.*shell"))[0][0] == T
+
+
 def test_reject_params():
     for bad in ({"reject": {"pattern": "a"}}, {"reject": {"pattern": "(", "reason": "r"}},
                 {"reject": {"pattern": "a", "reason": ""}}, {"reject": {"pattern": 1, "reason": "r"}}, "reject"):
@@ -263,6 +282,10 @@ def test_reject_params():
 
 def test_basename_contains_without_separator_fails():
     for text in ("*Microsoft Office*", "*tomcat*"):
+        with pytest.raises(TransformFailure, match="basename cannot express a pattern on the directory"):
+            run("basename", SigmaString(text))
+    # A startswith-shaped value without a separator cannot be expressed either.
+    for text in ("C:*", "cmd*", "cmd*x*"):
         with pytest.raises(TransformFailure, match="basename cannot express a pattern on the directory"):
             run("basename", SigmaString(text))
     # An endswith-shaped value stays as it is.
@@ -301,6 +324,9 @@ SPLIT = {"registry_path": {"hive": "kernel", "split": {"key": "k", "value": "v"}
 
 def test_registry_path_split_default_value_fails():
     for text in (r"HKLM\SOFTWARE\x\(Default)", r"*\Run\(default)", r"*\x\(Default)*"):
+        with pytest.raises(TransformFailure, match=r"the \(Default\) value name cannot be matched"):
+            run(SPLIT, SigmaString(text))
+    for text in ("*(Default)", "(Default)", "*(DEFAULT)", "x(default)"):
         with pytest.raises(TransformFailure, match=r"the \(Default\) value name cannot be matched"):
             run(SPLIT, SigmaString(text))
     # Without split the value is matched as it is.
