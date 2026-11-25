@@ -14,7 +14,7 @@
 #       https://learn.microsoft.com/exchange/policy-and-compliance/admin-audit-logging/admin-audit-logging
 #   bits-client: Microsoft-Windows-Bits-Client/Operational
 #       https://learn.microsoft.com/microsoftteams/vdi-2-troubleshooting
-#   dns-client: Microsoft-Windows-DNS Client Events/Operational
+#   dns-client: Microsoft-Windows-DNS-Client/Operational
 #       https://learn.microsoft.com/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection
 #   iis-configuration: Microsoft-IIS-Configuration/Operational
 #       https://learn.microsoft.com/answers/questions/1885320/how-to-enable-logs-in-microsoft-iis-configuration
@@ -29,11 +29,12 @@
 #   ntlm: Microsoft-Windows-NTLM/Operational; applocker: Microsoft-Windows-AppLocker/{EXE and DLL, MSI and Script,
 #   Packaged app-Deployment, Packaged app-Execution}.
 #
-# Field-name sources: classic PowerShell EventIDs 400 (engine lifecycle), 600 (provider lifecycle)
-# and 800 (pipeline execution details) and the channel "Windows PowerShell" come from Microsoft Learn
-# about_Eventlogs (powershell-5.1,
-# https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_eventlogs) and
-# the Windows PowerShell logging documentation. Their Data elements are unnamed; `Data` maps to
+# Field-name sources: the channel "Windows PowerShell" comes from Microsoft Learn about_Eventlogs
+# (powershell-5.1,
+# https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_eventlogs).
+# That page doesn't enumerate event IDs; the classic EventIDs 400 (engine lifecycle), 600 (provider
+# lifecycle) and 800 (pipeline execution details) are those of the Windows PowerShell engine,
+# provider and pipeline events. Their Data elements are unnamed; `Data` maps to
 # `EventData[*]` (all string elements joined with newlines; plan 3 ruling 10) and the classic
 # blocks list no event_data, so any other field fails. Other blocks use `event_data: any` (lenient;
 # warning per field, plan 3 ruling 4), set per block. No LGPL Sigma pipeline source was used.
@@ -85,7 +86,7 @@ logsources:
       product: windows
       service: dns-client
     conditions:
-      Channel: 'Microsoft-Windows-DNS Client Events/Operational'
+      Channel: 'Microsoft-Windows-DNS-Client/Operational'
     event_data: any
   - match:
       product: windows

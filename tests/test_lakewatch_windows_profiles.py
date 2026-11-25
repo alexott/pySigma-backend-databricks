@@ -334,7 +334,8 @@ def test_event_logs_header_only():
         "windows_event_logs has the event header only; EventData fields need the custom windows_* parsers"
     )
     sql = _sql("windows_event_logs", _svc("system"), "    sel:\n        EventID: 7045\n    condition: sel")
-    assert "7045" in sql and "System" in sql
+    assert "7045" in sql
+    assert "lower(Channel) = lower('System')" in sql
 
 
 def test_ps_classic_start():
@@ -360,3 +361,14 @@ def test_ps_classic_strict():
             )
     assert "field HostApplication is not mapped by profile windows_event_other" in str(exc.value)
     assert not any("not in a field list" in str(w.message) for w in caught)
+
+
+def test_dns_client_channel_registered_name():
+    queries, _ = _convert_warns(
+        "windows_event_other",
+        _svc("dns-client"),
+        "    sel:\n        QueryName: x\n    condition: sel",
+    )
+    sql = json.loads(queries[0])["sql"]
+    assert "Microsoft-Windows-DNS-Client/Operational" in sql
+    assert "DNS Client Events" not in sql

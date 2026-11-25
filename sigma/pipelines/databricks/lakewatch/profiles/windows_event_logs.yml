@@ -16,7 +16,7 @@
 #       https://learn.microsoft.com/exchange/policy-and-compliance/admin-audit-logging/admin-audit-logging
 #   bits-client: Microsoft-Windows-Bits-Client/Operational
 #       https://learn.microsoft.com/microsoftteams/vdi-2-troubleshooting
-#   dns-client: Microsoft-Windows-DNS Client Events/Operational
+#   dns-client: Microsoft-Windows-DNS-Client/Operational
 #       https://learn.microsoft.com/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection
 #   iis-configuration: Microsoft-IIS-Configuration/Operational
 #       https://learn.microsoft.com/answers/questions/1885320/how-to-enable-logs-in-microsoft-iis-configuration
@@ -116,7 +116,7 @@ logsources:
       product: windows
       service: dns-client
     conditions:
-      Channel: 'Microsoft-Windows-DNS Client Events/Operational'
+      Channel: 'Microsoft-Windows-DNS-Client/Operational'
   - match:
       product: windows
       service: iis-configuration
