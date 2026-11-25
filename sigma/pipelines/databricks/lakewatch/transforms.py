@@ -24,6 +24,8 @@ from typing import (
 from sigma.types import (
     Placeholder,
     SigmaBool,
+    SigmaExists,
+    SigmaNull,
     SigmaNumber,
     SigmaString,
     SigmaType,
@@ -285,6 +287,9 @@ class PathPrefixTransform(Transform):
         """Apply the transform to one value."""
         parts = _string(value).s
         if not parts or not isinstance(parts[0], str):
+            for part in parts:
+                if isinstance(part, str) and any(pattern.search(part) for pattern, _ in self.rules):
+                    raise TransformFailure(f"path inside the pattern '{value}' cannot be rewritten")
             return [(targets, value)]
         for pattern, to in self.rules:
             m = pattern.match(parts[0])
@@ -592,10 +597,22 @@ def apply_chain(
     field: str,
     all_values: bool,
 ) -> List[Alternative]:
-    """Apply ``chain`` in order, fanning out over the alternatives each step returns."""
+    """Apply ``chain`` in order, fanning out over the alternatives each step returns.
+
+    Null and exists checks pass value-level transforms unchanged. A transform that supplies
+    the targets cannot place them and fails.
+    """
     alternatives: List[Alternative] = [(targets, value)]
     for transform in chain:
-        alternatives = [
-            out for t, v in alternatives for out in transform.apply(v, t, field=field, all_values=all_values)
-        ]
+        alternatives = [out for t, v in alternatives for out in _apply_one(transform, v, t, field, all_values)]
     return alternatives
+
+
+def _apply_one(
+    transform: Transform, value: SigmaType, targets: Tuple[str, ...], field: str, all_values: bool
+) -> List[Alternative]:
+    if isinstance(value, (SigmaNull, SigmaExists)):
+        if transform.supplies_targets:
+            raise _unsupported(value)
+        return [(targets, value)]
+    return transform.apply(value, targets, field=field, all_values=all_values)

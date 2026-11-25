@@ -5,6 +5,8 @@ import warnings
 import pytest
 from sigma.types import (
     SigmaBool,
+    SigmaExists,
+    SigmaNull,
     SigmaNumber,
     SigmaRegularExpression,
     SigmaString,
@@ -191,3 +193,43 @@ def test_hashes_validate_prefixed_digests():
 def test_make_sets_original():
     value = one({"path_prefix": {"rewrite": [{"from": "C:", "to": "D:*"}]}}, r"C:\x")[1]
     assert value.original == str(value)
+
+
+DEVPATH = {"path_prefix": {"rewrite": [{"from": "[A-Za-z]:", "to": r"\Device\HarddiskVolume*"}]}}
+
+
+def test_path_prefix_drive_inside_pattern_fails():
+    with pytest.raises(TransformFailure, match="cannot be rewritten"):
+        run(DEVPATH, SigmaString(r"*C:\Users\*"))
+    # No drive letter after the leading wildcard: unchanged.
+    assert str(one(DEVPATH, r"*\Users\*")[1]) == r"*\Users\*"
+
+
+VALUE_LEVEL = [
+    {"map": {"values": {"a": 1}}},
+    {"case": "lower"},
+    "basename",
+    DEVPATH,
+    {"registry_path": {"hive": "kernel"}},
+    {"regex_replace": {"pattern": "a", "replacement": "b"}},
+    "to_int",
+    "to_str",
+]
+SUPPLIES_TARGETS = [
+    HASHES,
+    {"domain_user": {"domain": "d", "user": "u"}},
+    {"registry_path": {"hive": "kernel", "split": {"key": "k", "value": "v"}}},
+]
+
+
+@pytest.mark.parametrize("value", [SigmaNull(), SigmaExists(True)])
+@pytest.mark.parametrize("spec", VALUE_LEVEL)
+def test_value_transforms_pass_null_and_exists(spec, value):
+    assert run(spec, value) == [(T, value)]
+
+
+@pytest.mark.parametrize("value", [SigmaNull(), SigmaExists(False)])
+@pytest.mark.parametrize("spec", SUPPLIES_TARGETS)
+def test_target_transforms_fail_on_null_and_exists(spec, value):
+    with pytest.raises(TransformFailure, match=f"cannot be applied to {type(value).__name__}"):
+        run(spec, value)

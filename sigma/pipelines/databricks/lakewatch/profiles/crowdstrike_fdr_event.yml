@@ -82,11 +82,14 @@ logsources:
       - Description
       - Product
       - Company
+  # Outbound connections only. Sigma's Source is the initiator, and FDR's Local/Remote
+  # addresses equal Source/Destination only for NetworkConnect* events. Inbound
+  # (NetworkReceiveAccept*) events are not covered, and `Initiated: 'false'` fails.
   - match:
       product: windows
       category: network_connection
     conditions:
-      event_simpleName: [NetworkConnectIP4, NetworkConnectIP6, NetworkReceiveAcceptIP4, NetworkReceiveAcceptIP6]
+      event_simpleName: [NetworkConnectIP4, NetworkConnectIP6]
     fields:
       DestinationIp: [event.RemoteAddressIP4, event.RemoteAddressIP6]
       DestinationPort: event.RemotePort
@@ -105,8 +108,6 @@ logsources:
         select_condition:
           'true':
             event_simpleName: [NetworkConnectIP4, NetworkConnectIP6]
-          'false':
-            event_simpleName: [NetworkReceiveAcceptIP4, NetworkReceiveAcceptIP6]
     unsupported:
       # FDR links network events to their process by ContextProcessId only.
       - Image

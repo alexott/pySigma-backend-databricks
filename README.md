@@ -283,7 +283,7 @@ library and are configured in the profile:
 | `map` | `values: {from: to \| [to, ...]}`, `default: keep \| fail` (`fail`) | Replaces a value; a list becomes an OR. Keys are case-insensitive. |
 | `case` | `upper` or `lower` | Changes the case of string values. |
 | `basename` | none | `C:\dir\cmd.exe` and `*\cmd.exe` become `cmd.exe`. Fails for patterns on the directory, such as `startswith`. |
-| `path_prefix` | `rewrite: [{from: <regex>, to: <prefix>}]` | Rewrites the start of a path, for example `C:` to `\Device\HarddiskVolume*`. |
+| `path_prefix` | `rewrite: [{from: <regex>, to: <prefix>}]` | Rewrites the start of a path, for example `C:` to `\Device\HarddiskVolume*`. Fails when a `from` match follows a leading wildcard (`*C:\...`). |
 | `registry_path` | `hive: short \| long \| kernel`, optional `split: {key: <path>, value: <path>}` | Normalizes the hive name (`HKLM`, `HKEY_LOCAL_MACHINE`, `\REGISTRY\MACHINE`, ...). With `split`, see below. |
 | `hashes` | `algos: {MD5: <path>, SHA1: <path>, SHA256: <path>, IMPHASH: <path>}` | Routes `ALGO=digest` values (or a bare digest, by its length) to the column of the algorithm. |
 | `domain_user` | `{domain: <path>, user: <path>}` | Matches `DOMAIN\user` values, see below. |
@@ -310,6 +310,8 @@ fields:
   `field <F>: transform <kind>: <reason> (profile <id>)`. A condition is never dropped silently,
   except hash algorithms the profile doesn't have, which are dropped with a warning. With `|all`,
   or when no value is left, the rule fails instead.
+* `null` and `|exists` checks pass value transforms unchanged. `hashes`, `domain_user` and
+  `registry_path` with `split` fail on them, because they choose the target from the value.
 * Transforms run on the values after the Sigma modifiers, wildcards included. Field references
   (`|fieldref`) to or from a transformed field aren't supported.
 * `registry_path` with `split` and `domain_user` compare the value with the joined expression
@@ -360,6 +362,11 @@ the `event` VARIANT. Windows paths are rewritten to the NT device form
   aren't matched.
 * `Image`, and the other fields of the acting process, are available only in `process_creation`.
   FDR links the other events to their process by `ContextProcessId`, which needs a join.
+* `network_connection` covers outbound connections only (`NetworkConnectIP4`/`IP6`), where FDR's
+  local and remote addresses are Sigma's source and destination. Inbound connections aren't
+  covered, and `Initiated: 'false'` fails the rule.
+* Drive letters (`C:`) are rewritten only at the start of a value. A pattern with a drive letter
+  later in the value, such as `Image|contains: 'C:\Users\'`, fails the rule.
 * `ParentImage` matches the parent's base name (`ParentBaseFileName`), so a full parent path
   drops its directory with a warning. `ParentCommandLine`, `ParentProcessId` (FDR's is a Falcon
   process id), `User`, `CurrentDirectory`, `Description`, `Product` and `Company` aren't

@@ -106,11 +106,22 @@ def test_cs_network_initiated():
     condition: sel""",
     )
     assert "try_variant_get(event, '$.RemotePort', 'double') = 4444" in sql
-    initiated = (
-        "(lower(event_simpleName) = lower('NetworkConnectIP4') OR "
-        "lower(event_simpleName) = lower('NetworkConnectIP6')) AND try_variant_get"
-    )
-    assert initiated in sql
+    assert _names_selected(sql, ["NetworkConnectIP4", "NetworkConnectIP6"])
+    # Outbound only: inbound accept events are never selected.
+    assert "NetworkReceiveAccept" not in sql
+
+
+def test_cs_network_inbound_fails():
+    with pytest.raises(SigmaTransformationError, match="field Initiated: value 'false' is not one of"):
+        _sql(
+            CS,
+            "windows",
+            "network_connection",
+            """    sel:
+        Initiated: 'false'
+        DestinationPort: 4444
+    condition: sel""",
+        )
 
 
 def test_cs_registry_join():
@@ -165,3 +176,43 @@ def test_cs_integrity_level_names_and_sids():
     condition: sel""",
         )
         assert "try_variant_get(event, '$.IntegrityLevel', 'double') = 12288" in sql
+
+
+def test_cs_windash_on_variant_field():
+    sql = _sql(
+        CS,
+        "windows",
+        "process_creation",
+        """    sel:
+        CommandLine|windash|contains: ' -enc '
+    condition: sel""",
+    )
+    assert "try_variant_get(event, '$.CommandLine', 'string') rlike '(?iu).*(" in sql
+    assert "\\\\ /enc\\\\ " in sql
+    assert "ocsf_inner_field" not in sql
+
+
+def test_cs_image_null():
+    sql = _sql(
+        CS,
+        "windows",
+        "process_creation",
+        """    sel:
+        CommandLine|contains: 'x'
+    filter:
+        Image: null
+    condition: sel and not filter""",
+    )
+    assert "try_variant_get(event, '$.imagefilename', 'string') is null" in sql.lower()
+
+
+def test_cs_image_contains_drive_fails():
+    with pytest.raises(SigmaTransformationError, match="field Image: transform path_prefix: .*cannot be rewritten"):
+        _sql(
+            CS,
+            "windows",
+            "process_creation",
+            """    sel:
+        Image|contains: 'C:\\Users\\'
+    condition: sel""",
+        )

@@ -376,6 +376,9 @@ class DatabricksBackend(TextQueryBackend):
         if not field:
             return None
         if self._current_profile is not None:
+            if field in self._field_overrides:
+                # An expression rendered already (an inner placeholder): use it as it is.
+                return None
             return self._resolve_parsed_field(field)
         if not self._ocsf_enabled():
             return None

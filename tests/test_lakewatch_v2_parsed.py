@@ -290,6 +290,17 @@ def test_parsed_freeform_variant_null_exists_regex_cidr(env):
     assert "\x00" not in sql
 
 
+def test_parsed_windash_on_variant_and_array_paths(env):
+    sql = _one(env, """    sel:
+        requestParameters.cmd|windash|contains: ' -x '
+        resources.arn|windash|contains: '-y'
+    condition: sel""")
+    assert "try_variant_get(requestParameters, '$.cmd', 'string') rlike '(?iu).*(" in sql
+    assert "\\\\ /x\\\\ " in sql
+    assert "exists(resources, x0 -> try_variant_get(x0, '$.arn', 'string') rlike '(?iu).*(" in sql
+    assert "\x00" not in sql and "ocsf_inner_field" not in sql
+
+
 def test_parsed_cidr_plain_column(env):
     sql = _one(env, """    sel:
         eventSource|cidr: 10.0.0.0/8
