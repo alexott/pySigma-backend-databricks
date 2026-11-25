@@ -1,6 +1,7 @@
 """Databricks/Apache Spark SQL backend for pySigma, including Lakewatch output format."""
 
 import copy
+import dataclasses
 import json
 import re
 import warnings
@@ -421,9 +422,7 @@ class DatabricksBackend(TextQueryBackend):
             return [], self._named_entry(path)
         if path.join:
             # Scalar parts (no arrays), each extracted as a string; an empty part is skipped.
-            parts = ", ".join(
-                f"nullif({self._render_path(part, SigmaString(''))[1]}, '')" for part in path.join
-            )
+            parts = ", ".join(f"nullif({self._join_part(part)}, '')" for part in path.join)
             return [], f"concat_ws('{self.sql_quote_regex(path.join_sep)}', {parts})"
         levels: List[Tuple[str, str]] = []
         base: Optional[str] = None
@@ -438,6 +437,14 @@ class DatabricksBackend(TextQueryBackend):
             else:
                 leaf = self._json_cast(f"{leaf}:{self._json_path(path.json_path)}", value)
         return levels, leaf
+
+    def _join_part(self, part: FieldPath) -> str:
+        """Return the string expression of a scalar join part, whatever its declared type."""
+        if part.json_path:
+            # A VARIANT key is always extracted as a string, also when declared with another type.
+            return self._render_path(dataclasses.replace(part, json_type=None), SigmaString(""))[1]
+        expr = self._render_path(part, SigmaString(""))[1]
+        return expr if part.leaf_type == "STRING" else f"cast({expr} AS STRING)"
 
     def _named_entry(self, path: FieldPath) -> str:
         """Value of a named entry of a ``{_Name, _VALUE}`` list (VARIANT or ARRAY<STRUCT>)."""

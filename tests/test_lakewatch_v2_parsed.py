@@ -21,7 +21,9 @@ SCHEMA = {
                 "eventName": {"type": "STRING", "storage": "column"},
                 "eventSource": {"type": "STRING", "storage": "column"},
                 "eventType": {"type": "STRING", "storage": "column"},
-                "EventID": {"type": "STRING", "storage": "column", "allowed": ["1", "7"]},
+                "EventID": {"type": "STRING", "storage": "column"},
+                "Level": {"type": "STRING", "storage": "column", "allowed": ["1", "7"]},
+                "RegNum": {"type": "BIGINT", "storage": "column"},
                 "userIdentity": {"type": "VARIANT", "storage": "column"},
                 "userIdentity.arn": {"type": "STRING", "storage": "variant"},
                 "userIdentity.type": {"type": "STRING", "storage": "variant"},
@@ -47,6 +49,7 @@ SCHEMA = {
                 "RegVal": {"type": "STRING", "storage": "column"},
                 "meta": {"type": "VARIANT", "storage": "column"},
                 "meta.a": {"type": "STRING", "storage": "variant"},
+                "meta.n": {"type": "BIGINT", "storage": "variant"},
                 "hashes_arr": {"type": "ARRAY", "storage": "column", "element": "STRING"},
             },
         }
@@ -72,6 +75,7 @@ EXTRA_FIELDS = {
     "Image": "EventData[Image]",
     "QueryName": ["EventData[QueryName]", "Data[QueryName]"],
     "Quote": "EventData[O'Brien]",
+    "Level": "Level",
 }
 
 
@@ -943,6 +947,32 @@ def test_join_null(env):
     assert _convert_cond(_parsed_backend(env), _reg_join(), SigmaNull()) == f"{REG_JOIN} is null"
 
 
+def test_join_non_string_parts_rendered_as_strings(env):
+    from sigma.types import SigmaString
+
+    from sigma.backends.databricks.field_paths import join_field_name
+
+    backend = _parsed_backend(env)
+    sql = _convert_cond(backend, join_field_name("\\", ["RegNum", "meta.n"]), SigmaString("x"))
+    assert sql == (
+        "lower(concat_ws('\\\\', nullif(cast(RegNum AS STRING), ''), "
+        "nullif(try_variant_get(meta, '$.n', 'string'), ''))) = lower('x')"
+    )
+
+
+def test_join_declared_string_variant_part_unchanged(env):
+    from sigma.types import SigmaString
+
+    from sigma.backends.databricks.field_paths import join_field_name
+
+    backend = _parsed_backend(env)
+    sql = _convert_cond(backend, join_field_name("/", ["meta.a", "RegKey"]), SigmaString("x"))
+    assert sql == (
+        "lower(concat_ws('/', nullif(try_variant_get(meta, '$.a', 'string'), ''), "
+        "nullif(RegKey, ''))) = lower('x')"
+    )
+
+
 @pytest.mark.parametrize("swap", [False, True])
 def test_join_fieldref_fails(env, swap):
     from sigma.types import SigmaFieldReference
@@ -988,14 +1018,14 @@ def test_undeclared_join_part(env):
 def test_allowed_value_warning(env):
     backend = env(parsers="p_ct", table_name="ct_table")
     rule = _rule("""    sel:
-        EventID: '11'
+        Level: '11'
     condition: sel""", title="Allowed Rule")
     with pytest.warns(UserWarning, match="never matches") as record:
         sqls = _sqls(backend, rule)
-    assert len(sqls) == 1 and "lower(EventID) = lower('11')" in sqls[0]
+    assert len(sqls) == 1 and "lower(Level) = lower('11')" in sqls[0]
     messages = [str(w.message) for w in record if "never matches" in str(w.message)]
     assert messages == [
-        "rule 'Allowed Rule': EventID = '11' never matches parser fx_ct; allowed: ['1', '7']"
+        "rule 'Allowed Rule': Level = '11' never matches parser fx_ct; allowed: ['1', '7']"
     ]
 
 
@@ -1003,7 +1033,7 @@ def test_allowed_value_warning(env):
 def test_allowed_value_no_warning(env, value):
     backend = env(parsers="p_ct", table_name="ct_table")
     rule = _rule(f"""    sel:
-        EventID: {value}
+        Level: {value}
     condition: sel""")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -1012,9 +1042,9 @@ def test_allowed_value_no_warning(env, value):
 
 def test_allowed_value_warning_number(env):
     backend = env(parsers="p_ct", table_name="ct_table")
-    with pytest.warns(UserWarning, match="EventID = '4688' never matches parser fx_ct"):
+    with pytest.warns(UserWarning, match="Level = '4688' never matches parser fx_ct"):
         _sqls(backend, _rule("""    sel:
-        EventID: 4688
+        Level: 4688
     condition: sel"""))
 
 
