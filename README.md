@@ -336,7 +336,7 @@ rows. The backend picks the summary like this:
    rule group into one alert.
 
 A rule can set `summary`, `context` and `select` with the `lakewatch:` attribute, a top-level key
-of the Sigma rule:
+of the Sigma rule. This example targets the `windows_sysmon_process` profile:
 
 ```yaml
 title: Suspicious PowerShell
@@ -350,7 +350,7 @@ lakewatch:
     sigma_user: User              # a Sigma field of the profile
     sigma_cmd: CommandLine
     parent: ParentImage
-    tail: "right(CommandLine, 20)"   # anything else is raw SQL
+    host_upper: "upper(Computer)"    # anything else is raw SQL
 ```
 
 `-O overrides=<file>` takes the same keys from a YAML file keyed by Sigma id. An id maps either
@@ -366,7 +366,7 @@ a1b2c3d4-0000-4000-8000-000000000001:        # per profile
     summary: "{sigma_entity}: suspicious process"
   crowdstrike_fdr_event:
     select:
-      sigma_user: UserName
+      sigma_user: event.UserName
 ```
 
 Mixing the keys with profile ids in one entry is an error.
@@ -416,8 +416,8 @@ my_pack/rules/
   converted in this run. The file is edited as text, not re-serialized, so your formatting stays.
   A layout the merge doesn't support (for example a flow-style list) stops the run with a
   configuration error and leaves the file alone, rather than guessing.
-* **`appIndex.rules.yaml`** is a fragment: `rules:` with the name of every rule directory in
-  `output_dir`, sorted. The backend doesn't touch `appIndex.yaml`. Paste the fragment into it.
+* **`appIndex.rules.yaml`** is a fragment that lists every rule directory in `output_dir`, sorted:
+  `rules: [{name: <rule>}, ...]` (written as a block list of `- name: <rule>`). The backend doesn't touch `appIndex.yaml`. Paste the fragment into it.
 
 Field mapping is strict. A Sigma field that isn't a key of the profile's `fields` fails that
 rule with `field <name> is not mapped by profile <id>`, and keyword (unbound) searches fail as
