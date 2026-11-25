@@ -6,7 +6,21 @@ import json
 import re
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, FrozenSet, List, Optional, Pattern, Sequence, Tuple, Type, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+    Pattern,
+    Sequence,
+    Set,
+    Tuple,
+    Type,
+    Union,
+)
 
 import yaml
 from sigma.conditions import ConditionAND, ConditionFieldEqualsValueExpression, ConditionItem, ConditionNOT, ConditionOR
@@ -15,7 +29,7 @@ from sigma.conversion.deferred import DeferredQueryExpression
 from sigma.conversion.state import ConversionState
 from sigma.exceptions import SigmaConfigurationError, SigmaConversionError
 from sigma.processing.pipeline import ProcessingPipeline
-from sigma.rule import SigmaLevel, SigmaRule
+from sigma.rule import SigmaDetection, SigmaLevel, SigmaRule
 from sigma.types import (
     CompareOperators,
     SigmaBool,
@@ -31,7 +45,7 @@ from sigma.types import (
 )
 
 from .field_paths import FieldPath, UnknownFieldError, resolve_schema_path, split_join_field_name
-from .json_text import json_escape_string
+from .json_text import json_escape_string, looks_like_json
 from .lakewatch_maps import (
     FIDELITY_MAP,
     SEVERITY_MAP,
@@ -54,7 +68,7 @@ from .schema_catalog import ParserSchema, SchemaCatalog
 
 if TYPE_CHECKING:  # pragma: no cover
     # Imported lazily at runtime: the profile module imports this package (import cycle).
-    from sigma.pipelines.databricks.lakewatch.profile import Profile
+    from sigma.pipelines.databricks.lakewatch.profile import Profile, RawSource
 
 
 # Type of a Windows EventData-style VARIANT: a list of {_Name, _VALUE} elements.
@@ -96,6 +110,56 @@ def _represent_str_block(dumper: yaml.SafeDumper, data: str):
 
 
 _LakewatchDumper.add_representer(str, _represent_str_block)
+
+
+def _collect_field_values(detection: Any, field: str, found: List[Set[str]]) -> None:
+    for item in detection.detection_items:
+        if isinstance(item, SigmaDetection):
+            _collect_field_values(item, field, found)
+        elif item.field == field:
+            values: Set[str] = set()
+            for v in item.value:
+                if isinstance(v, SigmaString):
+                    values.add("*" if v.contains_special() else str(v).lower())
+                elif isinstance(v, SigmaNumber):
+                    values.add(str(v).lower())
+                else:
+                    values.add("*")
+            found.append(values)
+
+
+def rule_field_values(rule: SigmaRule, field: str) -> Optional[Set[str]]:
+    """Lower-cased values of all detection items named ``field``; ``*`` marks a wildcard or odd value.
+
+    Returns None when no detection item names the field.
+    """
+    found: List[Set[str]] = []
+    for detection in rule.detection.detections.values():
+        _collect_field_values(detection, field, found)
+    if not found:
+        return None
+    return set().union(*found)
+
+
+def _routes(profile: "Profile", schema: ParserSchema, block: Any, rule: SigmaRule) -> bool:
+    """Whether the rule is routed to this profile block by its route field's values."""
+    route = block.route
+    if route is None:
+        return True
+    values = rule_field_values(rule, route.field)
+    if values is None or "*" in values:
+        return True
+    include = route.include
+    if include is None and not route.exclude:
+        include = frozenset()
+        for mapping_target in profile.mappings_for(block)[route.field].targets:
+            info = schema.get(mapping_target)
+            if info is None or info.allowed is None:
+                return True
+            include |= frozenset(a.lower() for a in info.allowed)
+    if include is not None:
+        return any(v in include for v in values)
+    return any(v not in route.exclude for v in values)
 
 
 class DatabricksBackend(TextQueryBackend):
@@ -325,6 +389,10 @@ class DatabricksBackend(TextQueryBackend):
         self._current_profile: Optional[Tuple["Profile", ParserSchema, str]] = None
         # Targets of the current profile block's mappings with ``undeclared: true``.
         self._current_undeclared: FrozenSet[str] = frozenset()
+        # Raw event source of the current profile (keyword searches) and whether the approximate
+        # warning was already issued for the current rule and profile.
+        self._current_raw: Optional["RawSource"] = None
+        self._raw_warned = False
 
     @staticmethod
     def _parse_bool_option(name: str, value: Optional[Union[bool, str]]) -> Optional[bool]:
@@ -371,6 +439,45 @@ class DatabricksBackend(TextQueryBackend):
         if not self._raw_log_field_set and self._ocsf_enabled():
             return self.ocsf_raw_log_field
         return self.raw_log_field
+
+    def _raw_expression(self) -> Tuple[str, "RawSource"]:
+        """Return the SQL expression of the raw event text keywords search in, and its source.
+
+        Outside parsed-table mode this is the escaped raw log field (text). In parsed mode it is
+        the profile's raw source, or the ``raw_log_field`` option when given.
+        """
+        from sigma.pipelines.databricks.lakewatch.profile import RawSource
+
+        if self._current_profile is None:
+            name = self._raw_field()
+            return self.escape_and_quote_field(name), RawSource("column", name, "text")
+        profile, schema, _ = self._current_profile
+        raw = self._current_raw
+        if raw is None:
+            raise self._parsed_error(f"no raw event for keyword search in profile {profile.profile}")
+        if raw.kind == "column":
+            path = resolve_schema_path(schema, raw.value)
+            return self._render_path(path, SigmaString(""))[1], raw
+        if raw.kind == "entries":
+            path = resolve_schema_path(schema, f"{raw.value}[x]")
+            entries = self._named_entries(path)
+            return f"array_join(transform({entries}, e -> e._VALUE), '\\n')", raw
+        return f"({raw.value})", raw
+
+    def _warn_raw(self, raw: "RawSource") -> None:
+        """Warn once per rule and profile that the keyword search is approximate."""
+        if self._current_profile is None or not raw.approximate or self._raw_warned:
+            return
+        self._raw_warned = True
+        self._warn(f"keyword search over the {raw.kind} source of profile "
+                   f"{self._current_profile[0].profile} is approximate")
+
+    def _warn(self, message: str) -> None:
+        """Issue a UserWarning naming the current rule and, in parsed mode, the profile."""
+        rule = self._current_rule
+        title = rule.title if rule is not None else "?"
+        pid = f" (profile {self._current_profile[0].profile})" if self._current_profile else ""
+        warnings.warn(f"rule '{title}'{pid}: {message}", UserWarning, stacklevel=2)
 
     def _field_path(self, field: Optional[str]) -> Optional[FieldPath]:
         """Path of a field that needs backend rendering, or None to render it as a plain name.
@@ -673,12 +780,17 @@ class DatabricksBackend(TextQueryBackend):
             raise ValueError("Unbound keyword search requires raw_log_field to be configured")
 
         # Use raw log field for keyword search
-        field = self.escape_and_quote_field(self._raw_field())
+        field, raw = self._raw_expression()
         value = cond.value
 
         # Type narrowing: ensure value is SigmaString
         if not isinstance(value, SigmaString):
             raise TypeError(f"Expected SigmaString, got {type(value)}")
+        self._warn_raw(raw)
+        if raw.encoding == "json" and self._current_profile is not None:
+            if looks_like_json(value):
+                self._warn("keyword looks like a JSON fragment")
+            value = json_escape_string(value)
 
         # Handle wildcards similar to field-based logic
         if (self.contains_expression is not None
@@ -721,7 +833,10 @@ class DatabricksBackend(TextQueryBackend):
         if not isinstance(cond.value, SigmaRegularExpression):
             raise TypeError(f"Expected SigmaRegularExpression, got {type(cond.value)}")
 
-        field = self.escape_and_quote_field(self._raw_field())
+        field, raw = self._raw_expression()
+        self._warn_raw(raw)
+        if raw.encoding == "json" and self._current_profile is not None:
+            self._warn("regex keyword is not JSON-escaped")
         if self.re_expression:
             return self.re_expression.format(field=field, regex=self.convert_value_re(cond.value, state))
         raise ValueError("re_expression is not defined")
@@ -732,7 +847,8 @@ class DatabricksBackend(TextQueryBackend):
             raise ValueError("Unbound numeric search requires raw_log_field to be configured")
 
         # Convert number to string search in raw log
-        field = self.escape_and_quote_field(self._raw_field())
+        field, raw = self._raw_expression()
+        self._warn_raw(raw)
         value = self.make_sql_string(SigmaString(str(cond.value)))
         if self.contains_expression:
             return self.contains_expression.format(field=field, value=value)
@@ -948,7 +1064,12 @@ class DatabricksBackend(TextQueryBackend):
         """
         if self._selected is not None:
             return
-        from sigma.pipelines.databricks.lakewatch.profile import load_profiles, validate_profile
+        from sigma.pipelines.databricks.lakewatch.profile import (
+            RawSource,
+            _validate_raw,
+            load_profiles,
+            validate_profile,
+        )
 
         if not (self.catalog_name or "").strip() or not (self.schema_name or "").strip():
             raise SigmaConfigurationError(
@@ -992,6 +1113,8 @@ class DatabricksBackend(TextQueryBackend):
             profile = profiles[pid]
             schema = catalog.get(profile.parser)
             validate_profile(profile, schema)
+            if self._raw_log_field_set:
+                _validate_raw(profile, schema, RawSource("column", self.raw_log_field, "text"))
             table = tables.get(pid) or table_name
             if not table:
                 missing.append(pid)
@@ -1014,6 +1137,20 @@ class DatabricksBackend(TextQueryBackend):
             for profile, schema, table in self._selected
             if (block := profile.block_for(rule.logsource)) is not None
         ]
+        logsource_matches = matches
+        matches = [m for m in matches if _routes(m[0], m[1], m[3], rule)]
+        if logsource_matches and not matches:
+            route = next(m[3].route for m in logsource_matches if m[3].route is not None)
+            values = sorted(rule_field_values(rule, route.field) or ())
+            error = self._parsed_error(
+                f"no selected Lakewatch parser profile accepts {route.field} values {values} "
+                f"of this rule; matching the logsource: "
+                f"{', '.join(m[0].profile for m in logsource_matches)}"
+            )
+            if self.collect_errors:
+                self.errors.append((rule, error))
+                return []
+            raise error
         if not matches:
             ls = rule.logsource
             error = self._parsed_error(
@@ -1036,6 +1173,7 @@ class DatabricksBackend(TextQueryBackend):
         finally:
             self.last_processing_pipeline = previous
             self._current_profile = None
+            self._current_raw = None
             self._current_undeclared = frozenset()
             self._current_rule = rule
         return results
@@ -1045,12 +1183,14 @@ class DatabricksBackend(TextQueryBackend):
                              args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> List[Any]:
         """Convert a copy of the rule with the user pipeline followed by the profile pipeline."""
         from sigma.pipelines.databricks.lakewatch import build_profile_pipeline
+        from sigma.pipelines.databricks.lakewatch.profile import RawSource
 
         pipeline = (
             self.backend_processing_pipeline
             + (self.processing_pipeline if self.processing_pipeline is not None else ProcessingPipeline())
             + self.output_format_processing_pipeline[output_format]
-            + build_profile_pipeline(selected[0], block, rule.logsource)
+            + build_profile_pipeline(selected[0], block, rule.logsource,
+                                     keywords=True if self._raw_log_field_set else None)
         )
         # Same variables as Backend.init_processing_pipeline().
         pipeline.vars.update({"backend_" + key: value for key, value in self.backend_options.items()})
@@ -1058,6 +1198,10 @@ class DatabricksBackend(TextQueryBackend):
         pipeline.vars["output_format"] = output_format
         self.last_processing_pipeline = pipeline
         self._current_profile = selected
+        self._current_raw = (
+            RawSource("column", self.raw_log_field, "text") if self._raw_log_field_set else selected[0].raw
+        )
+        self._raw_warned = False
         self._current_undeclared = frozenset(
             target
             for mapping in selected[0].mappings_for(block).values() if mapping.undeclared

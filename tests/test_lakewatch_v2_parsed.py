@@ -45,6 +45,8 @@ SCHEMA = {
                 "Data[]._Name": {"type": "STRING", "storage": "struct"},
                 "Data[]._VALUE": {"type": "STRING", "storage": "struct"},
                 "event": {"type": "VARIANT", "storage": "column"},
+                "raw_line": {"type": "STRING", "storage": "column"},
+                "Message": {"type": "STRING", "storage": "column"},
                 "RegKey": {"type": "STRING", "storage": "column"},
                 "RegVal": {"type": "STRING", "storage": "column"},
                 "meta": {"type": "VARIANT", "storage": "column"},
@@ -1229,3 +1231,134 @@ def test_to_hex_sql(env):
         _one(env, """    sel:
         ProcessId|gt: 4
     condition: sel""", extra_fields=extra)
+
+
+# --- routing and keyword search --------------------------------------------------------------
+
+
+def _write(env_backend_dir, pid, route=None, extra=None):
+    block = {"match": {"product": "windows", "service": "security"}}
+    if route:
+        block["route"] = route
+    data = {"profile": pid, "version": 1, "parser": "fx_ct",
+            "fields": {"EventID": "EventID", "eventName": "eventName"}, "logsources": [block]}
+    data.update(extra or {})
+    (env_backend_dir / f"{pid}.yml").write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+@pytest.fixture
+def renv(tmp_path):
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(json.dumps(SCHEMA), encoding="utf-8")
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+
+    def make(profile_specs, **kwargs):
+        for pid, route, extra in profile_specs:
+            _write(profiles, pid, route, extra)
+        kwargs.setdefault("catalog_name", "cat")
+        kwargs.setdefault("schema_name", "sch")
+        kwargs.setdefault("lakewatch_schemas", str(schema_file))
+        kwargs.setdefault("lakewatch_profiles_dir", str(profiles))
+        return DatabricksBackend(**kwargs)
+
+    return make
+
+
+_THREE = [
+    ("pa", {"field": "EventID", "in": ["4624"]}, None),
+    ("pb", {"field": "EventID", "in": ["4688"]}, None),
+    ("pc", {"field": "EventID", "not_in": ["4624", "4688"]}, None),
+]
+_TABLES = "pa:ta,pb:tb,pc:tc"
+
+
+def _win_rule(detection, title="Win Rule"):
+    return _rule(detection, product="windows", service="security", title=title)
+
+
+def _tables(backend, rule):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return [json.loads(q)["sql"] for q in backend.convert_rule(rule, "lakewatch_v2")]
+
+
+def test_route_two_groups(renv):
+    b = renv(_THREE, parsers="pa,pb,pc", table_map=_TABLES)
+    detection = "    sel:\n        EventID:\n            - 4624\n            - 4688\n    condition: sel"
+    sqls = _tables(b, _win_rule(detection))
+    assert len(sqls) == 2
+    assert "ta" in sqls[0] and "tb" in sqls[1]
+
+
+def test_route_no_field_fans_out(renv):
+    b = renv(_THREE, parsers="pa,pb,pc", table_map=_TABLES)
+    assert len(_tables(b, _win_rule("    sel:\n        eventName: x\n    condition: sel"))) == 3
+
+
+def test_route_no_profile_message(renv):
+    b = renv(_THREE[1:], parsers="pb,pc", table_map="pb:tb,pc:tc")
+    with pytest.raises(SigmaConversionError, match=r"accepts EventID values \['4624'\]"):
+        _tables(b, _win_rule("    sel:\n        EventID: 4624\n    condition: sel"))
+
+
+def test_route_wildcard_and_default_allowed(renv):
+    specs = [("pa", {"field": "Level"}, {"fields": {"Level": "Level", "eventName": "eventName"}}),
+             ("pb", {"field": "Level", "in": ["9"]}, {"fields": {"Level": "Level", "eventName": "eventName"}})]
+    b = renv(specs, parsers="pa,pb", table_map="pa:ta,pb:tb")
+    assert len(_tables(b, _win_rule("    sel:\n        Level: '1'\n    condition: sel"))) == 1
+    assert len(_tables(b, _win_rule("    sel:\n        Level: '9*'\n    condition: sel"))) == 2
+
+
+def _kw(renv, raw, detection="    keywords:\n        - evil\n    condition: keywords", **kwargs):
+    extra = {"raw": raw} if raw else None
+    b = renv([("pa", None, extra)], parsers="pa", table_name="t", **kwargs)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sqls = [json.loads(q)["sql"] for q in b.convert_rule(_win_rule(detection), "lakewatch_v2")]
+    return sqls[0], [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
+
+
+def test_keyword_text_column(renv):
+    sql, warns = _kw(renv, {"column": "raw_line"})
+    assert "contains(lower(raw_line), lower('evil'))" in sql
+    assert not [w for w in warns if "approximate" in w]
+
+
+def test_keyword_entries(renv):
+    sql, warns = _kw(renv, {"entries": "EventData"})
+    assert "contains(lower(array_join(transform(coalesce(" in sql
+    assert "e -> e._VALUE), '\\n')), lower('evil'))" in sql
+    assert len([w for w in warns if "approximate" in w]) == 1
+    assert "Win Rule" in warns[0] and "pa" in warns[0]
+
+
+def test_keyword_json_escaped_sql(renv):
+    sql, warns = _kw(renv, {"expr": "to_json(raw_event)", "encoding": "json"},
+                     "    keywords:\n        - '\\Temp\\'\n    condition: keywords")
+    # \Temp\ -> JSON escape \\Temp\\ -> SQL escape (four backslashes each)
+    assert r"contains(lower((to_json(raw_event))), lower('\\\\Temp\\\\'))" in sql
+
+
+def test_keyword_json_fragment_warns(renv):
+    _, warns = _kw(renv, {"expr": "to_json(raw_event)", "encoding": "json"},
+                   "    keywords:\n        - 'a\":'\n    condition: keywords")
+    assert any("looks like a JSON fragment" in w for w in warns)
+
+
+def test_keyword_regex_json_warns(renv):
+    _, warns = _kw(renv, {"expr": "to_json(raw_event)", "encoding": "json"},
+                   "    keywords:\n        '|re': 'a.b'\n    condition: keywords")
+    assert any("not JSON-escaped" in w for w in warns)
+
+
+def test_raw_log_field_override(renv):
+    sql, _ = _kw(renv, None, raw_log_field="Message")
+    assert "contains(lower(Message), lower('evil'))" in sql
+    with pytest.raises(SigmaConfigurationError):
+        _kw(renv, None, raw_log_field="nope")
+
+
+def test_keyword_without_raw_fails(renv):
+    with pytest.raises(SigmaTransformationError, match="no raw event for keyword search in profile pa"):
+        _kw(renv, None)

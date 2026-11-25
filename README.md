@@ -430,6 +430,41 @@ Its limitations:
 * Only `process_creation`, `file_event` and `network_connection` have blocks. Other categories
   (`image_load`, `registry_set`, `dns_query`, ...) fail with the no-profile reason.
 
+#### Keyword search and routing
+
+**Keywords.** A keyword (a detection list without a field name) is searched in the raw event of
+the profile. The profile says where it is with `raw:`, one of:
+
+* `raw: {column: raw_line}`: a STRING column, searched as is (`contains(lower(col), lower('x'))`).
+* `raw: {entries: EventData}`: the `_VALUE`s of the named entries joined with newlines.
+* `raw: {expr: "to_json(raw_event)", encoding: json}`: any SQL expression; `encoding` is `text`
+  or `json` and is required.
+
+`-O raw_log_field=<column>` overrides the raw source of every selected profile with that column
+(it must be a STRING column of each selected parser). A profile with no `raw` and no override
+fails a rule with keywords: `no raw event for keyword search in profile <id>`.
+
+Escaping caveats. Searches over `entries` and over `json` text are approximate and raise a
+`UserWarning` (once per rule and profile):
+
+* With `encoding: json`, keywords are JSON-escaped (`\` becomes `\\`, `"` becomes `\"`), then
+  SQL-escaped, so a Windows path keyword matches the JSON text. Non-ASCII text is kept as is,
+  but the JSON of a VARIANT may write it as `\uXXXX`. A regex keyword is not JSON-escaped (it
+  warns), and a keyword that looks like a JSON fragment (`":` or `{`) warns too.
+* With `entries`, a keyword can match across the join of two values, and it never sees the names.
+
+**Routing.** A profile block can have `route: {field: EventID, in: [...]}` (or `not_in`). Parsers
+split by EventID (Security, Sysmon, PowerShell) all match a service-based rule, so the rule is
+converted only for the blocks whose route accepts at least one of the values the rule gives for
+the field (wildcards always count, and so do values under `not`). A bare `route: {field: ...}`
+uses the `allowed` list of the mapped schema field. A rule that never names the field goes to
+every matching profile. If the rule matches the logsource of some profile but none routes, it
+fails with `no selected Lakewatch parser profile accepts <field> values [...] of this rule`.
+
+**Unmapped fields.** `event_data: any` accepts any EventData name (each use raises a
+`UserWarning`); a list of names is strict. `unmapped_hint:` text is appended to the error of a
+field the profile does not map.
+
 ## OCSF field rendering
 
 When the target schema is OCSF, the dotted field names produced by the OCSF pipeline are rendered
