@@ -1178,3 +1178,54 @@ def test_hashes_end_to_end_array_column(env):
         Hashes: 'MD5={md5}'
     condition: sel""", extra_fields={"Hashes": {"transform": {"hashes": {"algos": {"MD5": "hashes_arr"}}}}})
     assert f"exists(hashes_arr, x0 -> lower(x0) = lower('{md5}'))" in sql
+
+
+FIRST_USER = {"User": {"transform": [
+    {"reject": {"pattern": "(?i)AUTHORI|AUTORI", "reason": "system account"}},
+    {"first_set": {"candidates": [
+        {"domain": "EventData[TargetDomainName]", "user": "EventData[TargetUserName]"},
+        {"domain": "EventData[SubjectDomainName]", "user": "EventData[SubjectUserName]"}]}}]}}
+
+
+def test_first_set_sql(env):
+    sql = _one(env, r"""    sel:
+        User|endswith: '\alice'
+    condition: sel""", extra_fields=FIRST_USER)
+    assert "endswith(lower(CASE WHEN coalesce(" in sql
+    assert "e._Name = 'TargetUserName'" in sql
+    assert "e._Name = 'SubjectUserName'" in sql
+    assert ", '') NOT IN ('-', '') THEN concat_ws(" in sql
+    assert " ELSE concat_ws(" in sql
+    assert sql.count("CASE WHEN coalesce(") == 1
+    assert "END), lower('\\\\alice'))" in sql
+    with pytest.raises(Exception, match="system account"):
+        _one(env, """    sel:
+        User|contains: AUTHORI
+    condition: sel""", extra_fields=FIRST_USER)
+
+
+def test_first_set_fieldref_fails(env):
+    from sigma.types import SigmaFieldReference
+
+    from sigma.backends.databricks.field_paths import first_set_field_name
+
+    backend = _parsed_backend(env)
+    name = first_set_field_name(["EventData[A]", "EventData[B]"], ["-"])
+    with pytest.raises(Exception, match="joined fields"):
+        backend._check_parsed_field_reference(
+            backend._resolve_parsed_field(name), SigmaFieldReference("eventName"))
+    with pytest.raises(Exception, match="joined fields"):
+        backend._check_parsed_field_reference(
+            backend._resolve_parsed_field("eventName"), SigmaFieldReference(name))
+
+
+def test_to_hex_sql(env):
+    extra = {"ProcessId": {"field": "EventData[NewProcessId]", "transform": "to_hex"}}
+    sql = _one(env, """    sel:
+        ProcessId: 4120
+    condition: sel""", extra_fields=extra)
+    assert f"lower({_entry(EVENT_DATA, 'NewProcessId')}) = lower('0x1018')" in sql
+    with pytest.raises(Exception, match="to_hex"):
+        _one(env, """    sel:
+        ProcessId|gt: 4
+    condition: sel""", extra_fields=extra)

@@ -3,7 +3,7 @@ import json
 import re
 import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 from .schema_catalog import ParserSchema
 
@@ -37,6 +37,8 @@ class FieldPath:
     allowed: Optional[Tuple[str, ...]] = None
     join: Tuple["FieldPath", ...] = ()
     join_sep: str = ""
+    first: Tuple["FieldPath", ...] = ()
+    first_unset: Tuple[str, ...] = ()
 
     @property
     def whole_variant(self) -> bool:
@@ -69,6 +71,48 @@ def split_join_field_name(name: str) -> Optional[Tuple[str, List[str]]]:
     ):
         return None
     return decoded[0], decoded[1:]
+
+
+FIRST_PREFIX = "__lakewatch_first__"
+
+
+def first_set_field_name(
+    candidates: Sequence[Union[str, Tuple[str, str]]], unset: Sequence[str]
+) -> str:
+    """Return the synthetic field name for the first set of ``candidates``.
+
+    A candidate is a field path or a ``(domain, user)`` pair (joined with a backslash). A
+    value counts as unset if it is NULL, empty or one of ``unset``.
+    """
+    return FIRST_PREFIX + json.dumps(
+        {"candidates": [c if isinstance(c, str) else list(c) for c in candidates], "unset": list(unset)}
+    )
+
+
+def split_first_set_field_name(
+    name: str,
+) -> Optional[Tuple[List[Union[str, Tuple[str, str]]], List[str]]]:
+    """Return ``(candidates, unset)`` of a name built by ``first_set_field_name``, or None."""
+    if not name.startswith(FIRST_PREFIX):
+        return None
+    try:
+        decoded = json.loads(name[len(FIRST_PREFIX):])
+    except ValueError:
+        return None
+    if not isinstance(decoded, dict) or set(decoded) != {"candidates", "unset"}:
+        return None
+    raw, unset = decoded["candidates"], decoded["unset"]
+    if not isinstance(raw, list) or not isinstance(unset, list) or not all(isinstance(u, str) for u in unset):
+        return None
+    candidates: List[Union[str, Tuple[str, str]]] = []
+    for c in raw:
+        if isinstance(c, str):
+            candidates.append(c)
+        elif isinstance(c, list) and len(c) == 2 and all(isinstance(x, str) for x in c):
+            candidates.append((c[0], c[1]))
+        else:
+            return None
+    return candidates, unset
 
 
 class UnknownFieldError(ValueError):
@@ -192,15 +236,36 @@ def _resolve_join(schema: ParserSchema, path: str, allow_undeclared: bool) -> Fi
     parts = []
     for name in names:
         part = resolve_schema_path(schema, name, allow_undeclared)
-        scalar = (
-            not part.join and part.entry is None and not part.arrays and not part.whole_variant
-            and (part.json_path or part.leaf_type not in ("STRUCT", "ARRAY"))
-            and part.json_type not in ("STRUCT", "ARRAY", "VARIANT")
-        )
-        if not scalar:
+        if not _is_scalar(part):
             raise UnknownFieldError(path, schema.name, f"{not_scalar} ('{name}' is not)")
         parts.append(part)
     return FieldPath((), (), (), None, "STRING", join=tuple(parts), join_sep=sep)
+
+
+def _is_scalar(part: FieldPath) -> bool:
+    """Whether a path is a scalar (also a named entry, but not ``[*]``) usable as a join part."""
+    return (
+        not part.join and not part.first and part.entry != "*" and not part.arrays
+        and not part.whole_variant
+        and (part.entry is not None or part.json_path or part.leaf_type not in ("STRUCT", "ARRAY"))
+        and part.json_type not in ("STRUCT", "ARRAY", "VARIANT")
+    )
+
+
+def _resolve_first_set(schema: ParserSchema, path: str) -> FieldPath:
+    """Resolve a name built by ``first_set_field_name``: the first set of scalar candidates."""
+    split = split_first_set_field_name(path)
+    if split is None or len(split[0]) < 2:
+        raise UnknownFieldError(path, schema.name, "a first-set field needs at least 2 candidates")
+    candidates, unset = split
+    resolved = []
+    for candidate in candidates:
+        name = candidate if isinstance(candidate, str) else join_field_name("\\", list(candidate))
+        part = resolve_schema_path(schema, name)
+        if not part.join and not _is_scalar(part):
+            raise UnknownFieldError(path, schema.name, f"first-set candidates must be scalar fields ('{name}' is not)")
+        resolved.append(part)
+    return FieldPath((), (), (), None, "STRING", first=tuple(resolved), first_unset=tuple(unset))
 
 
 def resolve_schema_path(
@@ -214,6 +279,8 @@ def resolve_schema_path(
     """
     if path.startswith(JOIN_PREFIX):  # before the named-entry pattern: a join name ends in ']'
         return _resolve_join(schema, path, allow_undeclared)
+    if path.startswith(FIRST_PREFIX):
+        return _resolve_first_set(schema, path)
     named = _NAMED_ENTRY.fullmatch(path)
     if named:
         return _resolve_named_entry(schema, path, named["base"], named["name"])

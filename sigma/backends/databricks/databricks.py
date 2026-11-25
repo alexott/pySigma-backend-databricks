@@ -431,6 +431,8 @@ class DatabricksBackend(TextQueryBackend):
         """
         if path.entry is not None:
             return [], self._named_entry(path)
+        if path.first:
+            return [], self._first_set(path)
         if path.join:
             # Scalar parts (no arrays), each extracted as a string; an empty part is skipped.
             parts = ", ".join(f"nullif({self._join_part(part)}, '')" for part in path.join)
@@ -448,6 +450,23 @@ class DatabricksBackend(TextQueryBackend):
             else:
                 leaf = self._json_cast(f"{leaf}:{self._json_path(path.json_path)}", value)
         return levels, leaf
+
+    def _first_set(self, path: FieldPath) -> str:
+        """Render the first set of the candidates as CASE WHEN; NULL and '' are always unset."""
+        unset = ", ".join(
+            f"'{self.sql_quote_regex(u)}'" for u in dict.fromkeys([*path.first_unset, ""])
+        )
+        branches = []
+        for candidate in path.first[:-1]:
+            key = candidate.join[-1] if candidate.join else candidate
+            branches.append(
+                f"WHEN coalesce({self._join_part(key)}, '') NOT IN ({unset}) "
+                f"THEN {self._candidate_expr(candidate)}"
+            )
+        return f"CASE {' '.join(branches)} ELSE {self._candidate_expr(path.first[-1])} END"
+
+    def _candidate_expr(self, candidate: FieldPath) -> str:
+        return self._render_path(candidate, SigmaString(""))[1] if candidate.join else self._join_part(candidate)
 
     def _join_part(self, part: FieldPath) -> str:
         """Return the string expression of a scalar join part, whatever its declared type."""
@@ -1148,7 +1167,7 @@ class DatabricksBackend(TextQueryBackend):
         """Field references may use plain columns, STRUCT members, VARIANT keys and named entries."""
         assert self._current_profile is not None
         ref_path = self._resolve_parsed_field(ref.field)
-        if path.join or ref_path.join:
+        if path.join or ref_path.join or path.first or ref_path.first:
             raise self._parsed_error(
                 "field references to joined fields are not supported "
                 f"(profile {self._current_profile[0].profile})"

@@ -288,6 +288,8 @@ library and are configured in the profile:
 | `hashes` | `algos: {MD5: <path>, SHA1: <path>, SHA256: <path>, IMPHASH: <path>}` | Routes `ALGO=digest` values (or a bare digest, by its length) to the column of the algorithm. |
 | `domain_user` | `{domain: <path>, user: <path>}` | Matches `DOMAIN\user` values, see below. |
 | `regex_replace` | `pattern`, `replacement` | Regex substitution on the literal parts of a string. |
+| `to_hex` | none, or optional `prefix: <str>` (`0x`) | Turns an exact decimal number into lowercase hex with the prefix (`4120` becomes `0x1018`). Fails for wildcards, negative numbers, ordering comparisons and regular expressions. |
+| `first_set` | `candidates: [<path> \| {domain: <path>, user: <path>}, ...]` (at least 2), optional `unset: [<str>]` (`['-']`) | Matches the first candidate that is set (not NULL, empty or in `unset`), rendered as a `CASE WHEN` expression; the condition applies to it unchanged. A `{domain, user}` candidate is the joined `DOMAIN\user`. Must be the last transform; field references to it fail. |
 | `to_int`, `to_str` | none | Converts digit strings to numbers, or numbers and booleans to strings. |
 | `reject` | `pattern: <regex>`, `reason: <text>` | Fails the rule with `reason` when a value matches `pattern` (`re.search`, case-insensitive), for values the target column never holds. Wildcards are matched as `*` and `?`; a regex value is checked on its text without a leading `^` and backslash escapes. |
 

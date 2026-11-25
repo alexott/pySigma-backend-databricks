@@ -4,7 +4,9 @@ import warnings
 
 import pytest
 from sigma.types import (
+    CompareOperators,
     SigmaBool,
+    SigmaCompareExpression,
     SigmaExists,
     SigmaNull,
     SigmaNumber,
@@ -13,7 +15,7 @@ from sigma.types import (
     SpecialChars,
 )
 
-from sigma.backends.databricks.field_paths import join_field_name
+from sigma.backends.databricks.field_paths import first_set_field_name, join_field_name
 from sigma.pipelines.databricks.lakewatch.transforms import (
     TransformFailure,
     apply_chain,
@@ -127,6 +129,34 @@ def test_domain_user():
     assert targets == (join_field_name("\\", ["d", "u"]),)
     assert str(value) == r"CORP\bob"
     assert parse_transform(spec, {})[0].required_paths() == ("d", "u")
+
+
+def test_to_hex():
+    assert str(one("to_hex", SigmaNumber(4120))[1]) == "0x1018"
+    assert str(one("to_hex", "255")[1]) == "0xff"
+    assert str(one({"to_hex": {"prefix": ""}}, "255")[1]) == "ff"
+    for bad in (
+        SigmaString("12*"), SigmaNumber(-1), SigmaRegularExpression("1"), SigmaString("abc"),
+        SigmaCompareExpression(SigmaNumber(1), CompareOperators.GT),
+    ):
+        with pytest.raises(TransformFailure, match="exact decimal number"):
+            run("to_hex", bad)
+
+
+def test_first_set_targets():
+    cands = [{"domain": "d1", "user": "u1"}, {"domain": "d2", "user": "u2"}]
+    spec = {"first_set": {"candidates": cands}}
+    targets, value = one(spec, "x")
+    assert targets == (first_set_field_name([("d1", "u1"), ("d2", "u2")], ["-"]),)
+    assert str(value) == "x"
+    assert parse_transform(spec, {})[0].required_paths() == ("d1", "u1", "d2", "u2")
+    with pytest.raises(ValueError, match="must be last"):
+        parse_transform([spec, "basename"], {})
+
+
+def test_first_set_one_candidate_fails():
+    with pytest.raises(ValueError, match="at least 2"):
+        parse_transform({"first_set": {"candidates": ["a"]}}, {})
 
 
 def test_regex_replace():

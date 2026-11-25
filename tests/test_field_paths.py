@@ -5,9 +5,11 @@ import re
 import pytest
 
 from sigma.backends.databricks.field_paths import (
+    FIRST_PREFIX,
     JOIN_PREFIX,
     FieldPath,
     UnknownFieldError,
+    first_set_field_name,
     join_field_name,
     resolve_schema_path,
 )
@@ -209,12 +211,39 @@ def test_join_with_plain_field_part_is_not_a_named_entry():
 
 
 @pytest.mark.parametrize("part", [
-    "resources.arn", "userIdentity", "actor", "EventData[Foo]",
+    "resources.arn", "userIdentity", "actor", "EventData[*]",
     join_field_name("-", ["eventName", "EventID"]),
 ])
 def test_join_rejects_non_scalar_part(part):
     with pytest.raises(UnknownFieldError, match="join parts must be scalar"):
         resolve_schema_path(SCHEMA, join_field_name("\\", ["eventName", part]))
+
+
+def test_join_named_entry_parts():
+    name = join_field_name("\\", ["EventData[D]", "EventData[U]"])
+    r = resolve_schema_path(SCHEMA, name)
+    assert [p.entry for p in r.join] == ["D", "U"]
+    with pytest.raises(UnknownFieldError, match="join parts must be scalar"):
+        resolve_schema_path(SCHEMA, join_field_name("\\", ["EventData[D]", "EventData[*]"]))
+
+
+def test_first_set_resolves_candidates():
+    name = first_set_field_name([("EventData[D]", "EventData[U]"), "eventName"], ["-"])
+    assert name.startswith(FIRST_PREFIX) and name.endswith("}")
+    r = resolve_schema_path(SCHEMA, name)
+    assert r.first_unset == ("-",)
+    assert r.first[0].join_sep == "\\" and r.first[1].leaf == ("eventName",)
+
+
+def test_first_set_named_entry_candidate_and_bad_candidates():
+    name = first_set_field_name(["EventData[A]", "EventData[B]"], ["-"])
+    assert name.endswith("}")
+    assert [p.entry for p in resolve_schema_path(SCHEMA, name).first] == ["A", "B"]
+    for bad in ("actor", "resources.arn", "EventData[*]"):
+        with pytest.raises(UnknownFieldError, match="first-set candidates must be scalar"):
+            resolve_schema_path(SCHEMA, first_set_field_name(["eventName", bad], ["-"]))
+    with pytest.raises(UnknownFieldError):
+        resolve_schema_path(SCHEMA, first_set_field_name(["eventName", "nope"], ["-"]))
 
 
 def test_join_needs_two_parts():

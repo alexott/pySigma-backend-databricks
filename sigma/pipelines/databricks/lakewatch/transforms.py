@@ -34,7 +34,7 @@ from sigma.types import (
     SpecialChars,
 )
 
-from sigma.backends.databricks.field_paths import join_field_name
+from sigma.backends.databricks.field_paths import first_set_field_name, join_field_name
 
 
 class TransformFailure(ValueError):  # noqa: N818
@@ -557,6 +557,83 @@ class DomainUserTransform(Transform):
         return [((join_field_name("\\", [self.domain, self.user]),), _string(value))]
 
 
+class FirstSetTransform(Transform):
+    """Match the first of several fields (or domain/user joins) that is set."""
+
+    kind = "first_set"
+    supplies_targets = True
+
+    def __init__(self, candidates: Sequence[Union[str, Tuple[str, str]]], unset: Sequence[str]):
+        """Store the validated parameters."""
+        self.candidates = tuple(candidates)
+        self.unset = tuple(unset)
+
+    @classmethod
+    def from_params(cls, params: Any) -> "FirstSetTransform":
+        """Build the transform from validated profile parameters."""
+        params = _require_params(cls.kind, params)
+        _require_keys(cls.kind, params, ["candidates"], ["unset"])
+        raw = params["candidates"]
+        if not isinstance(raw, list) or len(raw) < 2:
+            raise ValueError(f"transform {cls.kind}: candidates must be a list of at least 2 entries")
+        candidates: List[Union[str, Tuple[str, str]]] = []
+        for item in raw:
+            if isinstance(item, dict):
+                _require_keys(cls.kind, item, ["domain", "user"])
+                candidates.append(
+                    (_require_path(cls.kind, "domain", item["domain"]), _require_path(cls.kind, "user", item["user"]))
+                )
+            else:
+                candidates.append(_require_path(cls.kind, "candidate", item))
+        unset = params.get("unset", ["-"])
+        if not isinstance(unset, list) or not all(isinstance(u, str) for u in unset):
+            raise ValueError(f"transform {cls.kind}: unset must be a list of strings")
+        return cls(candidates, unset)
+
+    def required_paths(self):
+        """Return the schema paths of every candidate."""
+        return tuple(p for c in self.candidates for p in ((c,) if isinstance(c, str) else c))
+
+    def apply(self, value, targets, *, field, all_values):
+        """Apply the transform to one value."""
+        return [((first_set_field_name(self.candidates, self.unset),), value)]
+
+
+class ToHexTransform(Transform):
+    """Turn exact decimal numbers into prefixed lowercase hex strings."""
+
+    kind = "to_hex"
+
+    def __init__(self, prefix: str = "0x"):
+        """Store the validated parameters."""
+        self.prefix = prefix
+
+    @classmethod
+    def from_params(cls, params: Any) -> "ToHexTransform":
+        """Build the transform from validated profile parameters."""
+        if params in (None, {}):
+            return cls()
+        params = _require_params(cls.kind, params)
+        _require_keys(cls.kind, params, [], ["prefix"])
+        prefix = params.get("prefix", "0x")
+        if not isinstance(prefix, str):
+            raise ValueError(f"transform {cls.kind}: prefix must be a string")
+        return cls(prefix)
+
+    def apply(self, value, targets, *, field, all_values):
+        """Apply the transform to one value."""
+        number: Optional[int] = None
+        if isinstance(value, SigmaNumber) and not isinstance(value.number, float):
+            number = int(value.number)
+        elif isinstance(value, SigmaString) and not isinstance(value, SigmaExpansion):
+            text = str(value)
+            if text.isascii() and text.isdigit() and not value.contains_special() and not value.contains_placeholder():
+                number = int(text)
+        if number is None or number < 0:
+            raise TransformFailure("to_hex needs an exact decimal number")
+        return [(targets, SigmaString(self.prefix + format(number, "x")))]
+
+
 class RegexReplaceTransform(Transform):
     """Regex substitution on the plain parts of a string."""
 
@@ -679,6 +756,8 @@ KINDS: Dict[str, Type[Transform]] = {
         RegistryPathTransform,
         HashesTransform,
         DomainUserTransform,
+        FirstSetTransform,
+        ToHexTransform,
         RegexReplaceTransform,
         ToIntTransform,
         ToStrTransform,
