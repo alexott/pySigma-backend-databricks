@@ -185,3 +185,121 @@ def test_ocsf_errors_are_per_result():
     assert first["status"] == "failed"
     assert second["status"] == "converted"
     assert second["reason"] is None
+
+
+# --- statuses, failures, totals and conversion_report.yaml ---
+
+import json  # noqa: E402
+
+BUNDLED_SCHEMAS = (Path(__file__).parent.parent / "sigma" / "backends" / "databricks"
+                   / "lakewatch_schemas" / "windows_custom.json")
+UUID = "11111111-2222-3333-4444-555555555555"
+
+
+def _convert_lw(backend, text):
+    return backend.convert(_rules(text), "lakewatch")
+
+
+def test_report_file_written(tmp_path):
+    backend = _backend(SYSMON, output_dir=str(tmp_path))
+    _convert_lw(backend, SYSMON_RULE)
+    written = yaml.safe_load((tmp_path / "conversion_report.yaml").read_text())
+    assert written == backend.last_report
+    assert written["summary"] == {
+        "rules": 1, "converted": 1, "failed": 0, "skipped": 0,
+        "by_logsource": {"windows/process_creation/-": {"converted": 1, "failed": 0, "skipped": 0}}}
+    assert list(written) == ["summary", "rules"]
+    assert written["rules"][0]["status"] == "converted"
+    assert written["rules"][0]["reason"] is None
+
+
+def test_report_content_pack_file_written(tmp_path):
+    data = json.loads(BUNDLED_SCHEMAS.read_text())
+    entry = data["parsers"][SYSMON]
+    entry["uuid"] = UUID
+    schemas = tmp_path / "schemas.json"
+    schemas.write_text(json.dumps({"parsers": {SYSMON: entry}}))
+    out = tmp_path / "rules"
+    backend = DatabricksBackend(target="content_pack", parsers=SYSMON, lakewatch_schemas=str(schemas),
+                                output_dir=str(out))
+    _convert_lw(backend, SYSMON_RULE)
+    assert (out / "revisions.yaml").is_file()
+    written = yaml.safe_load((out / "conversion_report.yaml").read_text())
+    assert written == backend.last_report
+    assert written["summary"]["converted"] == 1
+
+
+def test_report_mixed_profile_results():
+    rule = _rule_yaml({"product": "windows", "category": "process_creation"},
+                      "sel:\n    OriginalFileName: 'x.exe'")
+    backend = DatabricksBackend(
+        parsers=f"{SYSMON},windows_security_process", catalog_name="c", schema_name="s",
+        table_map=f"{SYSMON}:t1,windows_security_process:t2", collect_errors=True)
+    _convert_lw(backend, rule)
+    record = backend.last_report["rules"][0]
+    assert record["status"] == "converted"
+    assert record["reason"] is None
+    statuses = sorted(r["status"] for r in record["results"])
+    assert statuses == ["converted", "failed"]
+    failed = next(r for r in record["results"] if r["status"] == "failed")
+    assert "OriginalFileName" in failed["reason"]
+
+
+def test_report_no_matching_profile():
+    rule = _rule_yaml({"product": "linux", "category": "nothing_here"}, "sel:\n    Image: x")
+    backend = _backend(SYSMON, collect_errors=True)
+    _convert_lw(backend, rule)
+    record = backend.last_report["rules"][0]
+    assert record["status"] == "failed"
+    assert record["results"] == []
+    assert record["reason"].startswith("no selected Lakewatch parser profile matches logsource")
+    assert backend.last_report["summary"]["failed"] == 1
+
+
+def test_report_correlation_rule_failed():
+    text = SYSMON_RULE.replace("Report Test", "Base").replace("status: test", "name: base\nstatus: test") + """
+---
+title: Corr
+id: 5f1b9c8e-1111-4a2b-8c3d-000000000002
+status: test
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - Image
+    timespan: 5m
+    condition:
+        gte: 3
+"""
+    backend = _backend(SYSMON, collect_errors=True)
+    _convert_lw(backend, text)
+    report = backend.last_report
+    assert report["summary"]["rules"] == 2
+    corr = next(r for r in report["rules"] if r["title"] == "Corr")
+    assert corr["status"] == "failed"
+    assert corr["reason"]
+    assert corr["logsource"] is None
+    assert corr["results"] == []
+    assert report["summary"]["by_logsource"]["correlation"]["failed"] == 1
+
+
+def test_report_deprecated_skipped():
+    rule = SYSMON_RULE.replace("status: test", "status: deprecated")
+    backend = _backend(SYSMON)
+    _convert_lw(backend, rule)
+    record = backend.last_report["rules"][0]
+    assert record["status"] == "skipped"
+    assert record["reason"] == "status deprecated"
+    assert record["results"][0]["status"] == "skipped"
+    summary = backend.last_report["summary"]
+    assert (summary["skipped"], summary["converted"]) == (1, 0)
+    assert summary["by_logsource"]["windows/process_creation/-"]["skipped"] == 1
+
+
+def test_report_not_written_without_output_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    backend = _backend(SYSMON)
+    _convert_lw(backend, SYSMON_RULE)
+    assert backend.last_report is not None
+    assert list(tmp_path.iterdir()) == []

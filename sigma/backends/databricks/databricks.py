@@ -71,6 +71,7 @@ from .lakewatch_report import (
     capture_warnings,
     describe_fields,
     rule_fields,
+    write_report,
 )
 from .ocsf_fields import split_ocsf_path
 from .schema_catalog import ParserSchema, SchemaCatalog
@@ -437,6 +438,7 @@ class DatabricksBackend(TextQueryBackend):
         self._report = ConversionReport()
         self.last_report: Optional[Dict[str, Any]] = None
         self._current_report_key: Optional[str] = None
+        self._errors_start = 0
 
     @staticmethod
     def _parse_target(value: Optional[str]) -> str:
@@ -467,6 +469,7 @@ class DatabricksBackend(TextQueryBackend):
         self._raw_warned = False
         self._report = ConversionReport()
         self._current_report_key = None
+        self._errors_start = len(self.errors)
         return super().convert(rule_collection, *args, **kwargs)
 
     def convert_rule(self, rule: SigmaRule, *args, **kwargs):
@@ -496,6 +499,14 @@ class DatabricksBackend(TextQueryBackend):
             self._current_report_key = None
         self._record_errors(result, rule, first_error)
         return queries
+
+    def convert_correlation_rule(self, rule, output_format=None, method=None, callback=None):
+        """Collect correlation rules as failures under ``-s`` for lakewatch; otherwise defer to pySigma."""
+        if (output_format or self.default_format) == "lakewatch" and self.collect_errors:
+            self.errors.append((rule, SigmaConversionError(
+                rule, rule.source, "correlation rules are not supported by the lakewatch format")))
+            return []
+        return super().convert_correlation_rule(rule, output_format, method, callback)
 
     @staticmethod
     def _record_warnings(result: Dict[str, Any], caught: Sequence[warnings.WarningMessage]) -> None:
@@ -1261,6 +1272,7 @@ class DatabricksBackend(TextQueryBackend):
             )
             if self.collect_errors:
                 self.errors.append((rule, error))
+                self._report.rule_failed(rule, str(error))
                 return []
             raise error
         if not matches:
@@ -1272,6 +1284,7 @@ class DatabricksBackend(TextQueryBackend):
             )
             if self.collect_errors:
                 self.errors.append((rule, error))
+                self._report.rule_failed(rule, str(error))
                 return []
             raise error
         # Restore the pipeline set up by convert() (needed by finalize()); None otherwise, so
@@ -1639,6 +1652,25 @@ class DatabricksBackend(TextQueryBackend):
             documents.append((envelope["rule_name"], envelope["doc"], envelope.get("report_key")))
         return documents
 
+    def _mark_skipped(self, queries: List[str]) -> None:
+        """Mark the results whose envelopes were all skipped (deprecated, unsupported or empty query)."""
+        reasons: Dict[str, List[Optional[str]]] = {}
+        for query in queries:
+            envelope = json.loads(query)
+            key = envelope.get("report_key")
+            if key is None:
+                continue
+            if envelope["status"] in ("deprecated", "unsupported"):
+                reason: Optional[str] = f"status {envelope['status']}"
+            elif not envelope["sql"]:
+                reason = "empty query"
+            else:
+                reason = None
+            reasons.setdefault(key, []).append(reason)
+        for key, values in reasons.items():
+            if all(v is not None for v in values):
+                self._report.mark_skipped(key, str(values[0]))
+
     @staticmethod
     def _dump_lakewatch_documents(documents: List[Dict[str, Any]]) -> str:
         """Render rule documents as one multi-document YAML file."""
@@ -1662,8 +1694,7 @@ class DatabricksBackend(TextQueryBackend):
         else:
             doc = self._workspace_document(core)
         envelope: Dict[str, Any] = {"status": status, "sql": sql, "rule_name": core["rule_name"], "doc": doc}
-        if (self._current_report_key is not None and sql
-                and status not in ("deprecated", "unsupported")):
+        if self._current_report_key is not None:
             envelope["report_key"] = self._current_report_key
         return json.dumps(envelope)
 
@@ -1830,6 +1861,7 @@ class DatabricksBackend(TextQueryBackend):
     def finalize_output_lakewatch(self, queries: List[str]) -> Any:
         """Assemble per-rule Lakewatch v2 documents into one multi-document YAML file."""
         self._warn_overrides()
+        self._mark_skipped(queries)
         documents = self._lakewatch_documents(queries)
         if documents:
             self._warn_lakewatch_options()
@@ -1859,16 +1891,20 @@ class DatabricksBackend(TextQueryBackend):
             else:
                 doc["rule_name"] = candidate
             named.append((candidate, doc))
-        self.last_report = self._report.to_dict()
+        self._report.add_errors(self.errors[self._errors_start:])
+        self.last_report = report = self._report.to_dict()
         if self.output_dir:
             if self.target == "content_pack":
-                return write_pack([doc for _, doc in named], self.output_dir,
-                                  lambda doc: self._dump_lakewatch_documents([doc]))
-            return self._write_lakewatch_files(named, self.output_dir)
+                summary = write_pack([doc for _, doc in named], self.output_dir,
+                                     lambda doc: self._dump_lakewatch_documents([doc]))
+                write_report(report, Path(self.output_dir).expanduser())
+                return summary
+            return self._write_lakewatch_files(named, self.output_dir, report)
         return self._dump_lakewatch_documents([doc for _, doc in named])
 
     @classmethod
-    def _write_lakewatch_files(cls, documents: List[Tuple[str, Dict[str, Any]]], output_dir: str) -> str:
+    def _write_lakewatch_files(cls, documents: List[Tuple[str, Dict[str, Any]]], output_dir: str,
+                               report: Optional[Dict[str, Any]] = None) -> str:
         """Write each document to ``<output_dir>/<rule_name>.yaml`` and return a summary comment.
 
         Rule names are unique and contain only ``[a-z0-9_]``, so they are safe file names.
@@ -1882,6 +1918,8 @@ class DatabricksBackend(TextQueryBackend):
                     cls._dump_lakewatch_documents([doc]), encoding="utf-8")
         except OSError as e:
             raise SigmaConfigurationError(f"cannot write rules to output_dir {directory}: {e}") from None
+        if report is not None:
+            write_report(report, directory)
         return f"# Wrote {len(documents)} Lakewatch rule(s) to {directory}"
 
     def finalize(self, queries: List[Any], output_format: str) -> Any:

@@ -371,8 +371,9 @@ def test_v2_output_dir_writes_one_file_per_rule(tmp_path):
     collection = SigmaCollection.from_yaml(TWO_RULES)
     summary = _backend(warehouse_id="wh", output_dir=str(out_dir)).convert(
         collection, output_format="lakewatch")
-    files = sorted(p.name for p in out_dir.iterdir())
+    files = sorted(p.name for p in out_dir.iterdir() if p.name != "conversion_report.yaml")
     assert files == ["rule_one.yaml", "rule_one_2.yaml"]   # deduped names, deprecated skipped
+    assert (out_dir / "conversion_report.yaml").is_file()
     single = list(yaml.safe_load_all(_backend(warehouse_id="wh").convert(
         SigmaCollection.from_yaml(TWO_RULES), output_format="lakewatch")))
     written = [yaml.safe_load((out_dir / name).read_text(encoding="utf-8")) for name in files]

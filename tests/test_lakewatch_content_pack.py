@@ -260,8 +260,9 @@ def test_workspace_output_dir_unchanged(tmp_path):
         warnings.simplefilter("ignore")
         msg = backend.convert(_collection(_rule()), "lakewatch")
     assert msg.startswith("# Wrote 1 Lakewatch rule(s) to")
-    files = [p.name for p in tmp_path.iterdir()]
+    files = [p.name for p in tmp_path.iterdir() if p.name != "conversion_report.yaml"]
     assert len(files) == 1 and files[0].endswith(".yaml") and "revisions.yaml" not in files
+    assert (tmp_path / "conversion_report.yaml").is_file()
 
 
 # --- hand-formatted revisions.yaml is preserved ---

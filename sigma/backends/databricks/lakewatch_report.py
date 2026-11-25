@@ -2,8 +2,11 @@
 
 import warnings
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
+import yaml
+from sigma.exceptions import SigmaConfigurationError
 from sigma.rule import SigmaDetection, SigmaDetectionItem, SigmaRule
 
 from sigma.backends.databricks.schema_catalog import ParserSchema
@@ -170,11 +173,62 @@ class ConversionReport:
         self._results[report_key]["rule_names"].append(rule_name)
 
     def mark_skipped(self, report_key: str, reason: str) -> None:
-        """Mark the result as skipped."""
+        """Mark the result as skipped (the caller does so only when all its envelopes were skipped)."""
         result = self._results[report_key]
         result["status"] = "skipped"
         result["reason"] = reason
 
+    def add_errors(self, errors: Sequence[Tuple[Any, Exception]]) -> None:
+        """Add failed records for rules without one; give a failed-less rule its error reason."""
+        for rule, error in errors:
+            known = id(rule) in self._index
+            _, record = self._rule_record(rule)
+            if not known:
+                record["status"] = "failed"
+            if record["reason"] is None and not any(r["status"] == "failed" for r in record["results"]):
+                record["status"] = "failed"
+                record["reason"] = str(error)
+
+    @staticmethod
+    def _settle(record: Dict[str, Any]) -> None:
+        """Set the rule-level status and reason from the results (converted > skipped > failed)."""
+        results = record["results"]
+        if any(r["status"] == "converted" for r in results):
+            record["status"], record["reason"] = "converted", None
+            return
+        failed = next((r["reason"] for r in results if r["status"] == "failed"), None)
+        if failed is not None or any(r["status"] == "failed" for r in results):
+            record["status"] = "failed"
+            record["reason"] = failed if failed is not None else record["reason"]
+        elif results and all(r["status"] == "skipped" for r in results):
+            record["status"], record["reason"] = "skipped", results[0]["reason"]
+        elif record["status"] is None:
+            record["status"] = "failed"
+            if record["reason"] is None:
+                record["reason"] = "no result was produced"
+
     def to_dict(self) -> Dict[str, Any]:
-        """Return the report as plain data (statuses and summary are completed by the caller)."""
-        return {"rules": self._rules}
+        """Return the completed report: summary first, then the rules in input order."""
+        totals = {"converted": 0, "failed": 0, "skipped": 0}
+        by_logsource: Dict[str, Dict[str, int]] = {}
+        for record in self._rules:
+            self._settle(record)
+            totals[record["status"]] += 1
+            ls = record["logsource"]
+            key = "correlation" if ls is None else (
+                f"{ls['product'] or '-'}/{ls['category'] or '-'}/{ls['service'] or '-'}")
+            bucket = by_logsource.setdefault(key, {"converted": 0, "failed": 0, "skipped": 0})
+            bucket[record["status"]] += 1
+        summary: Dict[str, Any] = {"rules": len(self._rules), **totals,
+                                   "by_logsource": dict(sorted(by_logsource.items()))}
+        return {"summary": summary, "rules": self._rules}
+
+
+def write_report(report: Dict[str, Any], directory: Path) -> None:
+    """Write ``conversion_report.yaml`` into ``directory``."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "conversion_report.yaml").write_text(
+            yaml.safe_dump(report, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    except OSError as e:
+        raise SigmaConfigurationError(f"cannot write conversion_report.yaml to {directory}: {e}") from None
