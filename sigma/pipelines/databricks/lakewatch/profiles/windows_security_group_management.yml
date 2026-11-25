@@ -26,6 +26,14 @@ fields:
   Channel: Channel
   Computer: Computer
   Provider_Name: Provider
+  Level: Level
+  Message: Message
+  Keywords: Keywords
+  Task: Task
+  Opcode: Opcode
+  UserID: UserID
+  Version: Version
+  EventRecordID: EventRecordID
 logsources:
   - match:
       product: windows

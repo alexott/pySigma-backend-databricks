@@ -120,7 +120,8 @@ def test_sysmon_service_routes():
 
 def test_sysmon_keyword_entries():
     sql = _sql(PROC, _cat("process_creation"), "    keywords:\n        - 'mimikatz'\n    condition: keywords")
-    assert "array_join(transform(" in sql
+    assert "array_join(concat(coalesce(transform(" in sql
+    assert "schema_of_variant(v) = 'STRING'" in sql
 
 
 SECURITY_PROFILES = sorted(p for p in WINDOWS_PROFILES if p.startswith("windows_security_"))
@@ -346,7 +347,7 @@ def test_ps_classic_start():
     )
     assert "Windows PowerShell" in sql
     assert "lower('400')" in sql.lower()
-    assert "array_join(coalesce(try_variant_get(EventData, '$', 'ARRAY<STRING>')" in sql
+    assert "array_join(transform(filter(coalesce(try_variant_get(EventData, '$', 'ARRAY<VARIANT>')" in sql
 
 
 def test_ps_classic_strict():
@@ -372,3 +373,61 @@ def test_dns_client_channel_registered_name():
     sql = json.loads(queries[0])["sql"]
     assert "Microsoft-Windows-DNS-Client/Operational" in sql
     assert "DNS Client Events" not in sql
+
+
+# --- final review fixes --------------------------------------------------------------------
+
+
+def _svc(service):
+    return f"    product: windows\n    service: {service}"
+
+
+def _warns(parsers, logsource, detection):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        queries = _convert(parsers, logsource, detection, table_name="t")
+    return json.loads(queries[0])["sql"], [str(w.message) for w in caught]
+
+
+def test_lenient_header_column_not_event_data():
+    sql, warns = _warns("windows_application", _svc("application"), "    sel:\n        Level: 4\n    condition: sel")
+    assert "Level = 4" in sql or "Level = '4'" in sql
+    assert "e._Name = 'Level'" not in sql
+    assert not [w for w in warns if "field list" in w and "Level" in w]
+
+
+def test_lenient_channel_process_id_is_header():
+    sql, _ = _warns("windows_system", _svc("system"), "    sel:\n        ProcessId: 0\n    condition: sel")
+    assert "ProcessID" in sql
+    assert "e._Name = 'ProcessId'" not in sql
+
+
+@pytest.mark.parametrize("profile_id", [p for p in WINDOWS_PROFILES if p != "windows_event_logs"])
+def test_header_mappings_never_shadow_event_data(profile_id):
+    profile = load_profiles()[profile_id]
+    lowered = {k.lower() for k in profile.fields}
+    for names in [profile.event_data] + [b.event_data for b in profile.logsources]:
+        if isinstance(names, (list, tuple)):
+            assert not [n for n in names if n.lower() in lowered], profile_id
+    assert "Level" in profile.fields and "Message" in profile.fields
+    if profile_id.startswith(("windows_sysmon_", "windows_security_", "windows_powershell_")):
+        assert "ProcessId" not in profile.fields
+
+
+def test_unnamed_data_or_named_data_application():
+    sql, _ = _warns("windows_application", _svc("application"),
+                    "    sel:\n        Data|contains: 'x'\n    condition: sel")
+    assert "schema_of_variant(v) = 'STRING'" in sql
+    assert "e._Name = 'Data'" in sql
+    assert " OR " in sql
+
+
+def test_unnamed_data_or_named_data_system():
+    sql, _ = _warns("windows_system", _svc("system"), "    sel:\n        Data|contains: 'x'\n    condition: sel")
+    assert "schema_of_variant(v) = 'STRING'" in sql and "e._Name = 'Data'" in sql
+
+
+def test_unnamed_data_msexchange():
+    sql, _ = _warns("windows_event_other", _svc("msexchange-management"),
+                    "    sel:\n        Data|contains: 'x'\n    condition: sel")
+    assert "schema_of_variant(v) = 'STRING'" in sql and "e._Name = 'Data'" in sql

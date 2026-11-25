@@ -295,6 +295,7 @@ class DatabricksBackend(TextQueryBackend):
     # Field equals field comparison expression
     # Expression for field to field comparison as format string with placeholders {field1} and {field2}
     field_equals_field_expression: ClassVar[Optional[str]] = "{field1} = {field2}"
+    # field = field stays case-sensitive (the pre-existing `=`); the three below compare lower-cased.
     field_equals_field_startswith_expression: ClassVar[Optional[str]] = "startswith(lower({field1}), lower({field2}))"
     field_equals_field_endswith_expression: ClassVar[Optional[str]] = "endswith(lower({field1}), lower({field2}))"
     field_equals_field_contains_expression: ClassVar[Optional[str]] = "contains(lower({field1}), lower({field2}))"
@@ -461,7 +462,9 @@ class DatabricksBackend(TextQueryBackend):
         if raw.kind == "entries":
             path = resolve_schema_path(schema, f"{raw.value}[x]")
             entries = self._named_entries(path)
-            return f"array_join(transform({entries}, e -> e._VALUE), '\\n')", raw
+            named = f"coalesce(transform({entries}, e -> e._VALUE), array())"
+            plain = self._plain_strings(path)
+            return f"array_join(concat({named}, {plain}), '\\n')", raw
         return f"({raw.value})", raw
 
     def _warn_raw(self, raw: "RawSource") -> None:
@@ -598,18 +601,21 @@ class DatabricksBackend(TextQueryBackend):
             f"array(try_variant_get({source}, '$', '{_NAMED_OBJECT_TYPE}')) END)"
         )
 
+    def _plain_strings(self, path: FieldPath) -> str:
+        """Array of the plain-string elements of a VARIANT (the unnamed ``Data``), no named objects."""
+        source = self._struct_ref(None, path.leaf)
+        return (
+            f"transform(filter(coalesce(try_variant_get({source}, '$', 'ARRAY<VARIANT>'), array({source})), "
+            f"v -> schema_of_variant(v) = 'STRING'), v -> try_variant_get(v, '$', 'STRING'))"
+        )
+
     def _named_entry(self, path: FieldPath) -> str:
         """Value of a named entry of a ``{_Name, _VALUE}`` list (VARIANT or ARRAY<STRUCT>).
 
         The entry ``*`` is the unnamed ``Data`` of a VARIANT: all plain strings joined with newlines.
         """
         if path.entry == "*":
-            source = self._struct_ref(None, path.leaf)
-            return (
-                f"array_join(coalesce(try_variant_get({source}, '$', 'ARRAY<STRING>'), "
-                f"CASE WHEN schema_of_variant({source}) = 'STRING' THEN "
-                f"array(try_variant_get({source}, '$', 'STRING')) END), '\\n')"
-            )
+            return f"array_join({self._plain_strings(path)}, '\\n')"
         name = self.sql_quote_regex(path.entry or "")
         return f"try_element_at(filter({self._named_entries(path)}, e -> e._Name = '{name}'), 1)._VALUE"
 
@@ -1297,12 +1303,7 @@ class DatabricksBackend(TextQueryBackend):
         """Prepare a contains match over the JSON text of a VARIANT: to_json() and an escaped value."""
         assert isinstance(cond.value, SigmaString)
         levels, leaf = self._render_path(path, cond.value, as_type="variant")
-        title = getattr(self._current_rule, "title", None)
-        warnings.warn(
-            f"rule '{title}': {cond.field} is matched against the JSON text of a VARIANT (approximate)",
-            UserWarning,
-            stacklevel=2,
-        )
+        self._warn(f"{cond.field} is matched against the JSON text of a VARIANT (approximate)")
         escaped = copy.copy(cond)
         escaped.value = json_escape_string(cond.value)
         return escaped, levels, f"to_json({leaf})"
@@ -1316,7 +1317,10 @@ class DatabricksBackend(TextQueryBackend):
                 "field references to joined fields are not supported "
                 f"(profile {self._current_profile[0].profile})"
             )
-        if any(p.arrays or p.whole_variant or (p.leaf_type == "STRUCT" and not p.json_path) for p in (path, ref_path)):
+        if any(
+            p.arrays or self._is_variant_object(p) or (p.leaf_type == "STRUCT" and not p.json_path)
+            for p in (path, ref_path)
+        ):
             raise self._parsed_error(
                 "field references to nested ARRAY/VARIANT fields are not supported "
                 f"(profile {self._current_profile[0].profile})"

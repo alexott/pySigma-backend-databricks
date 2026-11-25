@@ -1,4 +1,4 @@
-# Built-in Lakewatch profile for the windows_sysmon_other parser: Sysmon the remaining Sysmon events (service state, pipes, WMI, clipboard, errors) and any other EventID.
+# Built-in Lakewatch profile for the windows_sysmon_other parser: the remaining Sysmon events (service state, pipes, WMI, clipboard, errors) and any other EventID.
 # Note: requires the custom Windows parsers (lakewatch parser-generators/windows); not a
 # Lakewatch built-in yet.
 #
@@ -24,6 +24,13 @@ fields:
   Channel: Channel
   Computer: Computer
   Provider_Name: Provider
+  Level: Level
+  Message: Message
+  Keywords: Keywords
+  Task: Task
+  Opcode: Opcode
+  UserID: UserID
+  EventRecordID: EventRecordID
 logsources:
   - match:
       product: windows

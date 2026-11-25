@@ -51,6 +51,15 @@ fields:
   Channel: Channel
   Computer: Computer
   Provider_Name: Provider
+  Level: Level
+  Message: Message
+  Keywords: Keywords
+  Task: Task
+  Opcode: Opcode
+  UserID: UserID
+  Version: Version
+  EventRecordID: EventRecordID
+  ProcessId: ProcessID
 logsources:
   - match:
       product: windows
@@ -76,6 +85,8 @@ logsources:
     conditions:
       Channel: 'MSExchange Management'
     event_data: any
+    fields:
+      Data: ['EventData[*]', 'EventData[Data]']
   - match:
       product: windows
       service: bits-client

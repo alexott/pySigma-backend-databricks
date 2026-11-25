@@ -496,11 +496,11 @@ EVENT_DATA = (
     "CASE WHEN try_variant_get(EventData, '$._Name', 'STRING') IS NOT NULL THEN "
     "array(try_variant_get(EventData, '$', 'STRUCT<_Name: STRING, _VALUE: STRING>')) END)"
 )
-EVENT_DATA_STRINGS = (
-    "array_join(coalesce(try_variant_get(EventData, '$', 'ARRAY<STRING>'), "
-    "CASE WHEN schema_of_variant(EventData) = 'STRING' THEN "
-    "array(try_variant_get(EventData, '$', 'STRING')) END), '\\n')"
+EVENT_DATA_PLAIN = (
+    "transform(filter(coalesce(try_variant_get(EventData, '$', 'ARRAY<VARIANT>'), array(EventData)), "
+    "v -> schema_of_variant(v) = 'STRING'), v -> try_variant_get(v, '$', 'STRING'))"
 )
+EVENT_DATA_STRINGS = f"array_join({EVENT_DATA_PLAIN}, '\\n')"
 
 
 def _entry(source, name):
@@ -585,6 +585,31 @@ def test_fieldref_named_entries(env):
         Image|fieldref: ParentImage
     condition: sel""")
     assert f"{_entry(EVENT_DATA, 'Image')} = {_entry(EVENT_DATA, 'ParentImage')}" in sql
+
+
+@pytest.mark.parametrize("field", [
+    "requestParameters",              # whole VARIANT column
+    "Tls",                            # whole STRUCT column
+    "userIdentity.sessionContext",    # declared VARIANT key inside a VARIANT
+    "userIdentity.webIdFederationData",  # declared STRUCT key inside a VARIANT
+])
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_fieldref_whole_object_fails(env, field, side):
+    extra = {"requestParameters": "requestParameters", "userIdentity.sessionContext": "userIdentity.sessionContext",
+             "userIdentity.webIdFederationData": "userIdentity.webIdFederationData"}
+    left, right = ("eventName", field) if side == "right" else (field, "eventName")
+    with pytest.raises(SigmaConversionError, match="nested ARRAY/VARIANT"):
+        _one(env, f"""    sel:
+        {left}|fieldref: {right}
+    condition: sel""", extra_fields=extra)
+
+
+def test_whole_variant_warning_names_profile(env):
+    backend = env(parsers="p_ct", table_name="t", extra_fields=WV)
+    with pytest.warns(UserWarning, match=r"CT Rule.*\(profile p_ct\).*requestParameters.*approximate"):
+        _sqls(backend, _rule("""    sel:
+        requestParameters|contains: Suspended
+    condition: sel"""))
 
 
 def test_fieldref_array_still_fails(env):
@@ -1327,8 +1352,9 @@ def test_keyword_text_column(renv):
 
 def test_keyword_entries(renv):
     sql, warns = _kw(renv, {"entries": "EventData"})
-    assert "contains(lower(array_join(transform(coalesce(" in sql
-    assert "e -> e._VALUE), '\\n')), lower('evil'))" in sql
+    assert "contains(lower(array_join(concat(coalesce(transform(" in sql
+    assert "e -> e._VALUE), array()), " + EVENT_DATA_PLAIN + "), '\\n')), lower('evil'))" in sql
+    assert "schema_of_variant(v) = 'STRING'" in sql
     assert len([w for w in warns if "approximate" in w]) == 1
     assert "Win Rule" in warns[0] and "pa" in warns[0]
 

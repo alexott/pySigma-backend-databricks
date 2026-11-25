@@ -405,7 +405,7 @@ the rule as unsupported.
 The PowerShell and channel profiles (`windows_powershell_*`, `windows_system` and the other
 channel parsers, and `windows_event_other`) have no first-party EventData field list, so they use
 lenient mode: each EventData field a rule uses maps to `EventData[Name]` and raises a `UserWarning`
-that it isn't in a field list. `windows_powershell_script` is strict (4103 to 4106 field names).
+that it isn't in a field list. Events that carry their payload in `UserData` (for example WMI-Activity 5857 to 5861, so a rule on `Consumer` or `PossibleCause`) convert under these profiles but never match. `windows_powershell_script` is strict (4103 to 4106 field names).
 `windows_event_other` keyword search runs over `to_json(raw_event)` and is approximate. Classic
 Windows PowerShell events 400, 600 and 800 (channel `Windows PowerShell`) have unnamed `Data`
 elements; Sigma `Data` maps to all of them joined with newlines, so `Data|contains` and `Data|re`
