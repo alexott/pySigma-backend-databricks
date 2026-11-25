@@ -124,15 +124,15 @@ def test_okta_bool_vs_struct_boolean():
 def test_cloudtrail_whole_variant_comparison_fails():
     with pytest.raises(
         SigmaConversionError,
-        match=r"comparison against the whole VARIANT column requestParameters is not supported "
-        r"yet \(profile aws_cloudtrail\)",
+        match=r"comparison against the whole VARIANT column requestParameters supports only "
+        r"contains \(profile aws_cloudtrail\)",
     ):
         _sql(
             "aws_cloudtrail",
             "aws",
             "cloudtrail",
             """    sel:
-        requestParameters|contains: Suspended
+        requestParameters|startswith: Suspended
     condition: sel""",
         )
 

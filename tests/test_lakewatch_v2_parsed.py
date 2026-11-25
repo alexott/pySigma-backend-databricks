@@ -364,19 +364,77 @@ def test_parsed_bool_column_not_coerced(env):
     assert "readOnly = false" in sql
 
 
-def test_parsed_whole_variant_fails(env):
-    with pytest.raises(SigmaConversionError, match="whole VARIANT column requestParameters") as exc:
-        _one(env, """    sel:
-        requestParameters|contains: x
-    condition: sel""", extra_fields={"requestParameters": "requestParameters"})
-    assert "(profile p_ct)" in str(exc.value)
+WV = {"requestParameters": "requestParameters"}
 
 
-def test_parsed_whole_variant_regex_or_fails(env):
-    with pytest.raises(SigmaConversionError, match="whole VARIANT column requestParameters"):
+def test_whole_variant_contains(env):
+    backend = env(parsers="p_ct", table_name="t", extra_fields=WV)
+    with pytest.warns(UserWarning, match="approximate"):
+        sqls = _sqls(backend, _rule("""    sel:
+        requestParameters|contains: Suspended
+    condition: sel"""))
+    assert "contains(lower(to_json(requestParameters)), lower('Suspended'))" in sqls[0]
+
+
+def test_whole_variant_contains_all_quotes(env):
+    sql = _one(env, """    sel:
+        requestParameters|contains|all:
+            - '"Allow"'
+            - '"s3:GetObject"'
+    condition: sel""", extra_fields=WV)
+    assert "contains(lower(to_json(requestParameters)), lower('\\\\\"Allow\\\\\"'))" in sql
+    assert " AND " in sql
+    assert "lower('\\\\\"s3:GetObject\\\\\"')" in sql
+
+
+def test_whole_variant_eq_fails(env):
+    with pytest.raises(SigmaConversionError) as exc:
         _one(env, """    sel:
-        requestParameters|contains: [a, b, c]
-    condition: sel""", extra_fields={"requestParameters": "requestParameters"})
+        requestParameters: x
+    condition: sel""", extra_fields=WV)
+    assert str(exc.value).startswith(
+        "comparison against the whole VARIANT column requestParameters supports only contains (profile p_ct)"
+    )
+
+
+@pytest.mark.parametrize("modifier", ["startswith", "endswith", "re"])
+def test_whole_variant_other_shapes_fail(env, modifier):
+    with pytest.raises(SigmaConversionError, match="supports only contains"):
+        _one(env, f"""    sel:
+        requestParameters|{modifier}: x
+    condition: sel""", extra_fields=WV)
+
+
+def test_whole_variant_null_and_exists(env):
+    sql = _one(env, """    a:
+        requestParameters: null
+    b:
+        requestParameters|exists: true
+    condition: a or b""", extra_fields=WV)
+    assert "requestParameters is null" in sql
+    assert "requestParameters is not null" in sql
+
+
+def test_whole_variant_or_contains_not_optimised(env):
+    # 3+ values would normally become one rlike(); a whole VARIANT stays on to_json + escaping.
+    sql = _one(env, """    sel:
+        requestParameters|contains:
+            - 'a"b'
+            - bb
+            - cc
+    condition: sel""", extra_fields=WV)
+    assert "rlike" not in sql.lower()
+    assert sql.count("contains(lower(to_json(requestParameters))") == 3
+    assert " OR " in sql
+
+
+def test_whole_variant_nested_key_contains(env):
+    sql = _one(env, """    sel:
+        userIdentity.sessionContext|contains: x
+    condition: sel""", extra_fields={"userIdentity.sessionContext": "userIdentity.sessionContext"})
+    assert (
+        "contains(lower(to_json(try_variant_get(userIdentity, '$.sessionContext', 'variant'))), lower('x'))"
+    ) in sql
 
 
 def test_parsed_regex_or_optimization_variant(env):
@@ -804,7 +862,7 @@ def test_parsed_multi_target_prefix_ors_all_targets(env):
 
 
 WHOLE_VARIANT_REASON = (
-    "comparison against the whole VARIANT column requestParameters is not supported yet "
+    "comparison against the whole VARIANT column requestParameters supports only contains "
     "(profile p_ct)"
 )
 
@@ -812,7 +870,7 @@ WHOLE_VARIANT_REASON = (
 def test_parsed_error_message_starts_with_reason(env):
     with pytest.raises(SigmaConversionError) as exc:
         _one(env, """    sel:
-        requestParameters|contains: x
+        requestParameters: x
     condition: sel""", extra_fields={"requestParameters": "requestParameters"})
     msg = str(exc.value)
     assert msg.startswith(WHOLE_VARIANT_REASON)
@@ -830,7 +888,7 @@ status: test
 logsource: {product: aws, service: cloudtrail}
 detection:
     sel:
-        requestParameters|contains: x
+        requestParameters: x
     condition: sel
 """, source=SigmaRuleLocation(rule_file)).rules[0]
     backend = env(parsers="p_ct", table_name="t", extra_fields={"requestParameters": "requestParameters"},
@@ -879,17 +937,17 @@ def test_parsed_no_match_error_starts_with_reason(env):
 def test_parsed_nested_variant_object_comparison_fails(env, field):
     with pytest.raises(SigmaConversionError) as exc:
         _one(env, f"""    sel:
-        {field}|contains: x
+        {field}: x
     condition: sel""", extra_fields={field: field})
     assert str(exc.value).startswith(
-        f"comparison against the whole VARIANT column {field} is not supported yet (profile p_ct)"
+        f"comparison against the whole VARIANT column {field} supports only contains (profile p_ct)"
     )
 
 
 def test_parsed_nested_variant_object_regex_or_fails(env):
-    with pytest.raises(SigmaConversionError, match="whole VARIANT column userIdentity.sessionContext"):
+    with pytest.raises(SigmaConversionError, match="supports only contains"):
         _one(env, """    sel:
-        userIdentity.sessionContext|contains: [a, b, c]
+        userIdentity.sessionContext|startswith: [a, b, c]
     condition: sel""", extra_fields={"userIdentity.sessionContext": "userIdentity.sessionContext"})
 
 

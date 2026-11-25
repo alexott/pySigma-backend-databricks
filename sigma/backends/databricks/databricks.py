@@ -31,6 +31,7 @@ from sigma.types import (
 )
 
 from .field_paths import FieldPath, UnknownFieldError, resolve_schema_path, split_join_field_name
+from .json_text import json_escape_string
 from .lakewatch_maps import (
     FIDELITY_MAP,
     SEVERITY_MAP,
@@ -418,8 +419,11 @@ class DatabricksBackend(TextQueryBackend):
             return expr
         return f"{expr}::string"
 
-    def _render_path(self, path: FieldPath, value: Any) -> Tuple[List[Tuple[str, str]], str]:
+    def _render_path(self, path: FieldPath, value: Any,
+                     as_type: Optional[str] = None) -> Tuple[List[Tuple[str, str]], str]:
         """Render a field path as exists() levels (array, lambda variable) and the element expression.
+
+        ``as_type`` forces the type of a VARIANT key extraction (parsed-table mode).
 
         VARIANT keys are extracted with try_variant_get() in parsed-table mode and with the
         ``col:path`` syntax plus a cast in OCSF mode. A named entry ``Field[Name]`` is the
@@ -440,7 +444,7 @@ class DatabricksBackend(TextQueryBackend):
         leaf = self._struct_ref(base, path.leaf)
         if path.json_path:
             if self._current_profile is not None:
-                leaf = self._variant_get(leaf, path, value)
+                leaf = self._variant_get(leaf, path, value, as_type)
             else:
                 leaf = self._json_cast(f"{leaf}:{self._json_path(path.json_path)}", value)
         return levels, leaf
@@ -512,7 +516,14 @@ class DatabricksBackend(TextQueryBackend):
             cond = self._coerce_parsed_value(path, cond)
         if path is None or isinstance(cond.value, SigmaFieldReference):
             return super().convert_condition_field_eq_val(cond, state)
-        levels, leaf = self._render_path(path, cond.value)
+        if (
+            self._current_profile is not None
+            and self._is_variant_object(path)
+            and isinstance(cond.value, SigmaString)
+        ):
+            cond, levels, leaf = self._variant_json_text(path, cond)
+        else:
+            levels, leaf = self._render_path(path, cond.value)
         if (
             self._current_profile is not None
             and isinstance(cond.value, SigmaCompareExpression)
@@ -736,6 +747,11 @@ class DatabricksBackend(TextQueryBackend):
             return None  # Different fields, can't optimize
 
         field_name = fields[0]
+
+        if self._current_profile is not None:
+            field_path = self._field_path(field_name)
+            if field_path is not None and self._is_variant_object(field_path):
+                return None  # Matched over the JSON text of the VARIANT, with escaping
 
         # Check all values are SigmaString and determine pattern type
         pattern_type: Optional[str] = None
@@ -1072,25 +1088,37 @@ class DatabricksBackend(TextQueryBackend):
             path = resolve_schema_path(schema, field, allow_undeclared)
         except UnknownFieldError as e:
             raise self._parsed_error(f"{e} (profile {profile.profile})") from None
-        if path.whole_variant:
-            raise self._parsed_error(
-                f"comparison against the whole VARIANT column {field} is not supported yet "
-                f"(profile {profile.profile})"
-            )
         return path
 
-    def _check_parsed_struct(self, path: FieldPath, field: str, value: Any) -> None:
-        """Fail on comparisons against a whole STRUCT or an object nested inside a VARIANT.
+    @staticmethod
+    def _is_variant_object(path: FieldPath) -> bool:
+        """Whether a path is a whole VARIANT column or a VARIANT/STRUCT key declared inside one."""
+        return path.whole_variant or bool(path.json_path and path.json_type in ("VARIANT", "STRUCT"))
 
-        This covers a STRUCT column or member (also the element of ARRAY<STRUCT>) and a
-        VARIANT/STRUCT key declared inside a VARIANT. Null and exists checks remain valid SQL and are allowed.
+    @staticmethod
+    def _is_contains_value(value: Any) -> bool:
+        """Whether a value is a string with a leading and a trailing ``*`` (a contains match)."""
+        return (
+            isinstance(value, SigmaString)
+            and value.startswith(SpecialChars.WILDCARD_MULTI)
+            and value.endswith(SpecialChars.WILDCARD_MULTI)
+        )
+
+    def _check_parsed_struct(self, path: FieldPath, field: str, value: Any) -> None:
+        """Fail on comparisons against a whole STRUCT or a whole VARIANT, except contains.
+
+        A STRUCT column or member (also the element of ARRAY<STRUCT>) can't be compared. A whole
+        VARIANT column, or a VARIANT/STRUCT key declared inside one, accepts only a contains match
+        (over its JSON text). Null and exists checks remain valid SQL and are allowed.
         """
         assert self._current_profile is not None
         if isinstance(value, (SigmaNull, SigmaExists)):
             return
-        if path.json_path and path.json_type in ("VARIANT", "STRUCT"):
+        if self._is_variant_object(path):
+            if self._is_contains_value(value):
+                return
             raise self._parsed_error(
-                f"comparison against the whole VARIANT column {field} is not supported yet "
+                f"comparison against the whole VARIANT column {field} supports only contains "
                 f"(profile {self._current_profile[0].profile})"
             )
         if path.json_path or path.leaf_type != "STRUCT":
@@ -1099,6 +1127,22 @@ class DatabricksBackend(TextQueryBackend):
             f"comparison against the whole STRUCT field {field} is not supported "
             f"(profile {self._current_profile[0].profile})"
         )
+
+    def _variant_json_text(
+        self, path: FieldPath, cond: ConditionFieldEqualsValueExpression
+    ) -> Tuple[ConditionFieldEqualsValueExpression, List[Tuple[str, str]], str]:
+        """Prepare a contains match over the JSON text of a VARIANT: to_json() and an escaped value."""
+        assert isinstance(cond.value, SigmaString)
+        levels, leaf = self._render_path(path, cond.value, as_type="variant")
+        title = getattr(self._current_rule, "title", None)
+        warnings.warn(
+            f"rule '{title}': {cond.field} is matched against the JSON text of a VARIANT (approximate)",
+            UserWarning,
+            stacklevel=2,
+        )
+        escaped = copy.copy(cond)
+        escaped.value = json_escape_string(cond.value)
+        return escaped, levels, f"to_json({leaf})"
 
     def _check_parsed_field_reference(self, path: FieldPath, ref: SigmaFieldReference) -> None:
         """Field references may use plain columns, STRUCT members, VARIANT keys and named entries."""
@@ -1157,11 +1201,13 @@ class DatabricksBackend(TextQueryBackend):
             coerced.value = SigmaString(str(value))
         return coerced
 
-    def _variant_get(self, expr: str, path: FieldPath, value: Any) -> str:
+    def _variant_get(self, expr: str, path: FieldPath, value: Any, as_type: Optional[str] = None) -> str:
         """try_variant_get() of a key inside a VARIANT, typed by the schema or the compared value."""
         json_path = self._json_path(path.json_path)
         json_path = ("$" if json_path.startswith("[") else "$.") + json_path
-        if path.json_type and path.json_type not in ("VARIANT", "STRUCT"):
+        if as_type:
+            type_name = as_type
+        elif path.json_type and path.json_type not in ("VARIANT", "STRUCT"):
             type_name = path.json_type.lower()
         elif isinstance(value, (SigmaNumber, SigmaCompareExpression)):
             type_name = "double"
