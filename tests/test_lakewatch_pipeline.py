@@ -92,7 +92,7 @@ def test_unsupported_field_fails():
 def test_keyword_fails():
     profile, block = make({"Image": "eventName"})
     with pytest.raises(
-        SigmaTransformationError, match="keyword search is not supported by profile p1"
+        SigmaTransformationError, match="no raw event for keyword search in profile p1"
     ):
         run(profile, block, "    kw:\n        - foo\n    condition: kw")
 
@@ -470,3 +470,79 @@ def test_products_condition_added():
     r = run_win(profile, block, "    sel:\n        Image: b\n    condition: sel", with_logsource=False)
     added = [leaf for name, d in r.detection.detections.items() if name != "sel" for leaf in leaves(d)]
     assert added == [("k", "v")]
+
+
+# --- lenient event_data: any, keyword gate, unmapped hint (Plan 3) ---------------------------
+
+
+def make_top(top=None, block_extra=None, fields=None):
+    block = {"match": {"product": "aws"}, "fields": fields or {"Image": "eventName"}}
+    block.update(block_extra or {})
+    data = {"profile": "p", "version": 1, "parser": "px", "logsources": [block]}
+    data.update(top or {})
+    profile = parse_profile(data)
+    return profile, profile.logsources[0]
+
+
+KW = "    kw:\n        - foo\n    condition: kw"
+
+
+def test_keyword_without_raw_fails():
+    profile, block = make_top()
+    with pytest.raises(SigmaTransformationError, match="no raw event for keyword search in profile p"):
+        run(profile, block, KW)
+
+
+def test_keyword_with_raw_passes():
+    profile, block = make_top({"raw": {"column": "raw_line"}})
+    run(profile, block, KW)
+
+
+def test_keyword_explicit_override():
+    profile, block = make_top()
+    pipeline = build_profile_pipeline(profile, block, keywords=True)
+    pipeline.apply(rule(KW))
+
+
+def test_any_maps_and_warns():
+    profile, block = make_top(block_extra={"event_data": "any"})
+    with pytest.warns(UserWarning, match="not in a field list"):
+        _, r = run(profile, block, "    sel:\n        ServiceName: x\n    condition: sel")
+    assert r.detection.detections["sel"].detection_items[0].field == "EventData[ServiceName]"
+
+
+def test_any_warns_once_per_field_and_not_for_mapped():
+    import warnings
+
+    profile, block = make_top(block_extra={"event_data": "any"})
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        run(profile, block, "    sel:\n        Image: a\n        ServiceName: x\n    condition: sel")
+    msgs = [str(x.message) for x in w if "not in a field list" in str(x.message)]
+    assert len(msgs) == 1 and "ServiceName" in msgs[0]
+
+
+def test_any_case_insensitive_explicit():
+    profile, block = make_top(block_extra={"event_data": "any"}, fields={"Computer": "Computer"})
+    _, r = run(profile, block, "    sel:\n        computer: x\n    condition: sel")
+    assert r.detection.detections["sel"].detection_items[0].field == "Computer"
+
+
+def test_any_rejects_brackets():
+    profile, block = make_top(block_extra={"event_data": "any"})
+    with pytest.raises(SigmaTransformationError, match="is not mapped"):
+        run(profile, block, "    sel:\n        a[b]: x\n    condition: sel")
+
+
+def test_any_fieldref_maps():
+    profile, block = make_top(block_extra={"event_data": "any"})
+    with pytest.warns(UserWarning, match="not in a field list"):
+        _, r = run(profile, block, "    sel:\n        Image|fieldref: Other\n    condition: sel")
+    item = r.detection.detections["sel"].detection_items[0]
+    assert item.value[0].field == "EventData[Other]"
+
+
+def test_unmapped_hint():
+    profile, block = make_top({"unmapped_hint": "header only"})
+    with pytest.raises(SigmaTransformationError, match="is not mapped by profile p1?; header only"):
+        run(profile, block, "    sel:\n        Other: x\n    condition: sel")

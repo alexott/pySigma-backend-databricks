@@ -1,4 +1,5 @@
 """Compile one Lakewatch mapping profile logsource block into a pySigma pipeline."""
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple, Union
 
@@ -47,25 +48,36 @@ class StrictFieldsTransformation(DetectionItemTransformation):
     allowed: FrozenSet[str]
     prefixes: Tuple[str, ...]
     unsupported: FrozenSet[str]
+    keywords: bool = False
+    any_column: Optional[str] = None
+    hint: Optional[str] = None
 
     def _check(self, field: str) -> None:
-        if field in self.unsupported:
+        if field in self.unsupported or (
+            self.any_column is not None and field.lower() in {u.lower() for u in self.unsupported}
+        ):
             raise SigmaTransformationError(
                 f"field {field} is not supported by profile {self.profile_id}"
             )
-        if field not in self.allowed and not any(
+        if field in self.allowed or any(
             field.startswith(p) and len(field) > len(p) for p in self.prefixes
         ):
-            raise SigmaTransformationError(
-                f"field {field} is not mapped by profile {self.profile_id}"
-            )
+            return
+        if self.any_column is not None and "[" not in field and "]" not in field:
+            return
+        message = f"field {field} is not mapped by profile {self.profile_id}"
+        if self.hint:
+            message += f"; {self.hint}"
+        raise SigmaTransformationError(message)
 
     def apply_detection_item(self, detection_item):
         """Check the item's field and field-reference values; the item is left unchanged."""
         field = detection_item.field
         if field is None:
+            if self.keywords:
+                return None
             raise SigmaTransformationError(
-                f"keyword search is not supported by profile {self.profile_id}"
+                f"no raw event for keyword search in profile {self.profile_id}"
             )
         self._check(field)
         for value in detection_item.value:
@@ -90,11 +102,37 @@ class ProfileFieldMapping(FieldMappingTransformation):
     prefix_rewrites: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
     special: Dict[str, FieldMapping] = field(default_factory=dict)
     profile_id: str = ""
+    any_column: Optional[str] = None
+
+    def _canonical(self, field: Optional[str]) -> Optional[str]:
+        """Return the explicit mapping key equal to ``field`` when case is ignored, else ``field``."""
+        if field is None or self.any_column is None or field in self.mapping or field in self.special:
+            return field
+        for key in (*self.mapping, *self.special):
+            if key is not None and key.lower() == field.lower():
+                return key
+        return field
+
+    def _warn_any(self, field: str, target: str) -> None:
+        """Warn once per field and rule about a field resolved through the ``any`` fallback."""
+        pipeline = getattr(self, "_pipeline", None)
+        state = pipeline.state if pipeline is not None else None
+        if state is not None:
+            seen = state.setdefault("lakewatch_any_warned", set())
+            if (self.profile_id, field) in seen:
+                return
+            seen.add((self.profile_id, field))
+        warnings.warn(
+            f"field {field} is not in a field list of profile {self.profile_id}; mapped to {target}",
+            UserWarning,
+            stacklevel=2,
+        )
 
     def apply_field_name(self, field):
         """Return the mapped name(s) of ``field``; several names are ORed by pySigma."""
         if field is None:
             return None
+        field = self._canonical(field)
         if field in self.mapping:
             return self.mapping[field]
         for src, dsts in self.prefix_rewrites:
@@ -103,6 +141,10 @@ class ProfileFieldMapping(FieldMappingTransformation):
                 if len(dsts) == 1:
                     return dsts[0] + rest
                 return [dst + rest for dst in dsts]
+        if self.any_column is not None and field not in self.special:
+            target = f"{self.any_column}[{field}]"
+            self._warn_any(field, target)
+            return target
         return None
 
     def _transformed(self, field: Optional[str]) -> bool:
@@ -111,7 +153,9 @@ class ProfileFieldMapping(FieldMappingTransformation):
 
     def apply_detection_item(self, detection_item):
         """Replace items of special fields; defer to the plain field mapping otherwise."""
-        field = detection_item.field
+        field = self._canonical(detection_item.field)
+        if field != detection_item.field:
+            detection_item.field = field
         for value in detection_item.value:
             if isinstance(value, SigmaFieldReference) and self._transformed(value.field):
                 # Name the rule's field; the referenced one is the transformed field.
@@ -194,14 +238,21 @@ class ProfileFieldMapping(FieldMappingTransformation):
 
 
 def build_profile_pipeline(
-    profile: Profile, block: LogsourceBlock, logsource: Optional[SigmaLogSource] = None
+    profile: Profile,
+    block: LogsourceBlock,
+    logsource: Optional[SigmaLogSource] = None,
+    keywords: Optional[bool] = None,
 ) -> ProcessingPipeline:
     """Build the pipeline for one profile block: strict fields, mapping, conditions, state.
 
     With ``logsource`` (the rule's), the conditions of its product in ``profile.products``
-    are added as well as the block conditions.
+    are added as well as the block conditions. Keywords are allowed when ``keywords`` is True,
+    or, if it is None, when the profile has a raw source.
     """
     pid = profile.profile
+    any_column = profile.event_data_column if profile.event_data_any(block) else None
+    if keywords is None:
+        keywords = profile.raw is not None
     mappings = profile.mappings_for(block)
     exact = {k: v for k, v in mappings.items() if not k.endswith(".*")}
     prefix_maps = {k[:-1]: v for k, v in mappings.items() if k.endswith(".*")}
@@ -213,6 +264,9 @@ def build_profile_pipeline(
                 allowed=frozenset(exact),
                 prefixes=tuple(prefix_maps),
                 unsupported=frozenset(block.unsupported),
+                keywords=keywords,
+                any_column=any_column,
+                hint=profile.unmapped_hint,
             ),
             identifier=f"lakewatch_{pid}_strict_fields",
         )
@@ -235,7 +289,13 @@ def build_profile_pipeline(
     )
     items.append(
         ProcessingItem(
-            transformation=ProfileFieldMapping(exact_map, prefix_rewrites=rewrites, special=special, profile_id=pid),
+            transformation=ProfileFieldMapping(
+                exact_map,
+                prefix_rewrites=rewrites,
+                special=special,
+                profile_id=pid,
+                any_column=any_column,
+            ),
             identifier=f"lakewatch_{pid}_fields",
         )
     )
