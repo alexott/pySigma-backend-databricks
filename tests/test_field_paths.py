@@ -5,8 +5,10 @@ import re
 import pytest
 
 from sigma.backends.databricks.field_paths import (
+    JOIN_PREFIX,
     FieldPath,
     UnknownFieldError,
+    join_field_name,
     resolve_schema_path,
 )
 from sigma.backends.databricks.ocsf_fields import OcsfPath
@@ -19,6 +21,7 @@ def _p(type_, storage, element=None):
 
 SCHEMA = ParserSchema("p1", "u-1", 2, {
     "eventName": _p("STRING", "column"),
+    "EventID": PathInfo(type="STRING", storage="column", allowed=("1", "7")),
     "actor": _p("STRUCT", "column"),
     "actor.alternateId": _p("STRING", "struct"),
     "userIdentity": _p("VARIANT", "column"),
@@ -154,3 +157,62 @@ def test_resolve_named_entry_fails(path, reason):
 def test_ocsf_path_is_field_path():
     assert OcsfPath is FieldPath
     assert OcsfPath((), ("a",), ()).json_type is None
+
+
+def test_allowed_on_column():
+    assert resolve_schema_path(SCHEMA, "EventID").allowed == ("1", "7")
+    assert resolve_schema_path(SCHEMA, "eventName").allowed is None
+
+
+def test_undeclared_allowed():
+    r = resolve_schema_path(SCHEMA, "userIdentity.custom.x", allow_undeclared=True)
+    assert r.leaf == ("userIdentity",)
+    assert r.json_path == ("custom", "x")
+    assert r.json_type is None
+    with pytest.raises(UnknownFieldError):
+        resolve_schema_path(SCHEMA, "userIdentity.custom.x")
+
+
+def test_undeclared_keeps_case_correction_of_declared_prefix():
+    with pytest.warns(UserWarning, match="declared 'sessionContext'"):
+        r = resolve_schema_path(SCHEMA, "userIdentity.SESSIONCONTEXT.extra", allow_undeclared=True)
+    assert r.json_path == ("sessionContext", "extra")
+    assert r.json_type is None
+
+
+def test_join_resolves_parts():
+    name = join_field_name("\\", ["eventName", "userIdentity.arn"])
+    assert name.startswith(JOIN_PREFIX)
+    r = resolve_schema_path(SCHEMA, name)
+    assert r.join_sep == "\\"
+    assert r.join[0].leaf == ("eventName",)
+    assert r.join[1].json_path == ("arn",)
+
+
+def test_join_with_plain_field_part_is_not_a_named_entry():
+    # The name ends in ']' and would match the named-entry pattern.
+    name = join_field_name("\\", ["eventName", "actor.alternateId"])
+    assert name.endswith("]")
+    r = resolve_schema_path(SCHEMA, name)
+    assert r.entry is None and len(r.join) == 2
+
+
+@pytest.mark.parametrize("part", [
+    "resources.arn", "userIdentity", "actor", "EventData[Foo]",
+    join_field_name("-", ["eventName", "EventID"]),
+])
+def test_join_rejects_non_scalar_part(part):
+    with pytest.raises(UnknownFieldError, match="join parts must be scalar"):
+        resolve_schema_path(SCHEMA, join_field_name("\\", ["eventName", part]))
+
+
+def test_join_needs_two_parts():
+    with pytest.raises(UnknownFieldError, match="join parts must be scalar"):
+        resolve_schema_path(SCHEMA, join_field_name("-", ["eventName"]))
+
+
+def test_join_allows_undeclared_when_flagged():
+    name = join_field_name("-", ["eventName", "userIdentity.custom"])
+    with pytest.raises(UnknownFieldError):
+        resolve_schema_path(SCHEMA, name)
+    assert resolve_schema_path(SCHEMA, name, allow_undeclared=True).join[1].json_path == ("custom",)

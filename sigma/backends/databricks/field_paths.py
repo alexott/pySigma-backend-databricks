@@ -1,8 +1,9 @@
 """Resolve dotted Sigma field names against a Lakewatch parser schema."""
+import json
 import re
 import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from .schema_catalog import ParserSchema
 
@@ -20,6 +21,10 @@ class FieldPath:
     ``entry`` is set for a named entry ``Field[Name]``: the ``_VALUE`` of the element whose
     ``_Name`` is ``Name`` in a list of ``{_Name, _VALUE}`` (Windows ``EventData``). ``leaf`` is
     then the list itself, a VARIANT (``entry_variant``) or an ``ARRAY<STRUCT>``.
+
+    ``allowed`` is the declared set of values of a column, STRUCT or declared VARIANT leaf.
+    ``join`` holds the two resolved parts of a join field (see ``join_field_name``), which
+    renders as the parts concatenated with ``join_sep``.
     """
 
     arrays: Tuple[Tuple[str, ...], ...]
@@ -29,11 +34,22 @@ class FieldPath:
     leaf_type: Optional[str] = None
     entry: Optional[str] = None
     entry_variant: bool = False
+    allowed: Optional[Tuple[str, ...]] = None
+    join: Tuple["FieldPath", ...] = ()
+    join_sep: str = ""
 
     @property
     def whole_variant(self) -> bool:
         """Whether the path ends at a VARIANT column or member itself (no key inside it)."""
         return not self.json_path and self.leaf_type == "VARIANT"
+
+
+JOIN_PREFIX = "__lakewatch_join__"
+
+
+def join_field_name(sep: str, parts: Sequence[str]) -> str:
+    """Return the synthetic field name for ``parts`` joined with ``sep``."""
+    return JOIN_PREFIX + json.dumps([sep, *parts])
 
 
 class UnknownFieldError(ValueError):
@@ -71,9 +87,11 @@ def _resolve_variant(
     arrays: List[Tuple[str, ...]],
     leaf: Tuple[str, ...],
     leaf_type: str,
+    allow_undeclared: bool = False,
+    allowed: Optional[Tuple[str, ...]] = None,
 ) -> FieldPath:
     if not remaining:
-        return FieldPath(tuple(arrays), leaf, (), None, leaf_type)
+        return FieldPath(tuple(arrays), leaf, (), None, leaf_type, allowed=allowed)
     if not _has_children(schema, base):
         return FieldPath(tuple(arrays), leaf, tuple(remaining), None, None)
     prefix = base
@@ -88,6 +106,10 @@ def _resolve_variant(
                 )
         key = _find(schema, prefix, segment)
         if key is None:
+            if allow_undeclared:
+                return FieldPath(
+                    tuple(arrays), leaf, tuple(json_path + remaining[i:]), None, None
+                )
             raise UnknownFieldError(
                 path, schema.name, f"'{segment}' is not declared under '{prefix}'"
             )
@@ -108,7 +130,7 @@ def _resolve_variant(
         json_path.append(declared)
         json_type = info.type
         prefix = key
-    return FieldPath(tuple(arrays), leaf, tuple(json_path), json_type, None)
+    return FieldPath(tuple(arrays), leaf, tuple(json_path), json_type, None, allowed=info.allowed)
 
 
 _NAMED_ENTRY = re.compile(r"(?P<base>.+)\[(?P<name>[^\[\]]+)\]")
@@ -133,11 +155,44 @@ def _resolve_named_entry(schema: ParserSchema, path: str, base: str, name: str) 
     )
 
 
-def resolve_schema_path(schema: ParserSchema, path: str) -> FieldPath:
+def _resolve_join(schema: ParserSchema, path: str, allow_undeclared: bool) -> FieldPath:
+    """Resolve a name built by ``join_field_name`` into a FieldPath with two scalar parts."""
+    not_scalar = "join parts must be scalar fields"
+    try:
+        decoded = json.loads(path[len(JOIN_PREFIX):])
+    except ValueError:
+        decoded = None
+    if (
+        not isinstance(decoded, list) or len(decoded) != 3
+        or not all(isinstance(x, str) for x in decoded)
+    ):
+        raise UnknownFieldError(path, schema.name, not_scalar + " (exactly 2 parts)")
+    sep, *names = decoded
+    parts = []
+    for name in names:
+        part = resolve_schema_path(schema, name, allow_undeclared)
+        scalar = (
+            not part.join and part.entry is None and not part.arrays and not part.whole_variant
+            and (part.json_path or part.leaf_type not in ("STRUCT", "ARRAY"))
+            and part.json_type not in ("STRUCT", "ARRAY", "VARIANT")
+        )
+        if not scalar:
+            raise UnknownFieldError(path, schema.name, f"{not_scalar} ('{name}' is not)")
+        parts.append(part)
+    return FieldPath((), (), (), None, "STRING", join=tuple(parts), join_sep=sep)
+
+
+def resolve_schema_path(
+    schema: ParserSchema, path: str, allow_undeclared: bool = False
+) -> FieldPath:
     """Resolve a dotted field name against ``schema``, or raise UnknownFieldError.
 
     ``Field[Name]`` resolves to a named entry of a ``{_Name, _VALUE}`` list (see FieldPath).
+    A name built by ``join_field_name`` resolves to a join of two scalar fields. With
+    ``allow_undeclared``, keys not declared under a VARIANT that declares children are accepted.
     """
+    if path.startswith(JOIN_PREFIX):  # before the named-entry pattern: a join name ends in ']'
+        return _resolve_join(schema, path, allow_undeclared)
     named = _NAMED_ENTRY.fullmatch(path)
     if named:
         return _resolve_named_entry(schema, path, named["base"], named["name"])
@@ -163,15 +218,18 @@ def resolve_schema_path(schema: ParserSchema, path: str) -> FieldPath:
                 return FieldPath(tuple(arrays), (), (), None, info.element)
             if info.element == "VARIANT":
                 return _resolve_variant(
-                    schema, path, prefix, rest, arrays, (), "VARIANT"
+                    schema, path, prefix, rest, arrays, (), "VARIANT", allow_undeclared
                 )
             continue
         since.append(declared)
         if info.type == "VARIANT":
             return _resolve_variant(
-                schema, path, key, rest, arrays, tuple(since), "VARIANT"
+                schema, path, key, rest, arrays, tuple(since), "VARIANT", allow_undeclared,
+                info.allowed,
             )
         prefix = key
         if not rest:
-            return FieldPath(tuple(arrays), tuple(since), (), None, info.type)
+            return FieldPath(
+                tuple(arrays), tuple(since), (), None, info.type, allowed=info.allowed
+            )
     raise UnknownFieldError(path, schema.name, "empty path")  # pragma: no cover
