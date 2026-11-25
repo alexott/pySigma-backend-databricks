@@ -63,6 +63,7 @@ from .lakewatch_maps import (
     truncate,
 )
 from .lakewatch_output import PLACEHOLDER_IDENTIFIER, escape_title, placeholders
+from .lakewatch_overrides import OutputOverride, OverridesFile, parse_override, resolve_output
 from .ocsf_fields import split_ocsf_path
 from .schema_catalog import ParserSchema, SchemaCatalog
 
@@ -343,6 +344,7 @@ class DatabricksBackend(TextQueryBackend):
                  lakewatch_schemas: Optional[Union[str, Sequence[str]]] = None,
                  table_map: Optional[Union[str, Sequence[str]]] = None,
                  output_dir: Optional[str] = None,
+                 overrides: Optional[str] = None,
                  **kwargs):
         """Initialize Databricks backend with optional Lakewatch, raw-log, CIDR and OCSF options.
 
@@ -353,6 +355,9 @@ class DatabricksBackend(TextQueryBackend):
 
         ``output_dir`` makes ``lakewatch`` write one ``<rule_name>.yaml`` file per rule into
         that directory instead of returning a multi-document YAML file.
+
+        ``overrides`` is the path of a YAML file with per-rule ``summary``, ``context`` and
+        ``select`` settings for parsed-table rules (see ``lakewatch_overrides``).
         """
         if "compute_group" in kwargs:
             raise SigmaConfigurationError(
@@ -392,6 +397,12 @@ class DatabricksBackend(TextQueryBackend):
         self.lakewatch_schemas = self._split_list_option(lakewatch_schemas)
         self.table_map = self._split_list_option(table_map)
         self.output_dir = (output_dir or "").strip() or None
+        self.overrides = (overrides or "").strip() or None
+        # The loaded overrides file, the ids of all loaded profiles and the Sigma ids of the rules
+        # converted in parsed mode (for the warnings at the end of a conversion).
+        self._overrides_file: Optional[OverridesFile] = None
+        self._known_profiles: Set[str] = set()
+        self._converted_ids: Set[str] = set()
         # Parsed-table mode state: the selected (profile, schema, table) triples, set up lazily
         # on the first parsed-mode rule, and the one the current rule is converted for.
         self._selected: Optional[List[Tuple["Profile", ParserSchema, str]]] = None
@@ -1140,12 +1151,17 @@ class DatabricksBackend(TextQueryBackend):
                 "-O table_map=<profile>:<table>,... (or -O table_name=... with exactly one parser)"
             )
         self._selected = selected
+        self._known_profiles = set(profiles)
+        if self.overrides:
+            self._overrides_file = OverridesFile.load(self.overrides)
 
     def _convert_rule_parsed(self, rule: SigmaRule, output_format: str,
                              args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> List[Any]:
         """Convert a rule once per selected profile matching its logsource, concatenating results."""
         self._parsed_setup()
         assert self._selected is not None
+        if rule.id is not None:
+            self._converted_ids.add(str(rule.id).lower())
         matches = [
             (profile, schema, table, block)
             for profile, schema, table in self._selected
@@ -1564,11 +1580,16 @@ class DatabricksBackend(TextQueryBackend):
         # extend_lookback option to widen it.
         select_list = "*"
         summary = rule.title
+        context: Optional[Dict[str, str]] = None
         if self._current_profile is not None:
-            select_list = self._select_list({})
             profile = self._current_profile[0]
-            aliases: List[str] = []
-            if profile.entity:
+            chosen = self._output_settings(rule, profile.profile)
+            select = chosen.select or {}
+            select_list = self._select_list(select)
+            context = chosen.context
+            if chosen.summary is not None:
+                summary = chosen.summary
+            elif profile.entity:
                 summary = f"{escape_title(rule.title)} on {{sigma_entity}}"
             else:
                 summary = escape_title(rule.title)
@@ -1576,7 +1597,10 @@ class DatabricksBackend(TextQueryBackend):
                     f"no summary override and profile {profile.profile} has no entity: "
                     f"all signals of this rule group into one alert"
                 )
-            self._check_placeholders(summary, self._output_columns(aliases))
+            columns = self._output_columns(list(select))
+            self._check_placeholders(summary, columns)
+            for value in (context or {}).values():
+                self._check_placeholders(value, columns)
         sql = "" if not query.strip() else (
             f"SELECT {select_list}\nFROM {table}\n"
             f"WHERE IN_TIMERANGE(time)\n"
@@ -1619,18 +1643,54 @@ class DatabricksBackend(TextQueryBackend):
             "default_schema_name": schema_name,
         }
         doc["batch"] = batch
-        doc["output"] = {
-            "summary": summary,
-            "event_time_column": "time",
-            "default_context": True,
-        }
+        output: Dict[str, Any] = {"summary": summary}
+        if context is not None:
+            output["context"] = context
+        output["event_time_column"] = "time"
+        output["default_context"] = context is None
+        doc["output"] = output
         mitre = build_mitre_mapping(rule)
         if mitre:
             doc["mitre"] = mitre
         return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
 
+    def _output_settings(self, rule: SigmaRule, profile_id: str) -> OutputOverride:
+        """Resolve summary, context and select: the file's profile entry, its default, the rule."""
+        sources: List[OutputOverride] = []
+        if self._overrides_file is not None:
+            sources.extend(self._overrides_file.lookup(str(rule.id) if rule.id else None, profile_id))
+        attribute = rule.custom_attributes.get("lakewatch")
+        if attribute is not None:
+            try:
+                sources.append(parse_override(attribute, "lakewatch attribute"))
+            except ValueError as e:
+                raise self._parsed_error(str(e)) from None
+        return resolve_output(sources)
+
+    def _warn_overrides(self) -> None:
+        """Warn once per conversion about overrides that match nothing, then reset the tracking."""
+        converted, self._converted_ids = self._converted_ids, set()
+        if not self.overrides:
+            return
+        if not self._parsed_mode("lakewatch"):
+            warnings.warn("-O overrides=... applies to Lakewatch parsed tables only and is ignored "
+                          "in OCSF mode", UserWarning, stacklevel=3)
+            return
+        if self._overrides_file is None:
+            return
+        entries = self._overrides_file.entries
+        unknown_ids = sorted(set(entries) - converted)
+        if unknown_ids:
+            warnings.warn(f"overrides for unknown Sigma ids: {unknown_ids}", UserWarning, stacklevel=3)
+        unknown_profiles = sorted(
+            {scope for scoped in entries.values() for scope in scoped
+             if scope != "default" and scope not in self._known_profiles})
+        if unknown_profiles:
+            warnings.warn(f"overrides name unknown profiles: {unknown_profiles}", UserWarning, stacklevel=3)
+
     def finalize_output_lakewatch(self, queries: List[str]) -> Any:
         """Assemble per-rule Lakewatch v2 documents into one multi-document YAML file."""
+        self._warn_overrides()
         documents = self._lakewatch_documents(queries)
         if documents:
             self._warn_lakewatch_options()
