@@ -4,6 +4,7 @@ Usage: scaffold_profile.py PARSER [--schemas f.json ...] [--rules DIR]
        --match product=windows,category=process_creation [--profile-id ID] [-o out.yml]
 """
 import argparse
+import json
 import re
 import sys
 from collections import Counter
@@ -20,7 +21,13 @@ _PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_.*]*")
 
 def _q(text: str) -> str:
     """Quote ``text`` for YAML when it isn't a plain safe scalar."""
-    return text if _PLAIN.fullmatch(text) else yaml.safe_dump(text, default_style='"').splitlines()[0]
+    if _PLAIN.fullmatch(text):
+        try:
+            if yaml.safe_load(text) == text:
+                return text
+        except yaml.YAMLError:
+            pass
+    return json.dumps(text)  # a JSON string is a valid single-line YAML double-quoted scalar
 
 
 def _detection_fields(node: Any) -> Iterator[str]:
@@ -77,6 +84,7 @@ def scaffold(
         "fields:",
     ]
     known = set()
+    known_variants = set()
     for path, info in paths.items():
         if path == "time" or path.startswith("lw_"):
             continue
@@ -87,14 +95,21 @@ def scaffold(
         name = path.replace("[]", "")
         target = f"{name}.*" if info.type == "VARIANT" else name
         known.add(name)
-        count = usage.get(name, 0)
+        if info.type == "VARIANT":
+            known_variants.add(name)
+            prefix = name + "."
+            count = usage.get(name, 0) + sum(c for f, c in usage.items() if f.startswith(prefix))
+        else:
+            count = usage.get(name, 0)
         comment = f"  # used by {count} rules" if count else ""
         lines.append(f"  {_q(target)}: {_q(target)}{comment}")
     lines.append("logsources:")
     lines.append("  - match: {" + ", ".join(f"{_q(k)}: {_q(v)}" for k, v in match.items()) + "}")
     lines.append("")
     lines.append("# Sigma fields used by matching rules but not in the schema:")
-    missing = sorted(((f, c) for f, c in usage.items() if f not in known), key=lambda fc: (-fc[1], fc[0]))
+    prefixes = tuple(k + "." for k in known_variants)
+    unknown = [(f, c) for f, c in usage.items() if f not in known and not f.startswith(prefixes)]
+    missing = sorted(unknown, key=lambda fc: (-fc[1], fc[0]))
     lines.extend(f"#   {f}: {c}" for f, c in missing)
     return "\n".join(lines) + "\n"
 

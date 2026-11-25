@@ -90,3 +90,55 @@ def test_describe_requires_time():
     describe = {"columns": [{"name": "a", "type": {"name": "string"}}]}
     with pytest.raises(ValueError, match="time"):
         _load("describe_to_schema").schema_from_describe(describe, "demo")
+
+
+@pytest.mark.parametrize("word", ["on", "off", "yes", "no", "null", "true", "false", "123"])
+def test_q_quotes_reserved_words(word):
+    q = _load("scaffold_profile")._q(word)
+    assert yaml.safe_load(q) == word and q.startswith('"')
+
+
+def test_q_long_string_single_line():
+    text = "word " * 40
+    q = _load("scaffold_profile")._q(text)
+    assert "\n" not in q and yaml.safe_load(q) == text
+
+
+def test_scaffold_prefix_usage(tmp_path):
+    rules = tmp_path / "r"
+    rules.mkdir()
+    (rules / "a.yml").write_text(
+        "title: t\nlogsource: {product: aws, service: cloudtrail}\n"
+        "detection:\n  s:\n    event.foo: 1\n    event.bar: 2\n  condition: s\n"
+    )
+    text = _load("scaffold_profile").scaffold(_schema(tmp_path), {"product": "aws"}, rules)
+    assert "event.*: event.*  # used by 2 rules" in text
+    assert "#   event.foo" not in text
+
+
+def test_describe_live_errors(monkeypatch, capsys):
+    mod = _load("describe_to_schema")
+
+    def argv(table):
+        return ["--table", table, "--profile", "p", "--warehouse-id", "w", "--parser", "x", "-o", "/dev/null"]
+
+    assert mod.main(argv("a;b")) == 1
+    assert "catalog.schema.table" in capsys.readouterr().err
+
+    class R:
+        returncode = 0
+        stdout = json.dumps({"status": {"state": "FAILED", "error": {"message": "boom"}}})
+        stderr = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: R())
+    assert mod.main(argv("c.s.t")) == 1
+    assert "boom" in capsys.readouterr().err
+    R.stdout = "not json"
+    assert mod.main(argv("c.s.t")) == 1
+
+    def missing(*a, **k):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(mod.subprocess, "run", missing)
+    assert mod.main(argv("c.s.t")) == 1
+    assert "not found" in capsys.readouterr().err

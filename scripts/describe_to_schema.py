@@ -7,6 +7,7 @@ Live (uses the ``databricks`` CLI; the profile is never defaulted):
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -53,7 +54,13 @@ def schema_from_describe(describe: Dict[str, Any], parser: str, uuid: Optional[s
     }
 
 
+_PART = r"(?:[A-Za-z_][A-Za-z0-9_]*|`[^`]+`)"
+_TABLE = re.compile(rf"{_PART}\.{_PART}\.{_PART}")
+
+
 def _describe_live(table: str, profile: str, warehouse_id: str) -> Dict[str, Any]:
+    if not _TABLE.fullmatch(table):
+        raise RuntimeError(f"table '{table}' must look like catalog.schema.table (backticks allowed)")
     body = {
         "statement": f"DESCRIBE TABLE EXTENDED {table} AS JSON",
         "warehouse_id": warehouse_id,
@@ -63,15 +70,24 @@ def _describe_live(table: str, profile: str, warehouse_id: str) -> Dict[str, Any
         "databricks", "api", "post", "/api/2.0/sql/statements",
         "--profile", profile, "--json", json.dumps(body),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        raise RuntimeError("the 'databricks' CLI was not found on PATH") from None
     if proc.returncode != 0:
         raise RuntimeError(f"databricks CLI failed: {proc.stderr.strip()}")
-    response = json.loads(proc.stdout)
+    try:
+        response = json.loads(proc.stdout)
+    except ValueError:
+        raise RuntimeError(f"databricks CLI printed non-JSON output: {proc.stdout[:200]!r}") from None
+    status = response.get("status") or {}
     try:
         return json.loads(response["result"]["data_array"][0][0])
-    except (KeyError, IndexError, TypeError) as exc:
-        state = (response.get("status") or {}).get("state")
-        raise RuntimeError(f"no result in the statement response (state: {state})") from exc
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        message = (status.get("error") or {}).get("message", "no error message")
+        raise RuntimeError(
+            f"no usable result in the statement response (state: {status.get('state')}): {message}"
+        ) from exc
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -88,7 +104,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.table:
         if not args.profile or not args.warehouse_id:
             ap.error("--table requires --profile and --warehouse-id")
-        describe = _describe_live(args.table, args.profile, args.warehouse_id)
+        try:
+            describe = _describe_live(args.table, args.profile, args.warehouse_id)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     else:
         with open(args.describe_json, encoding="utf-8") as fh:
             describe = json.load(fh)
