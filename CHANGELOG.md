@@ -42,6 +42,16 @@ All notable changes to this project are documented in this file. The format is b
   field selection by condition, and routing by EventID.
 - Keyword search over a profile's raw event source.
 - The `-O output_dir` option, which writes one `<rule_name>.yaml` per rule.
+- `-O target=content_pack|workspace` for `-f lakewatch` (default `workspace`). `content_pack`
+  creates Lakewatch content-pack rule documents, with a `content_resource_id` per rule and a
+  parser uuid from the schema catalog. With `-O output_dir` pointed at a pack's `rules/` directory
+  it writes `<name>/<name>.yaml`, merges `revisions.yaml` (content hashes and versions, edited as
+  text) and writes an `appIndex.rules.yaml` fragment.
+- Profile `entity` key. Each query selects it as `sigma_entity`, and the default alert summary is
+  `<title> on {sigma_entity}`. All built-in profiles define one.
+- Summary overrides: the `lakewatch:` rule attribute and `-O overrides=<file>` set `summary`,
+  `context` and `select` (extra output columns) per rule. The overrides file may be scoped by
+  profile, and settings merge per key.
 - The tools `scripts/scaffold_profile.py`, `scripts/describe_to_schema.py` and
   `scripts/gen_lakewatch_v2_schemas.py`.
 - The Lakewatch v2 rule format (#129), aligned with the current v2 rule contract (#140):

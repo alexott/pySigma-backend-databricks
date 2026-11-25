@@ -196,7 +196,9 @@ Each selected parser produces one rule per Sigma rule, named `<rule_name>__<prof
 | `table_map` | *(none)* | `profile:table,profile:table` for several parsers. Every selected profile needs a table. |
 | `lakewatch_profiles_dir` | *(none)* | Directory with your own `*.yml` profiles. They are added to the built-in ones, and an id replaces a built-in id. |
 | `lakewatch_schemas` | *(none)* | JSON file with additional parser schemas, in the format of the bundled catalog. |
-| `output_dir` | *(none)* | Write one `<rule_name>.yaml` file per rule into this directory (created if missing) instead of one multi-document YAML file. |
+| `output_dir` | *(none)* | Write one `<rule_name>.yaml` file per rule into this directory (created if missing) instead of one multi-document YAML file. With `target=content_pack` it's the pack's `rules/` directory (see [Content-pack output](#content-pack-output)). |
+| `target` | `workspace` | `workspace` creates rules for the Lakewatch API. `content_pack` creates the rule documents of a Lakewatch content pack (see [Target modes](#target-modes)). |
+| `overrides` | *(none)* | YAML file with per-rule `summary`, `context` and `select` settings, keyed by Sigma id (see [Alert summaries](#alert-summaries)). |
 
 By default all rules go into one multi-document YAML file (`-o file.yaml`, or stdout). With
 `-O output_dir=<dir>` each rule is written to its own `<dir>/<rule_name>.yaml`, and only a
@@ -220,12 +222,18 @@ fields:
   userIdentity.type: userIdentity.type       # path inside a VARIANT column
   requestParameters.*: requestParameters.*   # prefix mapping, free-form VARIANT only
   Principal: [userIdentity.arn, userIdentity.principalId]  # several targets are ORed
+entity: userIdentity.arn                    # alert grouping key, selected as sigma_entity
 logsources:
   - match: {product: aws, service: cloudtrail}   # product, category and service
     conditions:
       eventType: AwsApiCall                 # added to every rule with this logsource
     unsupported: [Destination]              # fail with a clear message
 ```
+
+`entity` is a schema path, a Sigma field of the profile or an SQL expression, for example
+`coalesce(nullif(ComputerName, ''), aid)`. Every query selects it as `sigma_entity`, and the
+default alert summary groups alerts by it (see [Alert summaries](#alert-summaries)). All built-in
+profiles have an `entity`.
 
 VARIANT paths render as `try_variant_get(col, '$.path', 'type')`, and paths through arrays as
 `exists(col, x0 -> ...)`.
@@ -241,6 +249,175 @@ fields:
   # renders as try_element_at(filter(try_variant_get(EventData, '$',
   #   'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>'), e -> e._Name = 'Image'), 1)._VALUE
 ```
+
+#### Target modes
+
+`-O target=workspace` (the default) creates flat rules for the Lakewatch API. A missing `target`
+means `workspace`. `-O target=content_pack` creates the rule documents of a Lakewatch content
+pack. It works only with parsed tables, not with OCSF mode. Both modes read the same Sigma rules.
+
+Abbreviated `workspace` document:
+
+```yaml
+catalog_name: main
+schema_name: sec
+rule_name: encoded_powershell__windows_sysmon_process
+description: ...
+schedule:
+  at_least_every: 24h
+  enabled: false
+batch:
+  warehouse_id: 1234567890abcdef
+  sql:
+    query: |-
+      SELECT *, Computer AS sigma_entity
+      FROM main.sec.windows_sysmon_process
+      WHERE IN_TIMERANGE(time) AND (...)
+    default_catalog_name: main
+    default_schema_name: sec
+output:
+  summary: Encoded PowerShell on {sigma_entity}
+  event_time_column: time
+  default_context: true
+```
+
+Abbreviated `content_pack` document:
+
+```yaml
+description: ...
+metadata:
+  rule_kind: panther
+  displayName: Encoded PowerShell
+  table_parameters:
+    events:
+      display_name: Events
+      parser_ids: [<uuid of the parser>]
+rule:
+  rule_name: encoded_powershell__windows_sysmon_process
+  content_resource_id: <uuid>
+  schedule:
+    at_least_every: 24h
+  batch:
+    sql:
+      query: |-
+        SELECT *, Computer AS sigma_entity
+        FROM {{table.events}}
+        WHERE IN_TIMERANGE(time) AND (...)
+  output:
+    summary: Encoded PowerShell on {sigma_entity}
+    event_time_column: time
+    default_context: true
+```
+
+In `content_pack` mode:
+
+* The rule has no `catalog_name` or `schema_name`. The query reads `{{table.events}}`, which the
+  pack binds to the parser's table, and `schedule` has no `enabled`.
+* `content_resource_id` is a UUIDv5 of the lower-case Sigma id and the profile id
+  (`<sigma id>:<profile>`), so converting the same rule again gives the same id. The rule must
+  have an `id`.
+* `metadata.table_parameters.events.parser_ids` holds the `uuid` of the parser's entry in the
+  schema catalog. The built-in parsers have one, but the Windows parsers of the bundled
+  `windows_custom` catalog (for example `windows_sysmon_process`) don't. For a parser without one,
+  conversion fails with a configuration error that tells you to add `"uuid"` to its entry in a
+  `-O lakewatch_schemas=<file>` file.
+* `catalog_name`, `schema_name`, `warehouse_id`, `table_name`, `table_map` and `enabled` are
+  ignored, with one warning.
+
+#### Alert summaries
+
+The `output.summary` of a rule is a template. Lakewatch fills each `{column}` from the alert's
+rows. The backend picks the summary like this:
+
+1. A summary from the overrides (below), if there is one.
+2. `"<title> on {sigma_entity}"`, if the profile has an `entity`. Braces in the title become
+   parentheses, because Lakewatch reads `{...}` as a placeholder.
+3. The title alone, if the profile has no `entity`. The conversion warns that all signals of the
+   rule group into one alert.
+
+A rule can set `summary`, `context` and `select` with the `lakewatch:` attribute, a top-level key
+of the Sigma rule:
+
+```yaml
+title: Suspicious PowerShell
+id: 5f1b9c8e-3c1a-4f0e-9a43-1d2e3f4a5b6c
+# logsource, detection, ...
+lakewatch:
+  summary: "PowerShell by {sigma_user} on {sigma_entity}"
+  context:
+    command: "{sigma_cmd}"
+  select:
+    sigma_user: User              # a Sigma field of the profile
+    sigma_cmd: CommandLine
+    parent: ParentImage
+    tail: "right(CommandLine, 20)"   # anything else is raw SQL
+```
+
+`-O overrides=<file>` takes the same keys from a YAML file keyed by Sigma id. An id maps either
+directly to the keys, or to `default` and profile ids:
+
+```yaml
+5f1b9c8e-3c1a-4f0e-9a43-1d2e3f4a5b6c:        # flat: all profiles
+  summary: "PowerShell by {sigma_user} on {sigma_entity}"
+  select:
+    sigma_user: User
+a1b2c3d4-0000-4000-8000-000000000001:        # per profile
+  default:
+    summary: "{sigma_entity}: suspicious process"
+  crowdstrike_fdr_event:
+    select:
+      sigma_user: UserName
+```
+
+Mixing the keys with profile ids in one entry is an error.
+
+* **Precedence** applies per key. For each of `summary`, `context` and `select`, the first of these
+  that sets the key wins: the file's entry for the profile, the file's `default` entry, the rule
+  attribute. So an override file can replace the summary of a rule and still use its `select`.
+* **`select`** maps an alias to a value. A value that is a Sigma field or a schema path is resolved
+  through the profile, and anything else is used as raw SQL. Each entry becomes
+  `<expr> AS <alias>` in the SELECT list, after `*` and `sigma_entity`. An alias must be a bare
+  identifier that doesn't clash with a column of the parser or `sigma_entity`. A field that maps
+  to several targets, uses a transform or sits inside an array fails the rule: use an SQL
+  expression for it.
+* **Placeholders.** Each `{x}` in `summary` and in the `context` values must name an output column:
+  a top-level column of the parser's schema, a `select` alias or `sigma_entity`. Anything else
+  fails the rule with `placeholder {x} is not an output column of profile ...; add it under select`.
+* **`context`** maps names to templates and is written as `output.context`. A rule with a `context`
+  has `default_context: false`.
+* The file is read by Sigma id (case-insensitive). Conversion warns about ids in the file that no
+  converted rule has, and about profile keys that aren't a loaded profile. `overrides` applies to
+  parsed-table mode only. In OCSF mode it's ignored, with a warning.
+
+#### Content-pack output
+
+For `-O target=content_pack`, point `output_dir` at the `rules/` directory of a content pack:
+
+```bash
+sigma convert -s -t databricks -f lakewatch -O target=content_pack \
+  -O parsers=windows_sysmon_process -O lakewatch_schemas=schemas.json \
+  -O output_dir=my_pack/rules rules/windows/
+```
+
+It writes:
+
+```text
+my_pack/rules/
+  encoded_powershell__windows_sysmon_process/
+    encoded_powershell__windows_sysmon_process.yaml   one rule document
+  revisions.yaml                                      content hashes and versions
+  appIndex.rules.yaml                                 fragment for appIndex.yaml
+```
+
+* **`revisions.yaml`** has an entry per rule: `name`, `latestVersion` and `contentHash`, the
+  sha256 of the rule file. A new rule is added with `latestVersion: 1`. When the hash of a rule
+  changes, `latestVersion` goes up by one and the entry's `versionNote` is dropped. Unchanged
+  entries stay byte-identical, as do comments, ordering and the entries of rules that weren't
+  converted in this run. The file is edited as text, not re-serialized, so your formatting stays.
+  A layout the merge doesn't support (for example a flow-style list) stops the run with a
+  configuration error and leaves the file alone, rather than guessing.
+* **`appIndex.rules.yaml`** is a fragment: `rules:` with the name of every rule directory in
+  `output_dir`, sorted. The backend doesn't touch `appIndex.yaml`. Paste the fragment into it.
 
 Field mapping is strict. A Sigma field that isn't a key of the profile's `fields` fails that
 rule with `field <name> is not mapped by profile <id>`, and keyword (unbound) searches fail as
