@@ -355,7 +355,7 @@ def convert_sql(tmp_path, fields, detection_yaml):
         catalog_name="cat",
         schema_name="sch",
     )
-    sqls = [json.loads(q)["sql"] for q in backend.convert_rule(win_rule(detection_yaml), "lakewatch_v2")]
+    sqls = [json.loads(q)["sql"] for q in backend.convert_rule(win_rule(detection_yaml), "lakewatch")]
     assert len(sqls) == 1
     return sqls[0]
 

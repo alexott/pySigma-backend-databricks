@@ -171,7 +171,7 @@ class DatabricksBackend(TextQueryBackend):
         "default": "Plain Databricks SQL queries",
         "dbsql": "Databricks SQL queries with additional metadata as comments",
         "detection_yaml": "Yaml markup for Alex's own detection framework",
-        "lakewatch_v2": "Lakewatch detection rules (v2 format, Unity Catalog governed)",
+        "lakewatch": "Lakewatch detection rules (v2 format, Unity Catalog governed)",
     }
     # TODO: does the backend requires that a processing pipeline is provided? This information can be used by user
     # interface programs like Sigma CLI to warn users about inappropriate usage of the backend.
@@ -349,7 +349,7 @@ class DatabricksBackend(TextQueryBackend):
         directories), ``lakewatch_schemas`` (extra parser schema files) and ``table_map``
         (``profile:table`` pairs).
 
-        ``output_dir`` makes ``lakewatch_v2`` write one ``<rule_name>.yaml`` file per rule into
+        ``output_dir`` makes ``lakewatch`` write one ``<rule_name>.yaml`` file per rule into
         that directory instead of returning a multi-document YAML file.
         """
         if "compute_group" in kwargs:
@@ -367,7 +367,7 @@ class DatabricksBackend(TextQueryBackend):
         self._raw_log_field_set = bool(raw_log_field)
         if raw_log_field:
             self.raw_log_field = raw_log_field
-        # None: render OCSF array/free-form fields only for the lakewatch_v2 format or rules processed
+        # None: render OCSF array/free-form fields only for the lakewatch format or rules processed
         # by the OCSF pipeline; True/False force it on/off.
         self.ocsf = self._parse_bool_option("ocsf", ocsf)
         self._current_rule: Optional[SigmaRule] = None
@@ -432,7 +432,7 @@ class DatabricksBackend(TextQueryBackend):
         """Whether field names are OCSF attribute paths that need array/free-form aware rendering."""
         if self.ocsf is not None:
             return self.ocsf
-        if self._current_format == "lakewatch_v2":
+        if self._current_format == "lakewatch":
             return not self._parsed_mode(self._current_format)
         rule = self._current_rule
         return rule is not None and any(
@@ -1032,15 +1032,15 @@ class DatabricksBackend(TextQueryBackend):
         )
 
     def _parsed_mode(self, output_format: Optional[str]) -> bool:
-        """Whether rules are converted for Lakewatch parser tables (the lakewatch_v2 default).
+        """Whether rules are converted for Lakewatch parser tables (the lakewatch default).
 
         OCSF mode is used instead with ``-O ocsf=true`` or a pipeline with ``ocsf_`` items.
         ``-O parsers`` with any other format, or together with OCSF mode, is an error.
         """
-        if output_format != "lakewatch_v2":
+        if output_format != "lakewatch":
             if self.parsers:
                 raise SigmaConfigurationError(
-                    f"-O parsers=... is only supported by the lakewatch_v2 format, not {output_format}"
+                    f"-O parsers=... is only supported by the lakewatch format, not {output_format}"
                 )
             return False
         if self.ocsf is True or self._ocsf_pipeline_selected():
@@ -1092,7 +1092,7 @@ class DatabricksBackend(TextQueryBackend):
         available = ", ".join(sorted(profiles))
         if not self.parsers:
             raise SigmaConfigurationError(
-                f"-O parsers=... is required for lakewatch_v2 parsed tables; available: {available}"
+                f"-O parsers=... is required for lakewatch parsed tables; available: {available}"
             )
         duplicates = sorted({pid for pid in self.parsers if self.parsers.count(pid) > 1})
         if duplicates:
@@ -1444,7 +1444,7 @@ class DatabricksBackend(TextQueryBackend):
             for doc in documents
         )
 
-    def finalize_query_lakewatch_v2(self, rule: SigmaRule, query: str, index: int,
+    def finalize_query_lakewatch(self, rule: SigmaRule, query: str, index: int,
                                     state: ConversionState) -> Any:
         """Build a Lakewatch v2 batch rule document for a single Sigma query."""
         catalog_name = (self.catalog_name or "").strip()
@@ -1516,11 +1516,11 @@ class DatabricksBackend(TextQueryBackend):
             doc["mitre"] = mitre
         return json.dumps({"status": rule_status, "sql": sql, "doc": doc})
 
-    def finalize_output_lakewatch_v2(self, queries: List[str]) -> Any:
+    def finalize_output_lakewatch(self, queries: List[str]) -> Any:
         """Assemble per-rule Lakewatch v2 documents into one multi-document YAML file."""
         documents = self._lakewatch_documents(queries)
         if documents:
-            self._warn_lakewatch_v2_options()
+            self._warn_lakewatch_options()
         # rule_name must be unique within the target schema: suffix duplicates.
         used = set()
         for doc in documents:
@@ -1533,11 +1533,11 @@ class DatabricksBackend(TextQueryBackend):
             used.add(candidate)
             doc["rule_name"] = candidate
         if self.output_dir:
-            return self._write_lakewatch_v2_files(documents, self.output_dir)
+            return self._write_lakewatch_files(documents, self.output_dir)
         return self._dump_lakewatch_documents(documents)
 
     @classmethod
-    def _write_lakewatch_v2_files(cls, documents: List[Dict[str, Any]], output_dir: str) -> str:
+    def _write_lakewatch_files(cls, documents: List[Dict[str, Any]], output_dir: str) -> str:
         """Write each document to ``<output_dir>/<rule_name>.yaml`` and return a summary comment.
 
         Rule names are unique and contain only ``[a-z0-9_]``, so they are safe file names.
@@ -1551,19 +1551,19 @@ class DatabricksBackend(TextQueryBackend):
                     cls._dump_lakewatch_documents([doc]), encoding="utf-8")
         except OSError as e:
             raise SigmaConfigurationError(f"cannot write rules to output_dir {directory}: {e}") from None
-        return f"# Wrote {len(documents)} Lakewatch v2 rule(s) to {directory}"
+        return f"# Wrote {len(documents)} Lakewatch rule(s) to {directory}"
 
     def finalize(self, queries: List[Any], output_format: str) -> Any:
         """Finalize the output, warning when ``output_dir`` is set for a format that ignores it."""
-        if self.output_dir and output_format != "lakewatch_v2":
+        if self.output_dir and output_format != "lakewatch":
             warnings.warn(
-                f"The output_dir option is supported only by the lakewatch_v2 format and is "
+                f"The output_dir option is supported only by the lakewatch format and is "
                 f"ignored for {output_format}.",
                 UserWarning, stacklevel=2,
             )
         return super().finalize(queries, output_format)
 
-    def _warn_lakewatch_v2_options(self) -> None:
+    def _warn_lakewatch_options(self) -> None:
         """Warn once per conversion about options that make the v2 rules fail or are ignored."""
         if not self.warehouse_id:
             warnings.warn(

@@ -141,7 +141,7 @@ detection:
 
 
 def _sqls(backend, rule):
-    return [json.loads(q)["sql"] for q in backend.convert_rule(rule, "lakewatch_v2")]
+    return [json.loads(q)["sql"] for q in backend.convert_rule(rule, "lakewatch")]
 
 
 def _sql(backend, detection):
@@ -170,7 +170,7 @@ def test_parsed_requires_parsers(env):
     with pytest.raises(SigmaConfigurationError) as exc:
         _sqls(env(table_name="t"), _rule(SEL))
     msg = str(exc.value)
-    assert msg.startswith("-O parsers=... is required for lakewatch_v2 parsed tables")
+    assert msg.startswith("-O parsers=... is required for lakewatch parsed tables")
     for pid in ("p_ct", "p_ct2", "aws_cloudtrail", "okta_system_log"):
         assert pid in msg
 
@@ -218,8 +218,8 @@ def test_parsed_duplicate_parser(env):
 
 def test_parsers_with_other_format_fails(env):
     backend = env(parsers="p_ct", table_name="t")
-    with pytest.raises(SigmaConfigurationError, match="lakewatch_v2"):
-        backend.convert_rule(_rule(SEL), "default")
+    with pytest.raises(SigmaConfigurationError, match="only supported by the lakewatch format, not dbsql"):
+        backend.convert_rule(_rule(SEL), "dbsql")
 
 
 def test_parsers_with_ocsf_mode_fails(env):
@@ -664,7 +664,7 @@ logsource: {{product: aws, service: cloudtrail}}
 detection:
 {SEL}
 """)
-    docs = list(yaml.safe_load_all(backend.convert(rules, output_format="lakewatch_v2")))
+    docs = list(yaml.safe_load_all(backend.convert(rules, output_format="lakewatch")))
     assert len(docs) == 4
     assert [d["batch"]["sql"]["query"].split("\n")[1] for d in docs] == [
         "FROM t1", "FROM t2", "FROM t1", "FROM t2",
@@ -680,7 +680,7 @@ def test_parsed_no_matching_profile_raises(env):
 def test_parsed_no_matching_profile_collect_errors(env):
     backend = env(parsers="p_ct", table_name="t", collect_errors=True)
     rule = _rule(SEL, product="gcp", service="gcp.audit")
-    assert backend.convert_rule(rule, "lakewatch_v2") == []
+    assert backend.convert_rule(rule, "lakewatch") == []
     assert len(backend.errors) == 1
     assert backend.errors[0][0] is rule
     assert "no selected Lakewatch parser profile" in str(backend.errors[0][1])
@@ -691,7 +691,7 @@ def test_parsed_profile_error_collected_with_original_rule(env):
     rule = _rule("""    sel:
         Unmapped: x
     condition: sel""")
-    assert backend.convert_rule(rule, "lakewatch_v2") == []
+    assert backend.convert_rule(rule, "lakewatch") == []
     assert len(backend.errors) == 1
     assert backend.errors[0][0] is rule
     assert "not mapped by profile p_ct" in str(backend.errors[0][1])
@@ -717,9 +717,9 @@ def test_pipeline_vars_set_and_callback_passed(env):
         seen.update(backend.last_processing_pipeline.vars)
         return result
 
-    assert len(backend.convert_rule(_rule(SEL), "lakewatch_v2", callback)) == 1
+    assert len(backend.convert_rule(_rule(SEL), "lakewatch", callback)) == 1
     assert seen["backend"] == "databricks"
-    assert seen["output_format"] == "lakewatch_v2"
+    assert seen["output_format"] == "lakewatch"
     assert seen["backend_custom_opt"] == "v"
 
 
@@ -741,9 +741,16 @@ detection:
 def test_ocsf_mode_unchanged_with_ocsf_option(env):
     backend = env(ocsf=True)
     rule = SigmaCollection.from_yaml(OCSF_RULE).rules[0]
-    sql = json.loads(backend.convert_rule(rule, "lakewatch_v2")[0])["sql"]
+    sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
     assert "unmapped:Initiated::string" in sql
     assert "FROM process_activity" in sql
+
+
+def test_lakewatch_auto_without_ocsf_pipeline_is_parsed_mode():
+    backend = DatabricksBackend(catalog_name="c", schema_name="s")
+    rule = SigmaCollection.from_yaml(OCSF_RULE).rules[0]
+    with pytest.raises(SigmaConfigurationError, match=r"-O parsers=\.\.\. is required for lakewatch parsed tables"):
+        backend.convert_rule(rule, "lakewatch")
 
 
 def test_ocsf_mode_from_pipeline_identifier(env):
@@ -752,17 +759,17 @@ def test_ocsf_mode_from_pipeline_identifier(env):
         items=[ProcessingItem(transformation=FieldMappingTransformation({}), identifier="ocsf_x")],
     )
     backend = env(processing_pipeline=pipeline)
-    assert backend._parsed_mode("lakewatch_v2") is False
+    assert backend._parsed_mode("lakewatch") is False
     rule = SigmaCollection.from_yaml(OCSF_RULE).rules[0]
-    sql = json.loads(backend.convert_rule(rule, "lakewatch_v2")[0])["sql"]
+    sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
     assert "unmapped:Initiated::string" in sql
 
 
 def test_parsed_mode_selection(env):
-    assert env()._parsed_mode("lakewatch_v2") is True
-    assert env(ocsf=False)._parsed_mode("lakewatch_v2") is True
-    assert env(ocsf=True)._parsed_mode("lakewatch_v2") is False
-    assert env()._parsed_mode("lakewatch") is False
+    assert env()._parsed_mode("lakewatch") is True
+    assert env(ocsf=False)._parsed_mode("lakewatch") is True
+    assert env(ocsf=True)._parsed_mode("lakewatch") is False
+    assert env()._parsed_mode("dbsql") is False
     assert env()._parsed_mode("default") is False
 
 
@@ -779,7 +786,7 @@ detection:
     condition: sel
 """).rules[0]
     sql = json.loads(
-        DatabricksBackend(ocsf=True, catalog_name="c", schema_name="s").convert_rule(rule, "lakewatch_v2")[0]
+        DatabricksBackend(ocsf=True, catalog_name="c", schema_name="s").convert_rule(rule, "lakewatch")[0]
     )["sql"]
     assert "ip_cidr_contains('10.0.0.0/8', try_ip_as_binary(unmapped:ip::string))" in sql
 
@@ -787,7 +794,7 @@ detection:
 def test_real_ocsf_pipeline_selects_ocsf_mode_without_option(env):
     ocsf = pytest.importorskip("sigma.pipelines.ocsf")
     backend = env(processing_pipeline=ocsf.ocsf_pipeline())
-    assert backend._parsed_mode("lakewatch_v2") is False
+    assert backend._parsed_mode("lakewatch") is False
     rule = SigmaCollection.from_yaml("""
 title: Encoded PowerShell
 status: test
@@ -797,7 +804,7 @@ detection:
         Image|endswith: '\\\\powershell.exe'
     condition: sel
 """).rules[0]
-    sql = json.loads(backend.convert_rule(rule, "lakewatch_v2")[0])["sql"]
+    sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
     assert "FROM process_activity" in sql
 
 
@@ -835,7 +842,7 @@ def test_parsed_array_of_struct_member(env):
 
 
 def _docs(backend, rule):
-    return [json.loads(q)["doc"] for q in backend.convert_rule(rule, "lakewatch_v2")]
+    return [json.loads(q)["doc"] for q in backend.convert_rule(rule, "lakewatch")]
 
 
 def test_v2_parsed_document(env):
@@ -914,7 +921,7 @@ detection:
 """, source=SigmaRuleLocation(rule_file)).rules[0]
     backend = env(parsers="p_ct", table_name="t", extra_fields={"requestParameters": "requestParameters"},
                   collect_errors=True)
-    assert backend.convert_rule(rule, "lakewatch_v2") == []
+    assert backend.convert_rule(rule, "lakewatch") == []
     (failed, error), = backend.errors
     assert failed is rule
     msg = str(error)
@@ -1014,7 +1021,7 @@ def test_parsed_compare_freeform_variant_key_uses_double(env):
 def test_parsed_missing_catalog_or_schema_is_configuration_error(env, options):
     backend = env(parsers="p_ct", table_name="t", collect_errors=True, **options)
     with pytest.raises(SigmaConfigurationError, match="catalog_name and schema_name"):
-        backend.convert(SigmaCollection([_rule(SEL)]), "lakewatch_v2")
+        backend.convert(SigmaCollection([_rule(SEL)]), "lakewatch")
     assert backend.errors == []
 
 
@@ -1299,7 +1306,7 @@ def _win_rule(detection, title="Win Rule"):
 def _tables(backend, rule):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return [json.loads(q)["sql"] for q in backend.convert_rule(rule, "lakewatch_v2")]
+        return [json.loads(q)["sql"] for q in backend.convert_rule(rule, "lakewatch")]
 
 
 def test_route_two_groups(renv):
@@ -1334,7 +1341,7 @@ def _kw(renv, raw, detection="    keywords:\n        - evil\n    condition: keyw
     b = renv([("pa", None, extra)], parsers="pa", table_name="t", **kwargs)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        sqls = [json.loads(q)["sql"] for q in b.convert_rule(_win_rule(detection), "lakewatch_v2")]
+        sqls = [json.loads(q)["sql"] for q in b.convert_rule(_win_rule(detection), "lakewatch")]
     return sqls[0], [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
 
 

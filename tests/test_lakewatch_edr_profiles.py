@@ -31,7 +31,7 @@ detection:
 
 def _convert(parser, product, category, detection):
     backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s")
-    queries = backend.convert_rule(_rule(product, category, detection), "lakewatch_v2")
+    queries = backend.convert_rule(_rule(product, category, detection), "lakewatch")
     assert len(queries) == 1
     return json.loads(queries[0])["sql"]
 

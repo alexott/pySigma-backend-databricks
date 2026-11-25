@@ -7,7 +7,7 @@ from importlib.metadata import version
 import pytest
 import yaml
 from sigma.collection import SigmaCollection
-from sigma.exceptions import SigmaConfigurationError, SigmaConversionError
+from sigma.exceptions import SigmaBackendError, SigmaConfigurationError, SigmaConversionError
 
 from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.lakewatch_maps import (
@@ -30,7 +30,7 @@ def _backend(**kwargs):
 def _doc(backend, rule_yaml):
     """Convert one rule and return the parsed Lakewatch v2 document."""
     rule = SigmaCollection.from_yaml(rule_yaml).rules[0]
-    return json.loads(backend.convert_rule(rule, "lakewatch_v2")[0])["doc"]
+    return json.loads(backend.convert_rule(rule, "lakewatch")[0])["doc"]
 
 
 BASE = """
@@ -188,7 +188,7 @@ detection:
 
 
 def test_v2_multi_document_output_dedups_rule_names():
-    out = _backend(warehouse_id="wh").convert(SigmaCollection.from_yaml(TWO_RULES), output_format="lakewatch_v2")
+    out = _backend(warehouse_id="wh").convert(SigmaCollection.from_yaml(TWO_RULES), output_format="lakewatch")
     docs = list(yaml.safe_load_all(out))
     assert len(docs) == 2                                  # deprecated rule skipped
     assert [d["rule_name"] for d in docs] == ["rule_one", "rule_one_2"]
@@ -205,7 +205,7 @@ def test_v2_dedup_avoids_existing_suffixed_names():
         json.dumps({"status": "test", "sql": "x", "doc": {"rule_name": name}})
         for name in ("a_2", "a", "a")
     ]
-    docs = list(yaml.safe_load_all(be.finalize_output_lakewatch_v2(envelopes)))
+    docs = list(yaml.safe_load_all(be.finalize_output_lakewatch(envelopes)))
     assert [d["rule_name"] for d in docs] == ["a_2", "a", "a_3"]
 
 
@@ -264,7 +264,7 @@ def test_v2_end_to_end_with_real_ocsf_pipeline():
             - attack.execution
             - attack.t1059.001
     """
-    doc = yaml.safe_load(be.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch_v2"))
+    doc = yaml.safe_load(be.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch"))
     assert "FROM process_activity" in doc["batch"]["sql"]["query"]
     assert doc["rule_name"] == "encoded_powershell"
     assert doc["mitre"][0]["technique"] == "Command and Scripting Interpreter"
@@ -299,7 +299,7 @@ def test_v2_enabled_option_invalid():
 
 
 def _convert(backend, rule_yaml=BASE):
-    return backend.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch_v2")
+    return backend.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch")
 
 
 def test_v2_warns_without_warehouse_id():
@@ -370,15 +370,15 @@ def test_v2_output_dir_writes_one_file_per_rule(tmp_path):
     out_dir = tmp_path / "nested" / "rules"                # created when missing
     collection = SigmaCollection.from_yaml(TWO_RULES)
     summary = _backend(warehouse_id="wh", output_dir=str(out_dir)).convert(
-        collection, output_format="lakewatch_v2")
+        collection, output_format="lakewatch")
     files = sorted(p.name for p in out_dir.iterdir())
     assert files == ["rule_one.yaml", "rule_one_2.yaml"]   # deduped names, deprecated skipped
     single = list(yaml.safe_load_all(_backend(warehouse_id="wh").convert(
-        SigmaCollection.from_yaml(TWO_RULES), output_format="lakewatch_v2")))
+        SigmaCollection.from_yaml(TWO_RULES), output_format="lakewatch")))
     written = [yaml.safe_load((out_dir / name).read_text(encoding="utf-8")) for name in files]
     assert written == single                               # same documents as the -o output
     assert "query: |-" in (out_dir / "rule_one.yaml").read_text(encoding="utf-8")
-    assert summary == f"# Wrote 2 Lakewatch v2 rule(s) to {out_dir}"
+    assert summary == f"# Wrote 2 Lakewatch rule(s) to {out_dir}"
     assert yaml.safe_load(summary) is None                 # harmless if redirected with -o
 
 
@@ -403,7 +403,7 @@ def test_v2_output_dir_blank_is_ignored():
 
 def test_output_dir_warns_for_other_formats(tmp_path):
     rules = SigmaCollection.from_yaml(BASE)
-    with pytest.warns(UserWarning, match="output_dir"):
+    with pytest.warns(UserWarning, match="supported only by the lakewatch format"):
         DatabricksBackend(output_dir=str(tmp_path)).convert(rules, output_format="dbsql")
     assert not any(tmp_path.iterdir())
 
@@ -418,14 +418,19 @@ def test_other_unknown_options_still_accepted():
     assert DatabricksBackend(some_future_option="x").backend_options == {"some_future_option": "x"}
 
 
-def test_v1_format_removed():
-    assert "lakewatch" not in DatabricksBackend.formats     # Task 2 changes this to the v2 description
-    assert not hasattr(DatabricksBackend, "finalize_output_lakewatch")  # Task 2 re-adds it as v2
+def test_lakewatch_v2_format_is_unknown():
+    assert "lakewatch_v2" not in DatabricksBackend.formats
+    with pytest.raises(SigmaBackendError, match="Unknown output format 'lakewatch_v2'"):
+        _backend().convert(SigmaCollection.from_yaml(BASE), output_format="lakewatch_v2")
+
+
+def test_lakewatch_format_is_v2():
+    assert DatabricksBackend.formats["lakewatch"] == "Lakewatch detection rules (v2 format, Unity Catalog governed)"
 
 
 def test_v2_unsupported_rule_skipped():
     rule_yaml = BASE.replace("status: experimental", "status: unsupported")
-    out = _backend().convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch_v2")
+    out = _backend().convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch")
     assert out.strip() == ""
 
 
@@ -433,5 +438,5 @@ def test_v2_empty_sql_dropped():
     be = _backend(warehouse_id="wh")
     empty = json.dumps({"status": "test", "sql": "", "doc": {"rule_name": "a"}})
     real = json.dumps({"status": "test", "sql": "SELECT 1", "doc": {"rule_name": "b"}})
-    docs = list(yaml.safe_load_all(be.finalize_output_lakewatch_v2([empty, real])))
+    docs = list(yaml.safe_load_all(be.finalize_output_lakewatch([empty, real])))
     assert docs == [{"rule_name": "b"}]

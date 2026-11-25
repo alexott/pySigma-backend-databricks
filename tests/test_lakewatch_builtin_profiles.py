@@ -29,7 +29,7 @@ detection:
     ).rules[0]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        queries = backend.convert_rule(rule, "lakewatch_v2")
+        queries = backend.convert_rule(rule, "lakewatch")
     assert len(queries) == 1
     return json.loads(queries[0])["sql"]
 
