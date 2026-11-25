@@ -179,8 +179,7 @@ def test_validate_against_builtin_catalog():
 
 def write(d, name, pid, target):
     (d / name).write_text(
-        f"profile: {pid}\nversion: 1\nparser: x\nfields:\n  A: {target}\n"
-        "logsources:\n  - match: {product: aws}\n"
+        f"profile: {pid}\nversion: 1\nparser: x\nfields:\n  A: {target}\nlogsources:\n  - match: {{product: aws}}\n"
     )
 
 
@@ -225,11 +224,14 @@ def test_profile_id_accepted(pid):
     assert parse_profile(base(profile=pid), "f.yml").profile == pid
 
 
-@pytest.mark.parametrize("content, match", [
-    ("profile: [unclosed\n", "invalid YAML"),
-    ("", "profile file is empty"),
-    ("# only a comment\n", "profile file is empty"),
-])
+@pytest.mark.parametrize(
+    "content, match",
+    [
+        ("profile: [unclosed\n", "invalid YAML"),
+        ("", "profile file is empty"),
+        ("# only a comment\n", "profile file is empty"),
+    ],
+)
 def test_load_profiles_bad_file_content(tmp_path, content, match):
     path = tmp_path / "bad.yml"
     path.write_text(content, encoding="utf-8")
@@ -252,3 +254,137 @@ def test_load_profiles_unreadable_file(tmp_path):
     with pytest.raises(ProfileError, match="cannot read profile file") as exc:
         load_profiles([str(tmp_path)])
     assert str(exc.value).startswith(f"{path}: ")
+
+
+# --- transforms, select_condition, modifiers, undeclared, products ---------------------
+
+
+def schema2():
+    s = schema()
+    paths = dict(s.paths)
+    paths.update(
+        {
+            "w": PathInfo("VARIANT", "column"),
+            "w.known": PathInfo("STRING", "variant"),
+            "md5": PathInfo("STRING", "column"),
+            "flag": PathInfo("BOOLEAN", "column"),
+        }
+    )
+    return ParserSchema("x", None, None, paths)
+
+
+def test_parse_named_and_inline_transforms():
+    p = parse_profile(
+        base(
+            transforms={"reg": {"registry_path": {"hive": "kernel"}}},
+            fields={"K": {"field": "a", "transform": ["reg", {"case": "lower"}]}},
+        )
+    )
+    assert len(p.fields["K"].transforms) == 2
+    assert list(p.transforms) == ["reg"]
+    assert len(p.transforms["reg"]) == 1
+
+
+def test_parse_bad_transform_wrapped():
+    with pytest.raises(ProfileError, match="field 'K': .*nope"):
+        parse_profile(base(fields={"K": {"field": "a", "transform": {"nope": 1}}}))
+
+
+def test_parse_supplies_targets_forbids_field():
+    spec = {"field": "x", "transform": {"hashes": {"algos": {"MD5": "m"}}}}
+    with pytest.raises(ProfileError, match="field"):
+        parse_profile(base(fields={"H": spec}))
+    p = parse_profile(base(fields={"H": {"transform": {"hashes": {"algos": {"MD5": "m"}}}}}))
+    assert p.fields["H"].targets == ()
+
+
+def test_parse_missing_field():
+    with pytest.raises(ProfileError, match="missing key 'field'"):
+        parse_profile(base(fields={"H": {"transform": "basename"}}))
+
+
+def test_parse_select_condition():
+    p = parse_profile(base(fields={"S": {"select_condition": {"A": {"X": 1}, "B": {"Y": "z"}}}}))
+    assert p.fields["S"].select == {"a": {"X": 1}, "b": {"Y": "z"}}
+    assert p.fields["S"].targets == ()
+    with pytest.raises(ProfileError, match="select_condition"):
+        parse_profile(base(fields={"S": {"select_condition": {"a": {"X": 1}}, "field": "a"}}))
+    with pytest.raises(ProfileError, match="select_condition"):
+        parse_profile(base(fields={"S": {"select_condition": {"a": {"X": 1}}, "transform": "basename"}}))
+
+
+def test_parse_unknown_modifier():
+    with pytest.raises(ProfileError, match="fancy"):
+        parse_profile(base(fields={"M": {"field": "a", "modifiers": ["eq", "fancy"]}}))
+    p = parse_profile(base(fields={"M": {"field": "a", "modifiers": ["eq", "contains"]}}))
+    assert p.fields["M"].modifiers == frozenset({"eq", "contains"})
+
+
+def test_parse_prefix_key_allows_only_field():
+    with pytest.raises(ProfileError, match="prefix"):
+        parse_profile(base(fields={"v.*": {"field": "v.*", "modifiers": ["eq"]}}))
+    with pytest.raises(ProfileError, match="prefix"):
+        parse_profile(base(fields={"v.*": {"field": "v.*", "undeclared": True}}))
+
+
+def test_products_conditions_merge():
+    p = parse_profile(
+        base(
+            products={"Windows": {"a": "Win", "b": "x"}},
+            logsources=[{"match": {"category": "process_creation"}, "conditions": {"b": "y"}}],
+        )
+    )
+    assert list(p.products) == ["windows"]
+    ls = SigmaLogSource(category="process_creation", product="windows")
+    block = p.block_for(ls)
+    assert p.conditions_for(block, ls) == {"a": "Win", "b": "y"}
+    assert list(p.conditions_for(block, ls)) == ["a", "b"]
+
+
+def test_products_unlisted_product_no_match():
+    p = parse_profile(
+        base(
+            products={"windows": {"a": "Win"}},
+            logsources=[{"match": {"category": "process_creation"}}],
+        )
+    )
+    assert p.block_for(SigmaLogSource(category="process_creation", product="linux")) is None
+    assert p.block_for(SigmaLogSource(category="process_creation")) is not None
+    assert p.block_for(SigmaLogSource(category="process_creation", product="Windows")) is not None
+
+
+def test_bool_condition_value():
+    p = parse_profile(base(logsources=[{"match": {"product": "aws"}, "conditions": {"flag": False}}]))
+    assert p.logsources[0].conditions == {"flag": False}
+    validate_profile(p, schema2())
+    with pytest.raises(ProfileError, match="condition"):
+        parse_profile(base(logsources=[{"match": {"product": "aws"}, "conditions": {"flag": {}}}]))
+    p2 = parse_profile(base(products={"windows": {"flag": True}}))
+    validate_profile(p2, schema2())
+
+
+def test_validate_transform_paths():
+    spec = {"transform": {"hashes": {"algos": {"MD5": "md5"}}}}
+    validate_profile(prof({"H": spec}), schema2())
+    bad = {"transform": {"hashes": {"algos": {"MD5": "nope"}}}}
+    with pytest.raises(ProfileError, match="nope"):
+        validate_profile(prof({"H": bad}), schema2())
+
+
+def test_validate_select_and_products_conditions():
+    validate_profile(prof({"S": {"select_condition": {"a": {"EventID": "1"}}}}), schema2())
+    with pytest.raises(ProfileError, match="'11' not in allowed"):
+        validate_profile(prof({"S": {"select_condition": {"a": {"EventID": "11"}}}}), schema2())
+    with pytest.raises(ProfileError, match="nope"):
+        validate_profile(prof({"S": {"select_condition": {"a": {"nope": "1"}}}}), schema2())
+    p = parse_profile(base(products={"windows": {"EventID": "11"}}))
+    with pytest.raises(ProfileError, match="'11' not in allowed"):
+        validate_profile(p, schema2())
+
+
+def test_validate_undeclared():
+    validate_profile(prof({"U": {"field": "w.other", "undeclared": True}}), schema2())
+    with pytest.raises(ProfileError, match="w.other"):
+        validate_profile(prof({"U": "w.other"}), schema2())
+    with pytest.raises(ProfileError, match="'undeclared' is not needed"):
+        validate_profile(prof({"U": {"field": "w.known", "undeclared": True}}), schema2())
