@@ -1,0 +1,167 @@
+"""Tests for the built-in EDR Lakewatch profiles (CrowdStrike FDR, ...)."""
+
+import json
+import warnings
+
+import pytest
+from sigma.collection import SigmaCollection
+from sigma.exceptions import SigmaTransformationError
+
+from sigma.backends.databricks import DatabricksBackend
+from sigma.backends.databricks.schema_catalog import SchemaCatalog
+from sigma.pipelines.databricks.lakewatch.profile import load_profiles, validate_profile
+
+CS = "crowdstrike_fdr_event"
+
+
+def _rule(product, category, detection):
+    return SigmaCollection.from_yaml(
+        f"""
+title: T
+status: test
+logsource:
+    product: {product}
+    category: {category}
+detection:
+{detection}
+"""
+    ).rules[0]
+
+
+def _convert(parser, product, category, detection):
+    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s")
+    queries = backend.convert_rule(_rule(product, category, detection), "lakewatch_v2")
+    assert len(queries) == 1
+    return json.loads(queries[0])["sql"]
+
+
+def _sql(parser, product, category, detection):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return _convert(parser, product, category, detection)
+
+
+def _names_selected(sql, names):
+    """Check that every event name is matched against ``event_simpleName`` in ``sql``."""
+    low = sql.lower()
+    return all(f"lower(event_simplename) = lower('{n.lower()}')" in low for n in names)
+
+
+# --- crowdstrike_fdr_event -----------------------------------------------------------------
+
+
+def test_cs_profile_validates():
+    profile = load_profiles()[CS]
+    assert profile.version == 1
+    assert profile.parser == CS
+    validate_profile(profile, SchemaCatalog.load().get(CS))
+
+
+def test_cs_process_creation():
+    with pytest.warns(UserWarning, match="directory dropped"):
+        sql = _convert(
+            CS,
+            "windows",
+            "process_creation",
+            """    sel:
+        Image|endswith: '\\rundll32.exe'
+        ParentImage: 'C:\\Windows\\explorer.exe'
+    condition: sel""",
+        )
+    low = sql.lower()
+    assert "endswith(lower(try_variant_get(event, '$.imagefilename', 'string')), lower('\\\\rundll32.exe'))" in low
+    assert "lower(try_variant_get(event, '$.parentbasefilename', 'string')) = lower('explorer.exe')" in low
+    assert "lower(event_platform) = lower('win')" in low
+    assert _names_selected(sql, ["ProcessRollup2", "SyntheticProcessRollup2"])
+    # The VARIANT key keeps the dictionary's spelling.
+    assert "'$.ImageFileName'" in sql
+    assert "'$.ParentBaseFileName'" in sql
+
+
+def test_cs_image_startswith_device_path():
+    sql = _sql(
+        CS,
+        "windows",
+        "process_creation",
+        """    sel:
+        Image|startswith: 'C:\\Users\\'
+    condition: sel""",
+    )
+    # A '*' inside the value turns startswith into a regex: '.*' stands for the volume number.
+    assert (
+        "try_variant_get(event, '$.ImageFileName', 'string') rlike "
+        "'(?isu)^\\\\\\\\Device\\\\\\\\HarddiskVolume.*\\\\\\\\Users\\\\\\\\.*$'"
+    ) in sql
+    assert "C:" not in sql
+
+
+def test_cs_network_initiated():
+    sql = _sql(
+        CS,
+        "windows",
+        "network_connection",
+        """    sel:
+        Initiated: 'true'
+        DestinationPort: 4444
+    condition: sel""",
+    )
+    assert "try_variant_get(event, '$.RemotePort', 'double') = 4444" in sql
+    initiated = (
+        "(lower(event_simpleName) = lower('NetworkConnectIP4') OR "
+        "lower(event_simpleName) = lower('NetworkConnectIP6')) AND try_variant_get"
+    )
+    assert initiated in sql
+
+
+def test_cs_registry_join():
+    sql = _sql(
+        CS,
+        "windows",
+        "registry_set",
+        """    sel:
+        TargetObject|contains: '\\CurrentVersion\\Run\\'
+    condition: sel""",
+    )
+    assert (
+        "concat_ws('\\\\', nullif(try_variant_get(event, '$.RegObjectName', 'string'), ''), "
+        "nullif(try_variant_get(event, '$.RegValueName', 'string'), ''))"
+    ) in sql
+    assert _names_selected(sql, ["AsepValueUpdate", "RegGenericValueUpdate"])
+
+
+def test_cs_unsupported_user():
+    with pytest.raises(SigmaTransformationError, match=f"field User is not supported by profile {CS}"):
+        _sql(
+            CS,
+            "windows",
+            "process_creation",
+            """    sel:
+        User: x
+    condition: sel""",
+        )
+
+
+def test_cs_linux_platform():
+    sql = _sql(
+        CS,
+        "linux",
+        "process_creation",
+        """    sel:
+        CommandLine|contains: 'curl'
+    condition: sel""",
+    )
+    assert "lower(event_platform) = lower('lin')" in sql.lower()
+    assert "try_variant_get(event, '$.CommandLine', 'string')" in sql
+
+
+def test_cs_integrity_level_names_and_sids():
+    for value in ("High", "S-1-16-12288"):
+        sql = _sql(
+            CS,
+            "windows",
+            "process_creation",
+            f"""    sel:
+        IntegrityLevel: '{value}'
+    condition: sel""",
+        )
+        assert "try_variant_get(event, '$.IntegrityLevel', 'double') = 12288" in sql

@@ -1,0 +1,151 @@
+# Built-in Lakewatch profile for the crowdstrike_fdr_event parser (CrowdStrike Falcon Data
+# Replicator). Written from the CrowdStrike Falcon Events Data Dictionary (event names and
+# field names) and the Lakewatch parser schema. No LGPL source (pySigma-backend-crowdstrike,
+# Kusto pipelines) was used.
+#
+# `event` is a free-form VARIANT holding the whole FDR record, so its keys use the
+# dictionary's exact (case-sensitive) spelling.
+profile: crowdstrike_fdr_event
+version: 1
+parser: crowdstrike_fdr_event
+transforms:
+  # FDR records Windows paths in NT device form: \Device\HarddiskVolumeN\...
+  devpath:
+    path_prefix:
+      rewrite:
+        - from: '[A-Za-z]:'
+          to: '\Device\HarddiskVolume*'
+  hashes:
+    hashes:
+      algos:
+        MD5: event.MD5HashData
+        SHA1: event.SHA1HashData
+        SHA256: event.SHA256HashData
+  # RegObjectName is the kernel key path (\REGISTRY\MACHINE\...), RegValueName the value name.
+  reg:
+    registry_path:
+      hive: kernel
+      split:
+        key: event.RegObjectName
+        value: event.RegValueName
+products:
+  windows:
+    event_platform: Win
+  linux:
+    event_platform: Lin
+  macos:
+    event_platform: Mac
+logsources:
+  - match:
+      category: process_creation
+    conditions:
+      event_simpleName: [ProcessRollup2, SyntheticProcessRollup2]
+    fields:
+      Image:
+        field: event.ImageFileName
+        transform: devpath
+      CommandLine: event.CommandLine
+      ParentImage:
+        field: event.ParentBaseFileName
+        transform: basename
+      OriginalFileName: event.OriginalFilename
+      ProcessId: event.RawProcessId
+      # IntegrityLevel holds the numeric level (dictionary: LOW 0x1000 ... SYSTEM 0x4000).
+      IntegrityLevel:
+        field: event.IntegrityLevel
+        transform:
+          map:
+            values:
+              untrusted: 0
+              low: 4096
+              medium: 8192
+              high: 12288
+              system: 16384
+              # Mandatory-label SIDs, as some rules write the level.
+              S-1-16-0: 0
+              S-1-16-4096: 4096
+              S-1-16-8192: 8192
+              S-1-16-12288: 12288
+              S-1-16-16384: 16384
+      Hashes:
+        transform: hashes
+      md5: event.MD5HashData
+      sha1: event.SHA1HashData
+      sha256: event.SHA256HashData
+    unsupported:
+      - User
+      - ParentUser
+      - ParentCommandLine
+      # FDR's ParentProcessId is a Falcon process id (UPID), not the OS PID.
+      - ParentProcessId
+      - CurrentDirectory
+      - Description
+      - Product
+      - Company
+  - match:
+      product: windows
+      category: network_connection
+    conditions:
+      event_simpleName: [NetworkConnectIP4, NetworkConnectIP6, NetworkReceiveAcceptIP4, NetworkReceiveAcceptIP6]
+    fields:
+      DestinationIp: [event.RemoteAddressIP4, event.RemoteAddressIP6]
+      DestinationPort: event.RemotePort
+      SourceIp: [event.LocalAddressIP4, event.LocalAddressIP6]
+      SourcePort: event.LocalPort
+      Protocol:
+        field: event.Protocol
+        transform:
+          map:
+            values:
+              icmp: 1
+              tcp: 6
+              udp: 17
+              ipv6-icmp: 58
+      Initiated:
+        select_condition:
+          'true':
+            event_simpleName: [NetworkConnectIP4, NetworkConnectIP6]
+          'false':
+            event_simpleName: [NetworkReceiveAcceptIP4, NetworkReceiveAcceptIP6]
+    unsupported:
+      # FDR links network events to their process by ContextProcessId only.
+      - Image
+      - User
+      - DestinationHostname
+  - match:
+      product: windows
+      category: dns_query
+    conditions:
+      event_simpleName: DnsRequest
+    fields:
+      QueryName: event.DomainName
+      QueryResults: event.IP4Records
+    unsupported:
+      - Image
+      - User
+  - match:
+      product: windows
+      category: file_event
+    conditions:
+      event_simpleName: [NewExecutableWritten, NewScriptWritten, GenericFileWritten, PeFileWritten]
+    fields:
+      TargetFilename:
+        field: event.TargetFileName
+        transform: devpath
+    unsupported:
+      - Image
+      - User
+  - match:
+      product: windows
+      category: registry_set
+    conditions:
+      event_simpleName: [AsepValueUpdate, RegGenericValueUpdate]
+    fields:
+      TargetObject:
+        transform: reg
+      # Only string registry values (RegStringValue); numeric and binary data are not matched.
+      Details: event.RegStringValue
+    unsupported:
+      - Image
+      - EventType
+      - User

@@ -349,6 +349,21 @@ Built-in profiles:
 |---------|-----------|--------|
 | `aws_cloudtrail` | `product: aws`, `service: cloudtrail` | `aws_cloudtrail` |
 | `okta_system_log` | `product: okta`, `service: okta` | `okta_system_log` |
+| `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
+
+`crowdstrike_fdr_event` is written from the CrowdStrike Falcon Events Data Dictionary. It selects
+events by `event_simpleName` and `event_platform` (`Win`, `Lin`, `Mac`), and reads the fields from
+the `event` VARIANT. Windows paths are rewritten to the NT device form
+(`C:` becomes `\Device\HarddiskVolume*`). Its limitations:
+
+* `Details` matches only string registry values (`RegStringValue`). Numeric and binary values
+  aren't matched.
+* `Image`, and the other fields of the acting process, are available only in `process_creation`.
+  FDR links the other events to their process by `ContextProcessId`, which needs a join.
+* `ParentImage` matches the parent's base name (`ParentBaseFileName`), so a full parent path
+  drops its directory with a warning. `ParentCommandLine`, `ParentProcessId` (FDR's is a Falcon
+  process id), `User`, `CurrentDirectory`, `Description`, `Product` and `Company` aren't
+  supported.
 
 ## OCSF field rendering
 
