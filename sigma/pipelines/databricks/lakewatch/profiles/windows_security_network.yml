@@ -13,6 +13,7 @@
 profile: windows_security_network
 version: 1
 parser: windows_security_network
+entity: Computer
 raw:
   entries: EventData
 fields:

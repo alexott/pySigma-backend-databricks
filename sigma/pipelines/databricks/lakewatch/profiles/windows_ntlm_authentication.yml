@@ -14,6 +14,7 @@
 profile: windows_ntlm_authentication
 version: 1
 parser: windows_ntlm_authentication
+entity: Computer
 raw:
   entries: EventData
 fields:

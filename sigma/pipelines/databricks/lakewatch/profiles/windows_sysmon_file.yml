@@ -17,6 +17,7 @@
 profile: windows_sysmon_file
 version: 1
 parser: windows_sysmon_file
+entity: Computer
 raw:
   entries: EventData
 fields:

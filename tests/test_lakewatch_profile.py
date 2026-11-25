@@ -520,3 +520,42 @@ def test_event_data_validate_resolves():
 def test_unsupported_vs_event_data():
     with pytest.raises(ProfileError, match="both mapped and unsupported"):
         validate_profile(ed_prof(block={"event_data": ["Image"], "unsupported": ["Image"]}), schema_ed())
+
+
+def test_entity_parsed():
+    assert parse_profile(base(entity="Computer"), "<dict>").entity == "Computer"
+    assert parse_profile(base(), "<dict>").entity is None
+    with pytest.raises(ProfileError, match="entity must be a string"):
+        parse_profile(base(entity=5), "<dict>")
+
+
+def test_entity_path_validated():
+    validate_profile(parse_profile(base(entity="a"), "<dict>"), schema())
+    with pytest.raises(ProfileError, match="entity NoSuchColumn"):
+        validate_profile(parse_profile(base(entity="NoSuchColumn"), "<dict>"), schema())
+
+
+def test_entity_array_rejected():
+    sch = ParserSchema(
+        "x",
+        None,
+        None,
+        {
+            "target": PathInfo("ARRAY", "column", element="STRUCT"),
+            "target[].alternateId": PathInfo("STRING", "struct"),
+        },
+    )
+    with pytest.raises(ProfileError, match="array"):
+        validate_profile(parse_profile(base(entity="target.alternateId"), "<dict>"), sch)
+
+
+def test_entity_sql_not_validated():
+    validate_profile(parse_profile(base(entity="coalesce(a, b)"), "<dict>"), schema())
+
+
+def test_output_identifier_pattern():
+    from sigma.pipelines.databricks.lakewatch.profile import OUTPUT_IDENTIFIER
+
+    assert OUTPUT_IDENTIFIER.fullmatch("userIdentity.arn")
+    assert OUTPUT_IDENTIFIER.fullmatch("v[Image]")
+    assert not OUTPUT_IDENTIFIER.fullmatch("coalesce(a, b)")

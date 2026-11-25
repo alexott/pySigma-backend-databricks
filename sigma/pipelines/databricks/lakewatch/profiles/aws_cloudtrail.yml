@@ -2,6 +2,7 @@
 profile: aws_cloudtrail
 version: 1
 parser: aws_cloudtrail
+entity: userIdentity.arn
 fields:
   requestParameters: requestParameters
   responseElements: responseElements

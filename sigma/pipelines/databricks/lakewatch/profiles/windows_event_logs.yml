@@ -34,6 +34,7 @@
 profile: windows_event_logs
 version: 1
 parser: windows_event_logs
+entity: Computer
 unmapped_hint: "windows_event_logs has the event header only; EventData fields need the custom windows_* parsers"
 fields:
   EventID: EventID

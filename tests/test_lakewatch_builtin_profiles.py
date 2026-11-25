@@ -150,3 +150,14 @@ def test_readme_profile_example_validates():
     assert len(blocks) == 1
     profile = parse_profile(yaml.safe_load(blocks[0]), "README")
     validate_profile(profile, SchemaCatalog.load().get(profile.parser))
+
+
+def test_builtin_profiles_have_entity():
+    profiles = load_profiles()
+    catalog = SchemaCatalog.load()
+    for profile in profiles.values():
+        assert profile.entity, profile.profile
+        validate_profile(profile, catalog.get(profile.parser))
+    assert profiles["crowdstrike_fdr_event"].entity == "coalesce(nullif(ComputerName, ''), aid)"
+    assert profiles["aws_cloudtrail"].entity == "userIdentity.arn"
+    assert profiles["windows_sysmon_process"].entity == "Computer"

@@ -17,6 +17,7 @@
 profile: windows_sysmon_dns
 version: 1
 parser: windows_sysmon_dns
+entity: Computer
 raw:
   entries: EventData
 fields:

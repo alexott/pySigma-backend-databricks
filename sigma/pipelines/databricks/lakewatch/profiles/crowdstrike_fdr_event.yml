@@ -8,6 +8,7 @@
 profile: crowdstrike_fdr_event
 version: 1
 parser: crowdstrike_fdr_event
+entity: "coalesce(nullif(ComputerName, ''), aid)"
 transforms:
   # The dictionary gives Windows paths in NT device form (\Device\HarddiskVolumeN\...), but
   # live FDR data also holds drive-letter paths (C:\...), so both forms are matched.

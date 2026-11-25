@@ -16,6 +16,7 @@
 profile: windows_security_authentication
 version: 1
 parser: windows_security_authentication
+entity: Computer
 raw:
   entries: EventData
 fields:

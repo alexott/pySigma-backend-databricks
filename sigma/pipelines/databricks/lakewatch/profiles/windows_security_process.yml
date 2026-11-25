@@ -20,6 +20,7 @@
 profile: windows_security_process
 version: 1
 parser: windows_security_process
+entity: Computer
 raw:
   entries: EventData
 fields:

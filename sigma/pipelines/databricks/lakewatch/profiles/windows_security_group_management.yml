@@ -19,6 +19,7 @@
 profile: windows_security_group_management
 version: 1
 parser: windows_security_group_management
+entity: Computer
 raw:
   entries: EventData
 fields:

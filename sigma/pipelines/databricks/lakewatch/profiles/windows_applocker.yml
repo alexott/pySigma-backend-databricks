@@ -14,6 +14,7 @@
 profile: windows_applocker
 version: 1
 parser: windows_applocker
+entity: Computer
 raw:
   entries: EventData
 fields:

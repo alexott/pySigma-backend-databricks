@@ -2,6 +2,7 @@
 profile: okta_system_log
 version: 1
 parser: okta_system_log
+entity: actor.alternateId
 fields:
   eventType: eventType
   legacyEventType: legacyEventType

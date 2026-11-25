@@ -14,6 +14,7 @@
 profile: windows_system
 version: 1
 parser: windows_system
+entity: Computer
 raw:
   entries: EventData
 fields:

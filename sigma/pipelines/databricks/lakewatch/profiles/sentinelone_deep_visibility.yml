@@ -50,6 +50,7 @@
 profile: sentinelone_deep_visibility
 version: 1
 parser: sentinelone_deep_visibility
+entity: endpoint_name
 products:
   windows:
     endpoint_os: windows

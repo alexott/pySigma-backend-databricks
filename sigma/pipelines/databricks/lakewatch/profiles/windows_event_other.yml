@@ -43,6 +43,7 @@
 profile: windows_event_other
 version: 1
 parser: windows_event_other
+entity: Computer
 raw:
   expr: "to_json(raw_event)"
   encoding: json

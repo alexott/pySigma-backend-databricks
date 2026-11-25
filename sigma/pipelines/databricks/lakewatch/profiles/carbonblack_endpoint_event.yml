@@ -54,6 +54,7 @@
 profile: carbonblack_endpoint_event
 version: 1
 parser: carbonblack_endpoint_event
+entity: device_name
 products:
   windows:
     device_os: WINDOWS

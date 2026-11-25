@@ -14,6 +14,7 @@
 profile: windows_wmi_activity
 version: 1
 parser: windows_wmi_activity
+entity: Computer
 raw:
   entries: EventData
 fields:

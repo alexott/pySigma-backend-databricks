@@ -13,6 +13,7 @@
 profile: windows_security_user_access
 version: 1
 parser: windows_security_user_access
+entity: Computer
 raw:
   entries: EventData
 fields:

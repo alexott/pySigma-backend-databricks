@@ -38,6 +38,7 @@ _TOP_KEYS = {
     "event_data_column",
     "event_data",
     "raw",
+    "entity",
     "unmapped_hint",
 }
 _BLOCK_KEYS = {"match", "conditions", "fields", "unsupported", "event_data", "route"}
@@ -48,6 +49,8 @@ _MAPPING_KEYS = {"field", "transform", "undeclared", "modifiers", "select_condit
 # Profile ids become part of Unity Catalog rule names: keep them short and UC-safe.
 _PROFILE_ID = re.compile(r"[a-z0-9_]+")
 _PROFILE_ID_MAX_LEN = 64
+# A schema path (as opposed to an SQL expression) in an output setting such as ``entity``.
+OUTPUT_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*$")
 
 ConditionValue = Union[str, int, bool, List[Union[str, int, bool]]]
 
@@ -127,6 +130,7 @@ class Profile:
     event_data_column: str = "EventData"
     event_data: EventDataNames = ()
     raw: Optional[RawSource] = None
+    entity: Optional[str] = None
     unmapped_hint: Optional[str] = None
 
     def block_for(self, logsource: SigmaLogSource) -> Optional[LogsourceBlock]:
@@ -392,6 +396,9 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
     for key in ("profile", "version", "parser", "logsources"):
         if key not in data:
             raise ProfileError(source, f"missing required key '{key}'")
+    entity = data.get("entity")
+    if "entity" in data and (not isinstance(entity, str) or not entity.strip()):
+        raise ProfileError(source, "entity must be a string (a schema path or an SQL expression)")
     for key in ("profile", "parser"):
         if not isinstance(data[key], str) or not data[key]:
             raise ProfileError(source, f"'{key}' must be a non-empty string")
@@ -433,6 +440,7 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
         event_data_column=column,
         event_data=_parse_event_data(data["event_data"], source, "") if "event_data" in data else (),
         raw=_parse_raw(data["raw"], source) if "raw" in data else None,
+        entity=entity,
         unmapped_hint=hint,
     )
 
@@ -587,6 +595,18 @@ def validate_profile(profile: Profile, schema: ParserSchema) -> None:
         _resolve(profile, schema, f"{profile.event_data_column}[x]", "event_data column")
     if profile.raw is not None:
         _validate_raw(profile, schema, profile.raw)
+    if profile.entity is not None and OUTPUT_IDENTIFIER.fullmatch(profile.entity):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                fp = resolve_schema_path(schema, profile.entity)
+        except UnknownFieldError as e:
+            raise ProfileError(profile.source, f"profile '{profile.profile}': entity {profile.entity}: {e}") from None
+        if fp.arrays:
+            raise ProfileError(
+                profile.source,
+                f"profile '{profile.profile}': entity {profile.entity} crosses an array; use an SQL expression",
+            )
     _validate_mappings(profile, schema, profile.fields)
     for product, conditions in profile.products.items():
         _validate_conditions(profile, schema, conditions, f"product '{product}': ")

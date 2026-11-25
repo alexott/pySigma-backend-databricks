@@ -14,6 +14,7 @@
 profile: windows_taskscheduler
 version: 1
 parser: windows_taskscheduler
+entity: Computer
 raw:
   entries: EventData
 fields:
