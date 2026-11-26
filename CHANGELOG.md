@@ -7,6 +7,18 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- **Implied `eq` in the `modifiers` allowlist:** a field with no comparison modifier
+  (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `exists`, `fieldref`)
+  is now checked as `eq`, so `field|all` alone fails unless the profile lists `eq`.
+- **`join` transform:** matches two scalar columns joined with a non-empty `sep`, rendered as
+  `concat_ws(sep, nullif(a, ''), nullif(b, ''))`. `null` on a joined field fails to convert.
+- **Arrays inside a VARIANT:** a declared array inside a VARIANT column matches any element, rendered as
+  `exists(try_variant_get(col, '$.path', 'ARRAY<VARIANT>' or 'ARRAY<<elem>>'), x0 -> ...)`. Arrays the
+  schema doesn't declare get no such rendering.
+- **`entries` profile key:** named entries with configurable `name` and `value` members (`value` may be a
+  list, coalesced as strings) and `ignore_case`. It works on a top-level VARIANT, a top-level
+  `ARRAY<STRUCT>` and a one-level declared VARIANT array, and for `entity`. `[*]` isn't supported on a
+  declared column.
 - **Azure Lakewatch profiles:** built-in `azure_audit`, `azure_signin`, `azure_monitor_activity`
   and `azure_identity_protection` profiles for the `product: azure` services `auditlogs`,
   `signinlogs`, `activitylogs` and `riskdetection`. The SigmaHQ `cloud/azure` rules go from 0/123
@@ -19,15 +31,22 @@ All notable changes to this project are documented in this file. The format is b
   go from 0/19 to 5/19 convertible. `threat_management` and `threat_detection` alert rules aren't
   supported yet, `OperationProperties` isn't mapped, and in the Exchange profile only `status: success` is mapped.
 - **GCP and Google Workspace Lakewatch profiles:** built-in `gcp_audit_log` and
-  `google_workspace_reports` profiles for `product: gcp` (`service: gcp.audit`, `google_workspace.admin` and `google_workspace.login`). The SigmaHQ `cloud/gcp` rules go from 0/26 to 22/26 convertible.
-  `authorizationInfo`, keyword searches and the `parameters` entries `setting_name` and `new_value`
-  aren't supported, and in `google_workspace_reports` only the `admin` and `login` service values are mapped.
+  `google_workspace_reports` profiles for `product: gcp` (`service: gcp.audit`, `google_workspace.admin` and `google_workspace.login`). The SigmaHQ `cloud/gcp` rules go from 0/26 to 25/26 convertible.
+  Keyword searches aren't supported, and in `google_workspace_reports` only the `admin` and `login` service values are mapped.
 - **Web Lakewatch profiles:** built-in `cloudflare_http_request`, `gcp_http_load_balancer`, `akamai_waf` and
   `aws_waf_web_acl` profiles for `category: webserver`, and `zscaler_zia_web_log` and `ciscoumbrella_proxy`
-  profiles for `category: proxy`. The SigmaHQ `webserver` and `proxy` rules convert on 31 to 72 of 86 and 47 of 56
-  rules per profile. Keyword searches and unmapped fields fail, the GCP, Zscaler and Umbrella whole-URL fields allow only
-  the modifiers `contains`, `endswith`, `re` and `all` (`all` in combination with them; `|all` alone still renders an equality), and a `?` in a value fails on the Akamai and AWS WAF profiles, which keep the path and
-  the query in separate columns.
+  profiles for `category: proxy`. The SigmaHQ `webserver` and `proxy` rules convert on 47 to 72 of 86 and 47 of 56
+  rules per profile. Keyword searches and unmapped fields fail, and the GCP, Zscaler and Umbrella whole-URL fields allow only
+  the modifiers `contains`, `endswith`, `re` and `all` (`all` in combination with them).
+
+### Changed
+
+- **Profiles adopt the new features:** `akamai_waf` and `aws_waf_web_acl` map `cs-uri-query` through `join`
+  (path and query joined with `?`, exact instead of the former OR and `?` reject), which takes the rules from
+  47 to 60 and from 31 to 51 of 86. `aws_waf_web_acl` maps `cs-user-agent`, `cs-referer` and `cs-host` to the
+  `httpRequest.headers` entries (`entries`, case-insensitive). `gcp_audit_log` matches the
+  `authorizationInfo` array any-element, and `google_workspace_reports` maps `setting_name` and `new_value` to the
+  `parameters` entries (`value` or `boolValue`).
 
 ## [0.2.0] - 2026-11-26
 

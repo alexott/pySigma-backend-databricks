@@ -245,6 +245,12 @@ profiles have an `entity`.
 VARIANT paths render as `try_variant_get(col, '$.path', 'type')`, and paths through arrays as
 `exists(col, x0 -> ...)`.
 
+An array inside a VARIANT column matches the same way, but only when the parser schema declares the
+array. The target is then the leaf path without a `[]` marker, and a rule matches when any element
+matches. It renders as
+`exists(try_variant_get(col, '$.path', 'ARRAY<VARIANT>'), x0 -> ...)`, or with `'ARRAY<<elem>>'`
+when the elements are scalars. An array the schema doesn't declare gets no such rendering.
+
 Windows event fields are often a list of `{_Name, _VALUE}` entries, for example the `EventData`
 column of the Windows parsers. A target `EventData[Image]` reads the `_VALUE` of the entry whose
 `_Name` is `Image`. It works on a VARIANT column (cast to `ARRAY<STRUCT<_Name, _VALUE>>`) and on
@@ -256,6 +262,28 @@ fields:
   # renders as try_element_at(filter(try_variant_get(EventData, '$',
   #   'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>'), e -> e._Name = 'Image'), 1)._VALUE
 ```
+
+Other logs use the same shape with other member names. The profile key `entries` declares, per
+column, the members and options of the named entries:
+
+```yaml
+entries:
+  httpRequest.headers: {name: name, value: value, ignore_case: true}   # one-level array in a VARIANT
+  parameters: {name: name, value: [value, boolValue]}                  # top-level VARIANT
+fields:
+  cs-user-agent: httpRequest.headers[User-Agent]
+  setting_name: parameters[SETTING_NAME]
+```
+
+* `name` is the member that holds the entry name, and `value` the member that holds the value. `value`
+  may be a list, and then the first member that is set is used, with every member read as a string
+  (so `boolValue` renders as `'true'` or `'false'`).
+* `ignore_case: true` compares the entry name case-insensitively, for example for HTTP headers.
+* `entries` works on a top-level VARIANT column, on a top-level `ARRAY<STRUCT>` column, and on a
+  declared array one level inside a VARIANT. `[*]` isn't supported on a declared column. A
+  declared VARIANT array has no single-object fallback, unlike an undeclared VARIANT column.
+* A column without an `entries` key uses `_Name` and `_VALUE`. A target with `[Name]` also works
+  for `entity`.
 
 #### Parser discovery
 
@@ -596,6 +624,7 @@ library and are configured in the profile:
 | `regex_replace` | `pattern`, `replacement` | Regex substitution on the literal parts of a string. |
 | `to_hex` | none, or optional `prefix: <str>` (`0x`) | Turns an exact decimal number into lowercase hex with the prefix (`4120` becomes `0x1018`). Fails for wildcards, negative numbers, ordering comparisons and regular expressions. |
 | `first_set` | `candidates: [<path> \| {domain: <path>, user: <path>}, ...]` (at least 2), optional `unset: [<str>]` (`['-']`) | Matches the first candidate that is set (not NULL, empty or in `unset`), rendered as a `CASE WHEN` expression; the condition applies to it unchanged. A `{domain, user}` candidate is the joined `DOMAIN\user`. Must be the last transform; field references to it fail. |
+| `join` | `sep: <str>` (non-empty), `parts: [<path>, <path>]` (exactly 2 scalar columns) | Matches the two parts joined with `sep`, rendered as `concat_ws(sep, nullif(a, ''), nullif(b, ''))`, so an empty or missing part leaves the other alone with no separator. Every modifier sees the joined value, and a value may match across the separator. `null` fails to convert. |
 | `to_int`, `to_str` | none | Converts digit strings to numbers, or numbers and booleans to strings. |
 | `reject` | `pattern: <regex>`, `reason: <text>` | Fails the rule with `reason` when a value matches `pattern` (`re.search`, case-insensitive), for values the target column never holds. Wildcards are matched as `*` and `?`; a regex value is checked on its text without a leading `^` and backslash escapes. |
 
@@ -637,7 +666,11 @@ fields:
   `field <F>: case-sensitive matching is not supported`. Expanded values (`|windash`,
   `|base64offset`) on transformed fields fail as well.
 * `modifiers` lists the Sigma modifiers allowed on a field (`eq` for none). Any other modifier
-  fails the rule with `field <F>: modifier <m> is not supported`.
+  fails the rule with `field <F>: modifier <m> is not supported`. Unless a comparison modifier
+  (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `exists`, `fieldref`)
+  is present, the comparison is an equality, so the field must allow `eq` as well. For example,
+  `c-uri|all: [...]` needs both `eq` and `all` in the list, and fails otherwise, while
+  `c-uri|contains|all` needs only `contains` and `all`.
 * `undeclared: true` allows a target inside a VARIANT column that declares sub-fields, but not
   this one: a key that the data has and the parser schema doesn't list. It is extracted as a
   string.
@@ -732,12 +765,14 @@ The GCP profiles map Cloud Audit Logs (`gcp_audit_log`) and the Google Workspace
 name passes through unchanged. Of the `data.protoPayload.*` names, only `data.protoPayload.serviceName`,
 `.methodName`, `.logName` and `.resource.type` are mapped (there is no
 `data.protoPayload.*` prefix), and any other `data.protoPayload.<x>` fails as not mapped. A trailing `*` in
-`gcp.audit.method_name` renders `startswith()`. The `authorizationInfo` array
-(`data.protoPayload.authorizationInfo.permission` and `.granted`) isn't supported and fails with "not supported by
-profile". In `google_workspace_reports`, the `parameters` entries `setting_name` and `new_value` aren't mapped, so rules
-that use them fail. Workspace rules (`service: google_workspace.*`) route only to `google_workspace_reports`, because the
-same events in `gcp_audit_log` sit in an array inside a VARIANT. The SigmaHQ `cloud/gcp` rules go from 0/26 to 22/26
-convertible; the 4 that fail use `authorizationInfo`, a keyword search, `setting_name` or `new_value`.
+`gcp.audit.method_name` renders `startswith()`. The declared arrays inside `protoPayload`
+(`authorizationInfo`, for example `data.protoPayload.authorizationInfo.permission` and `.granted`) match any
+element, rendered as `exists(try_variant_get(...), x0 -> ...)`. In `google_workspace_reports`, `setting_name` and
+`new_value` map to the `SETTING_NAME` and `NEW_VALUE` entries of `parameters` through `entries`
+(`new_value` takes `value`, or `boolValue` as a string). Workspace rules (`service: google_workspace.*`) route only to `google_workspace_reports`, because the
+same events in `gcp_audit_log` sit in an array inside a VARIANT. The SigmaHQ `cloud/gcp` rules go from 0/26 to 25/26
+convertible; the one that fails (`gcp_breakglass_container_workload_deployed`) uses keyword searches, and its `logName` values
+never equal a full `projects/<p>/logs/...` name.
 
 The web profiles cover the `category: webserver` rules (Cloudflare, GCP load balancer, Akamai and AWS WAF)
 and the `category: proxy` rules (Zscaler ZIA and Cisco Umbrella). A rule converts per profile, so use
@@ -754,24 +789,23 @@ haven't been checked against live data.
   `contains`, `endswith`, `re` and `all`. Plain equality, `startswith` and a wildcard-only equality such as `'*foo*'`
   fail the rule, because they would silently never match a URL that starts with a scheme or host. `endswith` misses a
   URL with a trailing query string. `all` is allowed in combination with the listed modifiers (`contains|all`,
-  `endswith|all`), but `|all` on its own (`c-uri|all: ['/a', '/b']`) also converts and still renders an AND of plain
-  equalities on the whole URL. This is a known gap; the backend follow-up is to assume `eq` when no match modifier
-  is present. A `|re` anchored at the start (`^/admin`, or `^https?://` on Zscaler, whose `url` has no scheme)
+  `endswith|all`), and `|all` on its own (`c-uri|all: ['/a', '/b']`) fails like plain equality, because `eq` isn't
+  in the allowlist (see the `modifiers` rule above). A `|re` anchored at the start (`^/admin`, or `^https?://` on Zscaler, whose `url` has no scheme)
   converts but never matches on a whole URL.
-- **U1, split path and query.** Akamai (`httpMessage.path`, `httpMessage.query`) and AWS WAF (`httpRequest.uri`,
-  `httpRequest.args`) store the path and the query in separate columns, so `cs-uri-query` maps to both, ORed. A value
-  with a literal `?` or a `?` wildcard fails the rule (a `reject` on the pattern `\?`), and `contains|all` may match
-  its values across the two parts. Other semantics: a plain `cs-uri-query: '/a'` gives
-  `path = '/a' OR query = '/a'`; `cs-uri-query: null` gives `path is null OR query is null`; and a `|re` value
-  containing `?` (a quantifier, or `(?i)`) is rejected by the `\?` pattern. An exact `join` transform is a follow-up.
+- **Split path and query.** Akamai (`httpMessage.path`, `httpMessage.query`) and AWS WAF (`httpRequest.uri`,
+  `httpRequest.args`) store the path and the query in separate columns, so `cs-uri-query` maps through a `join`
+  transform: `concat_ws('?', nullif(path, ''), nullif(query, ''))`. Every modifier sees the joined URI, a value with
+  a literal `?` matches across both parts (write `\?` in Sigma, since an unescaped `?` is a single-character
+  wildcard), and an empty or missing query leaves just the path. `cs-uri-query: null` fails to convert.
 - **Unmapped fields.** A field that a log doesn't have fails the rule with `not mapped`: `cs-username` and
   `cs-content-type` on all four webserver profiles; `cs-uri-stem` and `cs-host` on GCP; `cs-user-agent` and `cs-referer` on
   Akamai (they exist only inside the raw `httpMessage.requestHeaders` string); `sc-status` on AWS WAF (it logs only
   the action and the code WAF itself sent); `c-uri-query`, `cs-uri-stem`, `c-uri-extension` and `cs-cookie` on the
   proxy profiles.
-- **AWS WAF headers.** `cs-user-agent`, `cs-referer` and `cs-host` fail with `not supported`, because the request
-  headers are an array inside the `httpRequest` VARIANT. `labels` and `requestHeadersInserted` are arrays too, so they
-  map as whole columns and support only `|contains`; members such as `labels.name` aren't mapped.
+- **AWS WAF headers.** `cs-user-agent`, `cs-referer` and `cs-host` map to the `User-Agent`, `Referer` and `Host`
+  entries of `httpRequest.headers`, an array inside the `httpRequest` VARIANT, through `entries` with
+  `ignore_case: true`. `labels` and `requestHeadersInserted` aren't declared as arrays in the schema, so they map as
+  whole columns and support only `|contains`; members such as `labels.name` aren't mapped.
 - **Zscaler.** `event` is a VARIANT that holds the vendor event record. Its contents are unverified, so only the
   whole column is mapped, member access isn't, and it is matched only as a whole value with `|contains`.
 - **Akamai caveats.** `httpMessage.query` is logged URL-encoded, so values with raw special characters may not
