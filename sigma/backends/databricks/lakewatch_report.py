@@ -236,3 +236,22 @@ def write_report(report: Dict[str, Any], directory: Path) -> None:
             yaml.safe_dump(report, sort_keys=False, allow_unicode=True), encoding="utf-8")
     except OSError as e:
         raise SigmaConfigurationError(f"cannot write conversion_report.yaml to {directory}: {e}") from None
+
+
+def discovery_summary(rules: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarize discovery rule entries: counts per profile, the commonest failure reasons, the option."""
+    counts: Dict[str, int] = {}
+    reasons: Dict[str, int] = {}
+    for entry in rules:
+        for profile in entry.get("convertible", []):
+            counts[profile] = counts.get(profile, 0) + 1
+        for reason in entry.get("not_convertible", {}).values():
+            reasons[reason] = reasons.get(reason, 0) + 1
+    convertible = {profile: counts[profile] for profile in sorted(counts) if counts[profile] > 0}
+    top = sorted(reasons.items(), key=lambda item: (-item[1], item[0]))[:20]
+    return {
+        "rules": len(rules),
+        "convertible_rules": convertible,
+        "failure_reasons": dict(top),
+        "suggested_option": ("-O parsers=" + ",".join(convertible)) if convertible else None,
+    }

@@ -12,6 +12,7 @@ from typing import (
     ClassVar,
     Dict,
     FrozenSet,
+    Iterable,
     List,
     Mapping,
     Optional,
@@ -24,11 +25,13 @@ from typing import (
 )
 
 import yaml
+from sigma.collection import SigmaCollection
 from sigma.conditions import ConditionAND, ConditionFieldEqualsValueExpression, ConditionItem, ConditionNOT, ConditionOR
 from sigma.conversion.base import TextQueryBackend
 from sigma.conversion.deferred import DeferredQueryExpression
 from sigma.conversion.state import ConversionState
-from sigma.exceptions import SigmaConfigurationError, SigmaConversionError
+from sigma.correlations import SigmaCorrelationRule
+from sigma.exceptions import SigmaConfigurationError, SigmaConversionError, SigmaError
 from sigma.processing.pipeline import ProcessingPipeline
 from sigma.rule import SigmaDetection, SigmaLevel, SigmaRule
 from sigma.types import (
@@ -70,6 +73,7 @@ from .lakewatch_report import (
     LakewatchApproximateWarning,
     capture_warnings,
     describe_fields,
+    discovery_summary,
     rule_fields,
     write_report,
 )
@@ -439,6 +443,8 @@ class DatabricksBackend(TextQueryBackend):
         self.last_report: Optional[Dict[str, Any]] = None
         self._current_report_key: Optional[str] = None
         self._errors_start = 0
+        # True while discover_parsers() converts: queries are built but no documents.
+        self._discovering = False
 
     @staticmethod
     def _parse_target(value: Optional[str]) -> str:
@@ -1249,6 +1255,104 @@ class DatabricksBackend(TextQueryBackend):
         self._overrides_file = overrides_file
         self._selected = selected
 
+    def _discovery_profiles(self) -> List[Tuple["Profile", ParserSchema]]:
+        """All loaded profiles (built-in and user), validated against the schema catalog.
+
+        Needs no catalog, schema, table or target. Also loads the overrides file into
+        ``self._overrides_file``; the caller restores it.
+        """
+        from sigma.pipelines.databricks.lakewatch.profile import (
+            RawSource,
+            _validate_raw,
+            load_profiles,
+            validate_profile,
+        )
+
+        catalog = SchemaCatalog.load(self.lakewatch_schemas)
+        profiles = load_profiles(self.lakewatch_profiles_dir)
+        found: List[Tuple["Profile", ParserSchema]] = []
+        for pid in sorted(profiles):
+            profile = profiles[pid]
+            schema = catalog.get(profile.parser)
+            validate_profile(profile, schema)
+            if self._raw_log_field_set:
+                _validate_raw(profile, schema, RawSource("column", self.raw_log_field, "text"))
+            found.append((profile, schema))
+        self._overrides_file = OverridesFile.load(self.overrides) if self.overrides else None
+        return found
+
+    def discover_parsers(self, rules: Union[SigmaCollection, Iterable[Union[SigmaRule, SigmaCorrelationRule]]]
+                         ) -> Dict[str, Any]:
+        """Report which parser profiles can convert each rule (no documents, no files).
+
+        Every loaded profile whose logsource block matches and routes a rule is tried with
+        collected errors; the overrides file applies. Warnings are swallowed and the backend's
+        errors, report and conversion state are left as they were.
+        """
+        items = rules.rules if isinstance(rules, SigmaCollection) else list(rules)
+        saved = {name: getattr(self, name) for name in (
+            "errors", "collect_errors", "_selected", "_converted_ids", "_report", "last_report",
+            "_current_profile", "_current_block", "_current_raw", "_current_undeclared",
+            "_current_rule", "_current_format", "_current_report_key", "_raw_warned", "_errors_start",
+            "_overrides_file", "_discovering")}
+        saved["last_processing_pipeline"] = getattr(self, "last_processing_pipeline", None)
+        entries: List[Dict[str, Any]] = []
+        try:
+            profiles = self._discovery_profiles()
+            self._discovering = True
+            self.collect_errors = True
+            self._report = ConversionReport()
+            for rule in items:
+                entry: Dict[str, Any] = {
+                    "sigma_id": str(rule.id) if rule.id is not None else None,
+                    "title": rule.title,
+                }
+                if isinstance(rule, SigmaCorrelationRule):
+                    entry["note"] = "correlation rules are not supported"
+                    entries.append(entry)
+                    continue
+                ls = rule.logsource
+                entry["logsource"] = {"product": ls.product, "category": ls.category, "service": ls.service}
+                convertible: List[str] = []
+                failed: Dict[str, str] = {}
+                for profile, schema in profiles:
+                    block = profile.block_for(rule.logsource)
+                    if block is None or not _routes(profile, schema, block, rule):
+                        continue
+                    reason = self._discover_one(rule, (profile, schema, getattr(profile, "table", "")), block)
+                    if reason is None:
+                        convertible.append(profile.profile)
+                    else:
+                        failed[profile.profile] = reason
+                entry["convertible"] = sorted(convertible)
+                entry["not_convertible"] = {pid: failed[pid] for pid in sorted(failed)}
+                if not convertible and not failed:
+                    entry["note"] = "no profile matches the logsource"
+                entries.append(entry)
+        finally:
+            for name, value in saved.items():
+                setattr(self, name, value)
+        return {"rules": entries, "summary": discovery_summary(entries)}
+
+    def _discover_one(self, rule: SigmaRule, selected: Tuple["Profile", ParserSchema, str],
+                      block: Any) -> Optional[str]:
+        """Try one profile on a rule; None when convertible, else the reason."""
+        self.errors = []
+        self._current_rule = rule
+        self._current_format = "lakewatch"
+        try:
+            with capture_warnings(reemit=False):
+                queries = self._convert_one_profile(rule, "lakewatch", selected, block, ("lakewatch",), {})
+        except SigmaError as error:
+            return str(error)
+        finally:
+            self._current_profile = None
+        if self.errors:
+            return str(self.errors[0][1])
+        if not any(json.loads(q)["sql"] for q in queries):
+            return "no query was produced"
+        return None
+
     def _convert_rule_parsed(self, rule: SigmaRule, output_format: str,
                              args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> List[Any]:
         """Convert a rule once per selected profile matching its logsource, concatenating results."""
@@ -1690,6 +1794,8 @@ class DatabricksBackend(TextQueryBackend):
                                  state: ConversionState) -> Any:
         """Build a Lakewatch v2 batch rule document (workspace or content pack) for a Sigma query."""
         status, sql, core = self._lakewatch_body(rule, query)
+        if self._discovering:
+            return json.dumps({"status": status, "sql": sql})
         if self.target == "content_pack":
             doc = self._content_pack_document(rule, core, index)
         else:
