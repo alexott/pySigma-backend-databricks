@@ -676,6 +676,12 @@ Built-in profiles:
 | `microsoft365_audit_exchange` | `product: m365`, `service: audit` or `exchange` | `microsoft365_audit_exchange` |
 | `gcp_audit_log` | `product: gcp`, `service: gcp.audit` | `gcp_audit_log` |
 | `google_workspace_reports` | `product: gcp`, `service: google_workspace.admin` or `google_workspace.login` | `google_workspace_reports` |
+| `cloudflare_http_request` | `category: webserver` | `cloudflare_http_request` |
+| `gcp_http_load_balancer` | `category: webserver` | `gcp_http_load_balancer` |
+| `akamai_waf` | `category: webserver` | `akamai_waf` |
+| `aws_waf_web_acl` | `category: webserver` | `aws_waf_web_acl` |
+| `zscaler_zia_web_log` | `category: proxy` | `zscaler_zia_web_log` |
+| `ciscoumbrella_proxy` | `category: proxy` | `ciscoumbrella_proxy` |
 | `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
 | `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
 | `carbonblack_endpoint_event` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event` or `network_connection` | `carbonblack_endpoint_event` |
@@ -732,6 +738,42 @@ profile". In `google_workspace_reports`, the `parameters` entries `setting_name`
 that use them fail. Workspace rules (`service: google_workspace.*`) route only to `google_workspace_reports`, because the
 same events in `gcp_audit_log` sit in an array inside a VARIANT. The SigmaHQ `cloud/gcp` rules go from 0/26 to 22/26
 convertible; the 4 that fail use `authorizationInfo`, a keyword search, `setting_name` or `new_value`.
+
+The web profiles cover the `category: webserver` rules (Cloudflare, GCP load balancer, Akamai and AWS WAF)
+and the `category: proxy` rules (Zscaler ZIA and Cisco Umbrella). A rule converts per profile, so use
+`sigma convert -s` (collect errors) to get a query for every profile that has all the rule's fields; without it, the
+first profile that lacks a field aborts the rule. Keyword searches (a detection with no field) fail on every web
+profile, because there is no raw event to search. The mappings follow the vendors' log field references and
+haven't been checked against live data.
+
+- **URI semantics.** `cs-uri-query` (webserver) and `c-uri`/`cs-uri` (proxy) hold the whole URL or URI in SigmaHQ
+  rules. Cloudflare maps it to `ClientRequestURI` (path and query), so it behaves as on an access log. GCP maps it to
+  `httpRequest.requestUrl` (scheme, host, path and query), Zscaler to `url` (host, path and query, no scheme) and
+  Umbrella to `url` (the full URL).
+- **U2, whole-URL fields.** On the GCP, Zscaler and Umbrella whole-URL fields, only `contains`, `endswith`, `re` and
+  `contains|all` are allowed. Plain equality, `startswith` and a wildcard-only equality such as `'*foo*'` fail the
+  rule, because they would silently never match a URL that starts with a scheme or host. `endswith` misses a URL
+  with a trailing query string.
+- **U1, split path and query.** Akamai (`httpMessage.path`, `httpMessage.query`) and AWS WAF (`httpRequest.uri`,
+  `httpRequest.args`) store the path and the query in separate columns, so `cs-uri-query` maps to both, ORed. A value
+  with a literal `?` or a `?` wildcard fails the rule (a `reject` on the pattern `\?`), and `contains|all` may match
+  its values across the two parts. An exact `join` transform is a follow-up.
+- **Unmapped fields.** A field that a log doesn't have fails the rule with `not mapped`: `cs-username` and
+  `cs-content-type` on all four webserver profiles; `cs-uri-stem` on GCP; `cs-user-agent` and `cs-referer` on
+  Akamai (they exist only inside the raw `httpMessage.requestHeaders` string); `sc-status` on AWS WAF (it logs only
+  the action and the code WAF itself sent); `c-uri-query`, `cs-uri-stem`, `c-uri-extension` and `cs-cookie` on the
+  proxy profiles.
+- **AWS WAF headers.** `cs-user-agent`, `cs-referer` and `cs-host` fail with `not supported`, because the request
+  headers are an array inside the `httpRequest` VARIANT. `labels` and `requestHeadersInserted` are arrays too, so they
+  map as whole columns and support only `|contains`; members such as `labels.name` aren't mapped.
+- **Zscaler.** `event` is a VARIANT that holds the raw event, so only the whole column is mapped and member access
+  isn't.
+- **Akamai caveats.** `httpMessage.query` is logged URL-encoded, so values with raw special characters may not
+  match, and many SigmaHQ rules list both forms. Akamai logs only requests that triggered a security rule, so rules
+  see a subset of the traffic. `httpMessage.status` is a STRING column.
+- **Umbrella `hostName`.** `cs-host` maps to `hostName` by decision, but the parser describes it only as "Host name".
+  If it is the client host rather than the destination, `cs-host` rules match the wrong thing, and there is no live
+  data to confirm it.
 
 The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
 (`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which
