@@ -39,6 +39,11 @@ STATE_PROFILE = "lakewatch_profile"
 STATE_PROFILE_VERSION = "lakewatch_profile_version"
 STATE_PARSER = "lakewatch_parser"
 
+# Modifiers that replace the implied equality comparison.
+COMPARISON_MODIFIERS = frozenset(
+    {"contains", "startswith", "endswith", "re", "cidr", "gt", "gte", "lt", "lte", "exists", "fieldref"}
+)
+
 
 @dataclass
 class StrictFieldsTransformation(DetectionItemTransformation):
@@ -170,7 +175,9 @@ class ProfileFieldMapping(FieldMappingTransformation):
             return super().apply_detection_item(detection_item)
         if mapping.modifiers is not None:
             names = [reverse_modifier_mapping.get(m.__name__, m.__name__) for m in detection_item.modifiers]
-            for name in names or ["eq"]:
+            if not COMPARISON_MODIFIERS.intersection(names):
+                names.append("eq")
+            for name in names:
                 if name not in mapping.modifiers:
                     self._fail(field, f"modifier {name} is not supported")
         if not self._transformed(field):

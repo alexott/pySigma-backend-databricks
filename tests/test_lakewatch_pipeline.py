@@ -565,3 +565,31 @@ def test_fieldref_to_transformed_field_case_insensitive_fails():
     )
     with pytest.raises(SigmaTransformationError, match="transformed field"):
         run(profile, block, "    sel:\n        Other|fieldref: image\n    condition: sel")
+
+
+_CMP = {"X": {"field": "x", "modifiers": ["contains", "endswith", "re", "all"]}}
+
+
+def test_all_without_match_modifier_fails():
+    profile, block = make_win(_CMP)
+    with pytest.raises(SigmaTransformationError, match="field X: modifier eq is not supported"):
+        run_win(profile, block, "    sel:\n        X|all:\n            - a\n            - b\n    condition: sel")
+
+
+def test_windash_implies_eq():
+    profile, block = make_win(_CMP)
+    with pytest.raises(SigmaTransformationError, match=r"field X: modifier windash is not supported \(profile p\)"):
+        run_win(profile, block, "    sel:\n        X|windash: x\n    condition: sel")
+
+
+def test_endswith_all_converts():
+    profile, block = make_win(_CMP)
+    detection = "    sel:\n        X|endswith|all:\n            - a\n            - b\n    condition: sel"
+    r = run_win(profile, block, detection)
+    assert leaves(r.detection.detections["sel"]) == [("x", "*a"), ("x", "*b")]
+
+
+def test_no_allowlist_unchanged():
+    profile, block = make_win({"X": {"field": "x"}})
+    r = run_win(profile, block, "    sel:\n        X|all:\n            - a\n            - b\n    condition: sel")
+    assert leaves(r.detection.detections["sel"]) == [("x", "a"), ("x", "b")]
