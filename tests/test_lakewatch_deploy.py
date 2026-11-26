@@ -13,11 +13,14 @@ from sigma.backends.databricks.lakewatch_deploy import (
     EXIT_LOCAL,
     EXIT_OK,
     EXIT_REJECTED,
+    IDENTITY_KEYS,
     SKIPPED_NAMES,
     LocalError,
     RuleDoc,
     apply_location,
     load_documents,
+    plan_rule,
+    subset,
 )
 
 CONTENT_PACK_MSG = "content-pack documents can't be deployed with lakewatch-deploy; install the pack instead"
@@ -173,3 +176,108 @@ def test_module_imports_without_sdk():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def _have(want: Dict[str, Any], **over: Any) -> Dict[str, Any]:
+    """Build a rule as the server returns it: the document plus server-only keys."""
+    have = copy.deepcopy(want)
+    have.update(
+        rule_id="r-1", name="rules/r-1", etag="e-1", create_time="2026-01-01T00:00:00Z", effective_rule_name="x"
+    )
+    have["batch"]["server_only"] = {"k": 1}
+    have.update(over)
+    return have
+
+
+def test_plan_create():
+    want = _rule("a", severity="LOW")
+    plan = plan_rule(want, None, False)
+    assert plan.action == "create"
+    assert plan.body == want
+    assert plan.update_mask == []
+    assert plan.rule_id is None and plan.etag is None and plan.reason is None
+    assert plan.rule_name == "a"
+
+
+def test_noop_with_server_defaults_omitted():
+    want = _rule("a", severity="LOW")
+    have = _have(want)
+    del have["schedule"]["enabled"]
+    for force in (False, True):
+        plan = plan_rule(want, have, force)
+        assert plan.action == "noop"
+        assert plan.body == {} and plan.update_mask == []
+
+
+def test_subset_rules():
+    assert subset({"a": 1}, {"a": 1, "b": 2})
+    assert not subset([1, 2], [2, 1])
+    assert subset(False, None)
+    assert subset(0, None)
+    assert subset({"x": ""}, None)
+    assert not subset(True, None)
+    assert not subset({"a": 1}, {"a": 2})
+    assert not subset({"a": 1}, 5)
+
+
+def test_update_mask_and_body():
+    want = _rule("a", severity="LOW", output={"summary": "new"})
+    have = _have(_rule("a", severity="HIGH", output={"summary": "old"}))
+    plan = plan_rule(want, have, False)
+    assert plan.action == "update"
+    assert plan.update_mask == ["output", "severity"]
+    assert set(plan.body) == {"output", "severity"}
+    assert plan.rule_id == "r-1" and plan.etag == "e-1"
+
+
+def test_identity_keys_never_in_mask():
+    assert IDENTITY_KEYS == ("catalog_name", "schema_name", "rule_name")
+    want = _rule("a")
+    have = _have(want, catalog_name="x", schema_name="y", rule_name="z")
+    assert plan_rule(want, have, False).action == "noop"
+
+
+def test_update_keeps_server_enabled():
+    want = _rule("a", title="new")
+    have = _have(_rule("a", title="old"))
+    have["schedule"]["enabled"] = True
+    plan = plan_rule(want, have, False)
+    assert plan.action == "update"
+    assert plan.update_mask == ["title"]
+    assert plan.want["schedule"]["enabled"] is True
+
+
+def test_schedule_change_keeps_enabled_true():
+    want = _rule("a")
+    want["schedule"] = {"enabled": False, "interval": "5m"}
+    snapshot = copy.deepcopy(want)
+    have = _have(_rule("a"))
+    have["schedule"] = {"enabled": True, "interval": "1h"}
+    plan = plan_rule(want, have, False)
+    assert plan.update_mask == ["schedule"]
+    assert plan.body["schedule"] == {"enabled": True, "interval": "5m"}
+    assert want == snapshot
+
+
+def test_conflict_and_overwrite():
+    want = _rule("a", severity="LOW")
+    have = _have(_rule("a", sigma_id="other", severity="HIGH"))
+    reason = "exists and was not made from this Sigma rule (server sigma_id: other, file sigma_id: id-1)"
+    plan = plan_rule(want, have, False)
+    assert plan.action == "conflict" and plan.body == {} and plan.reason == reason
+    plan = plan_rule(want, have, True)
+    assert plan.action == "overwrite" and plan.update_mask == ["annotations", "severity"]
+    assert set(plan.body) == {"annotations", "severity"} and plan.reason == reason
+    bare = _have(want)
+    del bare["annotations"]
+    plan = plan_rule(want, bare, False)
+    assert plan.action == "conflict"
+    assert plan.reason is not None and "server sigma_id: none" in plan.reason
+
+
+def test_no_sigma_id_never_owned():
+    want = _rule("a")
+    del want["annotations"]
+    have = _have(want)
+    assert plan_rule(want, have, False).action == "conflict"
+    assert plan_rule(want, have, True).action == "noop"

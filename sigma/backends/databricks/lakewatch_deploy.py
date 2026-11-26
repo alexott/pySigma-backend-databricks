@@ -1,7 +1,7 @@
 """lakewatch-deploy: upsert converted Lakewatch rule YAML files into a Databricks workspace.
 
 The Databricks SDK is an optional dependency (the ``deploy`` extra) and is never imported at module level.
-This part of the module loads and checks the rule files.
+This part of the module loads the rule files and plans the upsert of each rule.
 """
 
 import copy
@@ -17,7 +17,7 @@ SKIPPED_NAMES = frozenset({"conversion_report.yaml", "revisions.yaml", "appIndex
 
 CONTENT_PACK_MESSAGE = "content-pack documents can't be deployed with lakewatch-deploy; install the pack instead"
 
-_IDENTITY_KEYS = ("catalog_name", "schema_name", "rule_name")
+IDENTITY_KEYS = ("catalog_name", "schema_name", "rule_name")
 
 
 class LocalError(Exception):
@@ -88,7 +88,7 @@ def _read_file(path: Path, catalog: Optional[str], schema: Optional[str], errors
         elif _is_content_pack(raw):
             errors.append(f"{path}: {CONTENT_PACK_MESSAGE}")
         else:
-            missing = [k for k in _IDENTITY_KEYS if not isinstance(raw.get(k), str) or not raw[k].strip()]
+            missing = [k for k in IDENTITY_KEYS if not isinstance(raw.get(k), str) or not raw[k].strip()]
             if missing:
                 errors.append(f"{path}: document {number} lacks {', '.join(missing)}")
             else:
@@ -123,3 +123,66 @@ def load_documents(
     if not docs and not errors:
         errors.append("no rule documents found")
     return docs, errors
+
+
+def subset(want: Any, have: Any) -> bool:
+    """Return True when ``want`` is contained in ``have``.
+
+    Dicts are compared recursively and extra server keys are ignored. A missing server value (``None``)
+    matches a default ``want`` (``False``, ``0``, ``""``, ``[]``, ``{}`` or ``None``). Everything else uses ``==``.
+    """
+    if isinstance(want, dict):
+        if have is None:
+            have = {}
+        if not isinstance(have, dict):
+            return False
+        return all(subset(value, have.get(key)) for key, value in want.items())
+    if have is None:
+        return not want
+    return bool(want == have)
+
+
+@dataclass
+class Plan:
+    """The action to take for one rule."""
+
+    action: str
+    rule_name: str
+    update_mask: List[str]
+    body: Dict[str, Any]
+    rule_id: Optional[str]
+    etag: Optional[str]
+    reason: Optional[str]
+    want: Dict[str, Any]
+
+
+def _sigma_id(rule: Dict[str, Any]) -> Optional[str]:
+    return (rule.get("annotations") or {}).get("sigma_id")
+
+
+def plan_rule(want: Dict[str, Any], have: Optional[Dict[str, Any]], force: bool) -> Plan:
+    """Decide how to upsert ``want`` given the server's rule ``have`` (``None`` when it doesn't exist)."""
+    name = want["rule_name"]
+    if have is None:
+        return Plan("create", name, [], copy.deepcopy(want), None, None, None, want)
+
+    rule_id, etag = have.get("rule_id"), have.get("etag")
+    want_id, have_id = _sigma_id(want), _sigma_id(have)
+    owned = have_id is not None and have_id == want_id
+    reason = None
+    if not owned:
+        reason = (
+            "exists and was not made from this Sigma rule "
+            f"(server sigma_id: {have_id or 'none'}, file sigma_id: {want_id or 'none'})"
+        )
+        if not force:
+            return Plan("conflict", name, [], {}, rule_id, etag, reason, want)
+
+    adjusted = copy.deepcopy(want)
+    if isinstance(adjusted.get("schedule"), dict):
+        adjusted["schedule"]["enabled"] = bool((have.get("schedule") or {}).get("enabled", False))
+    changed = sorted(k for k, v in adjusted.items() if k not in IDENTITY_KEYS and not subset(v, have.get(k)))
+    if not changed:
+        return Plan("noop", name, [], {}, rule_id, etag, None, adjusted)
+    action = "update" if owned else "overwrite"
+    return Plan(action, name, changed, {k: adjusted[k] for k in changed}, rule_id, etag, reason, adjusted)
