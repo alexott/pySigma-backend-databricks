@@ -142,3 +142,47 @@ def test_discovery_user_profiles_included(tmp_path):
     report = DatabricksBackend(lakewatch_profiles_dir=str(tmp_path)).discover_parsers(
         _rules(_rule("sel:\n    CommandLine|contains: x")))
     assert "my_sysmon" in report["rules"][0]["convertible"]
+
+
+# --- convert() runs discovery when -O parsers is missing -----------------------------------
+
+DISCOVERY_WARNING = ("no rules were converted: -O parsers=... was not given, so parser discovery ran "
+                     "instead (report on stdout)")
+
+
+def test_convert_without_parsers_runs_discovery():
+    backend = DatabricksBackend()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        out = backend.convert(_rules(_rule()), output_format="lakewatch")
+    report = yaml.safe_load(out)
+    assert "rules" in report and "summary" in report
+    assert [str(w.message) for w in caught] == [DISCOVERY_WARNING]
+    assert caught[0].category is UserWarning
+    assert backend.last_report is None
+
+
+def test_discovery_writes_no_files(tmp_path):
+    backend = DatabricksBackend(output_dir=str(tmp_path))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        backend.convert(_rules(_rule()), "lakewatch")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_convert_rule_without_parsers_still_errors():
+    import pytest
+    from sigma.exceptions import SigmaConfigurationError
+    rule = _rules(_rule()).rules[0]
+    with pytest.raises(SigmaConfigurationError, match=r"-O parsers=\.\.\. is required for lakewatch parsed tables"):
+        DatabricksBackend(catalog_name="c", schema_name="s").convert_rule(rule, "lakewatch")
+
+
+def test_ocsf_mode_not_discovery():
+    backend = DatabricksBackend(catalog_name="c", schema_name="s", table_name="t", ocsf=True)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        out = backend.convert(_rules(_rule()), output_format="lakewatch")
+    assert not [w for w in caught if "discovery" in str(w.message)]
+    assert "batch:" in out and "FROM t" in out
+    assert "summary" not in yaml.safe_load(out).get("rules", {})

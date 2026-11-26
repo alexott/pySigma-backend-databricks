@@ -470,7 +470,18 @@ class DatabricksBackend(TextQueryBackend):
         raise ValueError(f"Invalid value for backend option {name}: {value!r} (expected true, false or auto)")
 
     def convert(self, rule_collection, *args, **kwargs):
-        """Convert a collection, first resetting the per-run state so an aborted run doesn't leak."""
+        """Convert a collection, first resetting the per-run state so an aborted run doesn't leak.
+
+        With ``-f lakewatch`` in parsed mode and no ``-O parsers``, nothing is converted:
+        parser discovery runs and its report (YAML) is returned instead.
+        """
+        output_format = args[0] if args else kwargs.get("output_format")
+        output_format = output_format or self.default_format
+        if output_format == "lakewatch" and not self.parsers and self._parsed_mode(output_format):
+            warnings.warn(
+                "no rules were converted: -O parsers=... was not given, so parser discovery ran "
+                "instead (report on stdout)", UserWarning, stacklevel=2)
+            return yaml.safe_dump(self.discover_parsers(rule_collection), sort_keys=False, allow_unicode=True)
         self._converted_ids = set()
         self._raw_warned = False
         self._report = ConversionReport()
