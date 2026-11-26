@@ -138,3 +138,80 @@ def test_audit_entity():
     sql = _sql(AUDIT, "auditlogs", _sel("OperationName"))
     entity = "coalesce(initiatedByUserPrincipalName, initiatedByAppDisplayName)"
     assert f"{entity} AS sigma_entity" in sql
+
+
+# --- azure_signin --------------------------------------------------------------------------
+
+SIGNIN = "azure_signin"
+_SIGNIN_ALIASES = {
+    "resultType": ["ResultType", "resultType"],
+    "resultDescription": ["ResultDescription", "resultDescription"],
+    "properties.authenticationRequirement": ["AuthenticationRequirement", "properties.authenticationRequirement"],
+    "clientAppUsed": ["ClientApp", "ClientAppUsed", "clientAppUsed"],
+    "userPrincipalName": ["Username", "UserPrincipalName", "userPrincipalName"],
+    "riskState": ["RiskState", "riskState"],
+    "properties.resourceDisplayName": ["ResourceDisplayName"],
+    "appId": ["AppId", "properties.appId", "appId"],
+    "deviceId": ["DeviceDetail.deviceId", "properties.deviceDetail.deviceId"],
+    "deviceIsCompliant": ["DeviceDetail.isCompliant"],
+    "properties.deviceDetail.trustType": ["DeviceDetail.trusttype", "DeviceDetail.trustType"],
+    "properties.homeTenantId": ["homeTenantId", "HomeTenantId"],
+    "properties.resourceTenantId": ["resourceTenantId", "ResourceTenantId"],
+    "conditionalAccessStatus": ["ConditionalAccessStatus", "conditionalAccessStatus"],
+    "userAgent": ["UserAgent", "userAgent"],
+    "location": ["Location", "location"],
+    "ipAddress": ["IPAddress", "ipAddress"],
+}
+_SIGNIN_PARAMS = [(a, t) for t, aliases in _SIGNIN_ALIASES.items() for a in aliases]
+
+
+@pytest.mark.parametrize("alias,target", _SIGNIN_PARAMS)
+def test_signin_aliases(alias, target):
+    sql = _sql(SIGNIN, "signinlogs", _sel(alias))
+    expected = target
+    if target.startswith("properties."):
+        expected = f"try_variant_get(properties, '$.{target[len('properties.'):]}'"
+        assert expected in sql
+    else:
+        assert target in sql
+    if alias != target:
+        # the alias text itself must not leak into the SQL as a column reference
+        # (it may legitimately occur inside the expected target text, e.g. a JSON path)
+        assert alias not in sql.replace(expected, "")
+
+
+def test_signin_numeric_result_type():
+    sql = _sql(SIGNIN, "signinlogs", "    sel:\n        ResultType: 50126\n    condition: sel")
+    # Spark compares the STRING column with a quoted string literal, never a bare number.
+    assert "lower(resultType) = lower('50126')" in sql
+
+
+def test_signin_status_unmapped():
+    assert "not mapped" in _convert_error(SIGNIN, "signinlogs", _sel("Status", "Success"))
+
+
+def test_signin_activity_details_unmapped():
+    assert "not mapped" in _convert_error(SIGNIN, "signinlogs", _sel("ActivityDetails"))
+
+
+def test_signin_unknown_field_unmapped():
+    assert "not mapped" in _convert_error(SIGNIN, "signinlogs", _sel("NoSuchField"))
+
+
+def test_signin_network_location_details_contains():
+    detection = "    sel:\n        NetworkLocationDetails|contains: '['\n    condition: sel"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sql = _convert(SIGNIN, "signinlogs", detection)
+    assert [w for w in caught if issubclass(w.category, LakewatchApproximateWarning)]
+    assert "$." not in sql
+
+
+def test_signin_network_location_details_equality_fails():
+    msg = _convert_error(SIGNIN, "signinlogs", _sel("NetworkLocationDetails"))
+    assert "supports only contains" in msg
+
+
+def test_signin_entity():
+    sql = _sql(SIGNIN, "signinlogs", _sel("ResultType", "50126"))
+    assert "userPrincipalName AS sigma_entity" in sql

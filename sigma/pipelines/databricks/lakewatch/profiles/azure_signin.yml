@@ -1,0 +1,88 @@
+# Built-in Lakewatch profile for the azure_signin parser (Entra ID sign-in logs).
+# Field-name sources: Microsoft Azure Monitor diagnostic-log schemas, the Microsoft Graph
+# signIn resource docs, and the SigmaHQ corpus for aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - resultType is a STRING column while Sigma writes numbers (ResultType: 50126).
+# - NetworkLocationDetails is an array, so it maps to the whole properties column; |contains
+#   matches the JSON text approximately and equality fails.
+# - Status and ActivityDetails are unmapped on purpose: the diagnostic status is a struct
+#   ({errorCode, additionalDetails}) and ActivityDetails does not exist.
+profile: azure_signin
+version: 1
+parser: azure_signin
+entity: userPrincipalName
+fields:
+  appDisplayName: appDisplayName
+  appId: appId
+  callerIpAddress: callerIpAddress
+  category: category
+  clientAppUsed: clientAppUsed
+  conditionalAccessStatus: conditionalAccessStatus
+  correlationId: correlationId
+  deviceBrowser: deviceBrowser
+  deviceId: deviceId
+  deviceIsCompliant: deviceIsCompliant
+  deviceIsManaged: deviceIsManaged
+  deviceOperatingSystem: deviceOperatingSystem
+  durationMs: durationMs
+  identity: identity
+  ipAddress: ipAddress
+  isInteractive: isInteractive
+  level: level
+  location: location
+  locationCity: locationCity
+  locationCountryOrRegion: locationCountryOrRegion
+  locationLatitude: locationLatitude
+  locationLongitude: locationLongitude
+  locationState: locationState
+  operationName: operationName
+  operationVersion: operationVersion
+  resourceId: resourceId
+  resultDescription: resultDescription
+  resultSignature: resultSignature
+  resultType: resultType
+  riskDetail: riskDetail
+  riskLevelAggregated: riskLevelAggregated
+  riskLevelDuringSignIn: riskLevelDuringSignIn
+  riskState: riskState
+  servicePrincipalId: servicePrincipalId
+  signInId: signInId
+  statusErrorCode: statusErrorCode
+  tenantId: tenantId
+  userAgent: userAgent
+  userDisplayName: userDisplayName
+  userId: userId
+  userPrincipalName: userPrincipalName
+  ResultType: resultType
+  ResultDescription: resultDescription
+  AuthenticationRequirement: properties.authenticationRequirement
+  properties.authenticationRequirement: properties.authenticationRequirement
+  ClientApp: clientAppUsed
+  ClientAppUsed: clientAppUsed
+  Username: userPrincipalName
+  UserPrincipalName: userPrincipalName
+  RiskState: riskState
+  ResourceDisplayName: properties.resourceDisplayName
+  AppId: appId
+  properties.appId: appId
+  DeviceDetail.deviceId: deviceId
+  properties.deviceDetail.deviceId: deviceId
+  DeviceDetail.isCompliant: deviceIsCompliant
+  DeviceDetail.trusttype: properties.deviceDetail.trustType
+  DeviceDetail.trustType: properties.deviceDetail.trustType
+  NetworkLocationDetails: properties
+  homeTenantId: properties.homeTenantId
+  HomeTenantId: properties.homeTenantId
+  resourceTenantId: properties.resourceTenantId
+  ResourceTenantId: properties.resourceTenantId
+  ConditionalAccessStatus: conditionalAccessStatus
+  UserAgent: userAgent
+  Location: location
+  IPAddress: ipAddress
+  properties.*: properties.*
+logsources:
+  - match:
+      product: azure
+      service: signinlogs
