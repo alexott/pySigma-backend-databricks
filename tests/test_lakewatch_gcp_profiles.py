@@ -231,4 +231,7 @@ def test_workspace_array_columns_have_no_passthrough(field):
 )
 def test_workspace_value_map_modifiers_fail(modifier, value, seen):
     err = _convert_error(REPORTS, "google_workspace.admin", _sel(modifier, value))
-    assert f"field eventService: transform map: value '{seen}' is not in the map (profile google_workspace_reports)" in err
+    assert (
+        f"field eventService: transform map: value '{seen}' is not in the map (profile google_workspace_reports)"
+        in err
+    )
