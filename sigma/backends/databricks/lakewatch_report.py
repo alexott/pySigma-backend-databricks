@@ -143,6 +143,10 @@ class ConversionReport:
             self._rules.append(record)
         return position, self._rules[position]
 
+    def ensure_record(self, rule: Any) -> None:
+        """Create the rule record now (keeps input order for rules that produce no result)."""
+        self._rule_record(rule)
+
     def result(self, rule: Any, profile_ref: Optional[str]) -> Tuple[str, Dict[str, Any]]:
         """Create the rule record on first use and a new result; return ``(report_key, result)``."""
         position, record = self._rule_record(rule)

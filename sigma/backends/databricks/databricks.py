@@ -503,8 +503,9 @@ class DatabricksBackend(TextQueryBackend):
     def convert_correlation_rule(self, rule, output_format=None, method=None, callback=None):
         """Collect correlation rules as failures under ``-s`` for lakewatch; otherwise defer to pySigma."""
         if (output_format or self.default_format) == "lakewatch" and self.collect_errors:
+            self._report.ensure_record(rule)
             self.errors.append((rule, SigmaConversionError(
-                rule, rule.source, "correlation rules are not supported by the lakewatch format")))
+                rule, rule.source, "correlation rules not supported by the lakewatch format")))
             return []
         return super().convert_correlation_rule(rule, output_format, method, callback)
 

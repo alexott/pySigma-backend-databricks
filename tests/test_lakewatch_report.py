@@ -278,7 +278,7 @@ correlation:
     assert report["summary"]["rules"] == 2
     corr = next(r for r in report["rules"] if r["title"] == "Corr")
     assert corr["status"] == "failed"
-    assert corr["reason"]
+    assert "correlation rules not supported by the lakewatch format" in corr["reason"]
     assert corr["logsource"] is None
     assert corr["results"] == []
     assert report["summary"]["by_logsource"]["correlation"]["failed"] == 1
@@ -303,3 +303,25 @@ def test_report_not_written_without_output_dir(tmp_path, monkeypatch):
     _convert_lw(backend, SYSMON_RULE)
     assert backend.last_report is not None
     assert list(tmp_path.iterdir()) == []
+
+
+def test_report_correlation_rule_keeps_input_order():
+    base = SYSMON_RULE.replace("Report Test", "Base").replace("status: test", "name: base\nstatus: test")
+    corr = """
+title: Corr
+id: 5f1b9c8e-1111-4a2b-8c3d-000000000002
+status: test
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - Image
+    timespan: 5m
+    condition:
+        gte: 3
+"""
+    other = SYSMON_RULE.replace("Report Test", "Other").replace("0001", "0003")
+    backend = _backend(SYSMON, collect_errors=True)
+    _convert_lw(backend, base + "\n---" + corr + "\n---" + other)
+    assert [r["title"] for r in backend.last_report["rules"]] == ["Base", "Corr", "Other"]
