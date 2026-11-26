@@ -25,8 +25,8 @@ All notable changes to this project are documented in this file. The format is b
 - **Web Lakewatch profiles:** built-in `cloudflare_http_request`, `gcp_http_load_balancer`, `akamai_waf` and
   `aws_waf_web_acl` profiles for `category: webserver`, and `zscaler_zia_web_log` and `ciscoumbrella_proxy`
   profiles for `category: proxy`. The SigmaHQ `webserver` and `proxy` rules convert on 31 to 72 of 86 and 47 of 56
-  rules per profile. Keyword searches and unmapped fields fail, whole-URL fields allow only `contains`, `endswith`,
-  `re` and `contains|all`, and a `?` in a value fails on the Akamai and AWS WAF profiles, which keep the path and
+  rules per profile. Keyword searches and unmapped fields fail, the GCP, Zscaler and Umbrella whole-URL fields allow only
+  `contains`, `endswith`, `re` and `contains|all`, and a `?` in a value fails on the Akamai and AWS WAF profiles, which keep the path and
   the query in separate columns.
 
 ## [0.2.0] - 2026-11-26

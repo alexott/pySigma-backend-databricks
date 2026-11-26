@@ -759,7 +759,7 @@ haven't been checked against live data.
   with a literal `?` or a `?` wildcard fails the rule (a `reject` on the pattern `\?`), and `contains|all` may match
   its values across the two parts. An exact `join` transform is a follow-up.
 - **Unmapped fields.** A field that a log doesn't have fails the rule with `not mapped`: `cs-username` and
-  `cs-content-type` on all four webserver profiles; `cs-uri-stem` on GCP; `cs-user-agent` and `cs-referer` on
+  `cs-content-type` on all four webserver profiles; `cs-uri-stem` and `cs-host` on GCP; `cs-user-agent` and `cs-referer` on
   Akamai (they exist only inside the raw `httpMessage.requestHeaders` string); `sc-status` on AWS WAF (it logs only
   the action and the code WAF itself sent); `c-uri-query`, `cs-uri-stem`, `c-uri-extension` and `cs-cookie` on the
   proxy profiles.
