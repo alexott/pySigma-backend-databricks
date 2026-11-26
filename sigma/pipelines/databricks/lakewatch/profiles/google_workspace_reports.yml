@@ -8,9 +8,10 @@
 # - eventName and protoPayload.metadata.event.eventName both map to name. eventService and
 #   protoPayload.serviceName map to application through a value map: admin.googleapis.com -> admin,
 #   login.googleapis.com -> login. Any other service value fails to convert.
-# - setting_name and new_value are unmapped on purpose: they are the SETTING_NAME and NEW_VALUE
-#   entries of the parameters array, which needs named-entry array matching the backend lacks.
-#   Rules using them fail with "not mapped".
+# - setting_name and new_value map to the SETTING_NAME and NEW_VALUE entries of the parameters array
+#   (parameters[SETTING_NAME], parameters[NEW_VALUE]). The entries key says each element is
+#   {name, value | boolValue}, so the value is the first of value and boolValue that is set
+#   (boolValue renders a boolean as 'true' or 'false').
 # - parameters and resourceDetails are arrays of objects, so they map only to the whole column;
 #   |contains matches the JSON text approximately and equality fails. They have no .* passthrough:
 #   parameters.SETTING_NAME would render try_variant_get(parameters, '$.SETTING_NAME', ...), which
@@ -22,6 +23,8 @@ profile: google_workspace_reports
 version: 1
 parser: google_workspace_reports
 entity: actor.email
+entries:
+  parameters: {name: name, value: [value, boolValue]}
 fields:
   actor.applicationInfo.applicationName: actor.applicationInfo.applicationName
   actor.applicationInfo.impersonation: actor.applicationInfo.impersonation
@@ -51,6 +54,8 @@ fields:
   type: type
   userDeviceInfo: userDeviceInfo
   userDeviceInfo.*: userDeviceInfo.*
+  setting_name: parameters[SETTING_NAME]
+  new_value: parameters[NEW_VALUE]
   eventName: name
   protoPayload.metadata.event.eventName: name
   eventService:

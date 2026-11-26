@@ -9,10 +9,10 @@
 #   the loader rejects a protoPayload.* prefix target (prefix targets must be a free-form
 #   top-level VARIANT column). logName and resource.type are top-level LogEntry fields.
 # - Nested VARIANT members (metadata, request, response, ...) have no prefix mapping for the same
-#   reason; array members (authorizationInfo, serviceAccountDelegationInfo, resourceLocation
-#   locations) are not declared because the backend cannot match arrays inside a VARIANT.
-# - data.protoPayload.authorizationInfo.permission/granted are listed as unsupported so the rule
-#   fails with an explicit message.
+#   reason. The declared arrays inside protoPayload (authorizationInfo, serviceAccountDelegationInfo,
+#   resourceLocation locations) are identity-mapped at their leaf paths, such as
+#   protoPayload.authorizationInfo.permission; a rule matches when any element matches.
+#   data.protoPayload.authorizationInfo.permission/granted are aliases for the same two paths.
 # - gcp_breakglass_container_workload_deployed fails by design: it uses keyword searches (there is
 #   no raw-event column) and its logName values (cloudaudit.googleapis.com/activity) never equal a
 #   full projects/<p>/logs/... name.
@@ -49,6 +49,18 @@ fields:
   protoPayload.authenticationInfo.principalEmail: protoPayload.authenticationInfo.principalEmail
   protoPayload.authenticationInfo.principalSubject: protoPayload.authenticationInfo.principalSubject
   protoPayload.authenticationInfo.serviceAccountKeyName: protoPayload.authenticationInfo.serviceAccountKeyName
+  protoPayload.authenticationInfo.serviceAccountDelegationInfo.firstPartyPrincipal.principalEmail: protoPayload.authenticationInfo.serviceAccountDelegationInfo.firstPartyPrincipal.principalEmail
+  protoPayload.authenticationInfo.serviceAccountDelegationInfo.principalSubject: protoPayload.authenticationInfo.serviceAccountDelegationInfo.principalSubject
+  protoPayload.authorizationInfo.granted: protoPayload.authorizationInfo.granted
+  protoPayload.authorizationInfo.permission: protoPayload.authorizationInfo.permission
+  protoPayload.authorizationInfo.resource: protoPayload.authorizationInfo.resource
+  protoPayload.authorizationInfo.resourceAttributes.labels: protoPayload.authorizationInfo.resourceAttributes.labels
+  protoPayload.authorizationInfo.resourceAttributes.name: protoPayload.authorizationInfo.resourceAttributes.name
+  protoPayload.authorizationInfo.resourceAttributes.service: protoPayload.authorizationInfo.resourceAttributes.service
+  protoPayload.authorizationInfo.resourceAttributes.type: protoPayload.authorizationInfo.resourceAttributes.type
+  protoPayload.authorizationInfo.resourceAttributes.uid: protoPayload.authorizationInfo.resourceAttributes.uid
+  protoPayload.resourceLocation.currentLocations: protoPayload.resourceLocation.currentLocations
+  protoPayload.resourceLocation.originalLocations: protoPayload.resourceLocation.originalLocations
   protoPayload.methodName: protoPayload.methodName
   protoPayload.numResponseItems: protoPayload.numResponseItems
   protoPayload.requestMetadata.callerIP: protoPayload.requestMetadata.callerIP
@@ -77,8 +89,7 @@ fields:
   data.protoPayload.methodName: protoPayload.methodName
   data.protoPayload.logName: logName
   data.protoPayload.resource.type: resource.type
+  data.protoPayload.authorizationInfo.permission: protoPayload.authorizationInfo.permission
+  data.protoPayload.authorizationInfo.granted: protoPayload.authorizationInfo.granted
 logsources:
   - match: {product: gcp, service: gcp.audit}
-    unsupported:
-      - data.protoPayload.authorizationInfo.permission
-      - data.protoPayload.authorizationInfo.granted

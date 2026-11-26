@@ -5,32 +5,32 @@
 #
 # Alias notes:
 # - cs-uri-query holds the whole request URI in SigmaHQ rules, but this parser stores the path and the
-#   query in two fields (httpRequest.uri and httpRequest.args), so it maps to both (ORed). contains and
-#   endswith match the part that holds the value; contains|all may match its values across the two
-#   parts (an accepted approximation). A value with a literal ? or a ? wildcard can't match, because
-#   no single column holds both sides, so the reject transform fails that rule.
-#   Also: a plain cs-uri-query: '/a' gives path = '/a' OR query = '/a'; cs-uri-query: null gives
-#   path is null OR query is null; a |re value containing ? (a quantifier, or (?i)) is rejected by
-#   the \? pattern.
+#   query in two fields (httpRequest.uri and httpRequest.args), so it maps to a join of both with ? as
+#   the separator: concat_ws('?', nullif(uri, ''), nullif(args, '')). Equality, contains, startswith,
+#   endswith and re see the joined URI, and a value with a literal ? matches across both parts (write
+#   it as \? in Sigma, since an unescaped ? is a single-character wildcard). An empty or missing
+#   args leaves just the uri. cs-uri-query: null fails to convert.
 # - cs-uri-stem maps to httpRequest.uri.
 # - sc-status is unmapped: WAF logs only the action and responseCodeSent (the code WAF itself sent),
 #   not the origin status.
-# - cs-user-agent, cs-referer and cs-host are unsupported: the request headers are an array inside the
-#   httpRequest VARIANT (httpRequest.headers), which can't be queried by path. They fail with a clear
-#   message. cs-username and cs-content-type are unmapped: nothing equivalent is logged.
-# - httpRequest declares children, so it gets a bare line and no prefix line. labels ([{name}]) and
-#   requestHeadersInserted ([{name, value}]) are VARIANT columns that hold arrays, so they get bare
-#   lines only and no prefix line: they can only be queried as a whole value with |contains, and a
-#   member such as labels.name is not mapped.
-# - Dropped from the scaffold: httpRequest.headers.name and .value (array paths inside a VARIANT) and
-#   the ARRAY columns (nonTerminatingMatchingRules, rateBasedRuleList, ruleGroupList,
-#   terminatingRuleMatchDetails) with their members.
+# - cs-user-agent, cs-referer and cs-host map to the User-Agent, Referer and Host entries of
+#   httpRequest.headers, an array of {name, value} objects inside the httpRequest VARIANT. The
+#   entries key names the member columns and makes the lookup case-insensitive on the header name.
+#   cs-username and cs-content-type are unmapped: nothing equivalent is logged.
+# - httpRequest declares children, so it gets a bare line and no prefix line. The declared arrays
+#   inside the VARIANT (httpRequest.headers) and in the ARRAY columns (nonTerminatingMatchingRules,
+#   rateBasedRuleList, ruleGroupList, terminatingRuleMatchDetails) are identity-mapped at their leaf
+#   paths without the [] marker, such as httpRequest.headers.name or
+#   ruleGroupList.terminatingRule.ruleMatchDetails.conditionType; a rule matches when any element
+#   matches. labels ([{name}]) and requestHeadersInserted ([{name, value}]) are not declared as
+#   arrays in the schema, so they get bare lines only: they can only be queried as a whole value
+#   with |contains, and a member such as labels.name is not mapped.
 profile: aws_waf_web_acl
 version: 1
 parser: aws_waf_web_acl
 entity: httpRequest.clientIp
-transforms:
-  split_uri: {reject: {pattern: '\?', reason: path and query are separate columns in this parser}}
+entries:
+  httpRequest.headers: {name: name, value: value, ignore_case: true}
 fields:
   action: action
   formatVersion: formatVersion
@@ -42,6 +42,34 @@ fields:
   httpRequest.httpVersion: httpRequest.httpVersion
   httpRequest.requestId: httpRequest.requestId
   httpRequest.uri: httpRequest.uri
+  httpRequest.headers.name: httpRequest.headers.name
+  httpRequest.headers.value: httpRequest.headers.value
+  nonTerminatingMatchingRules.action: nonTerminatingMatchingRules.action
+  nonTerminatingMatchingRules.ruleId: nonTerminatingMatchingRules.ruleId
+  nonTerminatingMatchingRules.ruleMatchDetails.conditionType: nonTerminatingMatchingRules.ruleMatchDetails.conditionType
+  nonTerminatingMatchingRules.ruleMatchDetails.location: nonTerminatingMatchingRules.ruleMatchDetails.location
+  nonTerminatingMatchingRules.ruleMatchDetails.matchedData: nonTerminatingMatchingRules.ruleMatchDetails.matchedData
+  rateBasedRuleList.limitKey: rateBasedRuleList.limitKey
+  rateBasedRuleList.limitValue: rateBasedRuleList.limitValue
+  rateBasedRuleList.maxRateAllowed: rateBasedRuleList.maxRateAllowed
+  rateBasedRuleList.rateBasedRuleId: rateBasedRuleList.rateBasedRuleId
+  rateBasedRuleList.rateBasedRuleName: rateBasedRuleList.rateBasedRuleName
+  ruleGroupList.excludedRules.exclusionType: ruleGroupList.excludedRules.exclusionType
+  ruleGroupList.excludedRules.ruleId: ruleGroupList.excludedRules.ruleId
+  ruleGroupList.nonTerminatingMatchingRules.action: ruleGroupList.nonTerminatingMatchingRules.action
+  ruleGroupList.nonTerminatingMatchingRules.ruleId: ruleGroupList.nonTerminatingMatchingRules.ruleId
+  ruleGroupList.nonTerminatingMatchingRules.ruleMatchDetails.conditionType: ruleGroupList.nonTerminatingMatchingRules.ruleMatchDetails.conditionType
+  ruleGroupList.nonTerminatingMatchingRules.ruleMatchDetails.location: ruleGroupList.nonTerminatingMatchingRules.ruleMatchDetails.location
+  ruleGroupList.nonTerminatingMatchingRules.ruleMatchDetails.matchedData: ruleGroupList.nonTerminatingMatchingRules.ruleMatchDetails.matchedData
+  ruleGroupList.ruleGroupId: ruleGroupList.ruleGroupId
+  ruleGroupList.terminatingRule.action: ruleGroupList.terminatingRule.action
+  ruleGroupList.terminatingRule.ruleId: ruleGroupList.terminatingRule.ruleId
+  ruleGroupList.terminatingRule.ruleMatchDetails.conditionType: ruleGroupList.terminatingRule.ruleMatchDetails.conditionType
+  ruleGroupList.terminatingRule.ruleMatchDetails.location: ruleGroupList.terminatingRule.ruleMatchDetails.location
+  ruleGroupList.terminatingRule.ruleMatchDetails.matchedData: ruleGroupList.terminatingRule.ruleMatchDetails.matchedData
+  terminatingRuleMatchDetails.conditionType: terminatingRuleMatchDetails.conditionType
+  terminatingRuleMatchDetails.location: terminatingRuleMatchDetails.location
+  terminatingRuleMatchDetails.matchedData: terminatingRuleMatchDetails.matchedData
   httpSourceId: httpSourceId
   httpSourceName: httpSourceName
   labels: labels
@@ -51,10 +79,11 @@ fields:
   terminatingRuleType: terminatingRuleType
   webaclId: webaclId
   cs-uri-query:
-    field: [httpRequest.uri, httpRequest.args]
-    transform: split_uri
+    transform: {join: {parts: [httpRequest.uri, httpRequest.args], sep: '?'}}
   cs-uri-stem: httpRequest.uri
   cs-method: httpRequest.httpMethod
+  cs-user-agent: httpRequest.headers[User-Agent]
+  cs-referer: httpRequest.headers[Referer]
+  cs-host: httpRequest.headers[Host]
 logsources:
   - match: {category: webserver}
-    unsupported: [cs-user-agent, cs-referer, cs-host]

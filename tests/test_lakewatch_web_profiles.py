@@ -213,12 +213,14 @@ def test_routing():
 AK_PATH, AK_QUERY = "httpMessage.path", "httpMessage.query"
 AW_URI = "try_variant_get(httpRequest, '$.uri', 'string')"
 AW_ARGS = "try_variant_get(httpRequest, '$.args', 'string')"
+AK_JOIN = f"concat_ws('?', nullif({AK_PATH}, ''), nullif({AK_QUERY}, ''))"
+AW_JOIN = f"concat_ws('?', nullif({AW_URI}, ''), nullif({AW_ARGS}, ''))"
 
 
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("cs-uri-query", f"lower({AK_PATH}) = lower('x') OR lower({AK_QUERY}) = lower('x')"),
+        ("cs-uri-query", f"lower({AK_JOIN}) = lower('x')"),
         ("cs-uri-stem", f"lower({AK_PATH}) = lower('x')"),
         ("cs-method", "lower(httpMessage.method) = lower('x')"),
         ("cs-host", "lower(httpMessage.host) = lower('x')"),
@@ -237,7 +239,7 @@ def test_akamai_sc_status():
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("cs-uri-query", f"lower({AW_URI}) = lower('x') OR lower({AW_ARGS}) = lower('x')"),
+        ("cs-uri-query", f"lower({AW_JOIN}) = lower('x')"),
         ("cs-uri-stem", f"lower({AW_URI}) = lower('x')"),
         (
             "cs-method",
@@ -252,43 +254,53 @@ def test_awswaf_aliases(field, expected):
 U1_CONTAINS = "    sel:\n        cs-uri-query|contains: x\n    condition: sel"
 
 
-def test_u1_or():
-    assert f"AND (contains(lower({AK_PATH}), lower('x')) OR contains(lower({AK_QUERY}), lower('x')))" in _sql(
-        AKAMAI, "webserver", U1_CONTAINS
-    )
-    assert f"AND (contains(lower({AW_URI}), lower('x')) OR contains(lower({AW_ARGS}), lower('x')))" in _sql(
-        AWSWAF, "webserver", U1_CONTAINS
-    )
+def test_u1_join_contains():
+    assert f"AND (contains(lower({AK_JOIN}), lower('x')))" in _sql(AKAMAI, "webserver", U1_CONTAINS)
+    assert f"AND (contains(lower({AW_JOIN}), lower('x')))" in _sql(AWSWAF, "webserver", U1_CONTAINS)
 
 
 def test_u1_contains_all_converts():
-    # Accepted approximation: the values may match across path and query.
     det = "    sel:\n        cs-uri-query|contains|all:\n            - /a\n            - /b\n    condition: sel"
     sql = _sql(AKAMAI, "webserver", det)
     assert (
-        f"AND ((contains(lower({AK_PATH}), lower('/a')) OR contains(lower({AK_QUERY}), lower('/a'))) "
-        f"AND (contains(lower({AK_PATH}), lower('/b')) OR contains(lower({AK_QUERY}), lower('/b'))))"
+        f"AND (contains(lower({AK_JOIN}), lower('/a')) AND contains(lower({AK_JOIN}), lower('/b')))"
     ) in sql
 
 
+@pytest.mark.parametrize("parser, join", [(AKAMAI, AK_JOIN), (AWSWAF, AW_JOIN)])
+def test_u1_literal_question_mark(parser, join):
+    # \? is a literal ?, so the value is an exact comparison against the joined URI
+    sql = _sql(parser, "webserver", "    sel:\n        cs-uri-query: '/a\\?b=1'\n    condition: sel")
+    assert f"AND (lower({join}) = lower('/a?b=1'))" in sql
+
+
+@pytest.mark.parametrize("parser, join", [(AKAMAI, AK_JOIN), (AWSWAF, AW_JOIN)])
+def test_u1_corpus_value_converts(parser, join):
+    # an unescaped ? is a single-character wildcard, so the value renders as an rlike
+    det = (
+        "    sel:\n        cs-uri-query: '/OA_HTML/BneViewerXMLService?bne:uueupload=TRUE'\n"
+        "    condition: sel"
+    )
+    assert (
+        f"AND ({join} rlike '(?isu)^/OA_HTML/BneViewerXMLService.bne:uueupload=TRUE$')"
+    ) in _sql(parser, "webserver", det)
+
+
+@pytest.mark.parametrize("parser, join", [(AKAMAI, AK_JOIN), (AWSWAF, AW_JOIN)])
+def test_u1_contains_literal_question_mark(parser, join):
+    det = "    sel:\n        cs-uri-query|contains: 'a\\?b'\n    condition: sel"
+    assert f"AND (contains(lower({join}), lower('a?b')))" in _sql(parser, "webserver", det)
+
+
 @pytest.mark.parametrize("parser", [AKAMAI, AWSWAF])
-@pytest.mark.parametrize(
-    "detection",
-    [
-        "    sel:\n        cs-uri-query|contains: 'a\\?b'\n    condition: sel",  # literal ?
-        "    sel:\n        cs-uri-query|contains: 'a?b'\n    condition: sel",  # ? wildcard
-        "    sel:\n        cs-uri-query|contains: '/OA_HTML/BneViewerXMLService?bne:uueupload=TRUE'\n"
-        "    condition: sel",
-    ],
-)
-def test_u1_rejects(parser, detection):
-    assert "path and query are separate columns in this parser" in _convert_error(parser, "webserver", detection)
+def test_u1_null_fails(parser):
+    assert _convert_error(parser, "webserver", "    sel:\n        cs-uri-query: null\n    condition: sel")
 
 
 @pytest.mark.parametrize("parser", [AKAMAI, AWSWAF])
 @pytest.mark.parametrize("value", ["/login/index.php", "login="])
 @pytest.mark.parametrize("mod", ["contains", "contains|all", "endswith"])
-def test_u1_does_not_reject(parser, value, mod):
+def test_u1_converts(parser, value, mod):
     _sql(parser, "webserver", f"    sel:\n        cs-uri-query|{mod}: '{value}'\n    condition: sel")
 
 
@@ -306,10 +318,35 @@ def test_awswaf_labels_whole_value():
     )
 
 
-@pytest.mark.parametrize("field", ["cs-user-agent", "cs-referer", "cs-host"])
-def test_aws_waf_unsupported(field):
-    msg = _convert_error(AWSWAF, "webserver", _sel(field))
-    assert msg == f"field {field} is not supported by profile {AWSWAF}"
+AW_HEADER = (
+    "lower(try_variant_get(try_element_at(filter(try_variant_get(httpRequest, '$.headers', 'ARRAY<VARIANT>'), "
+    "e -> lower(try_variant_get(e, '$.name', 'STRING')) = lower('{h}')), 1), '$.value', 'STRING')) = lower('x')"
+)
+
+
+@pytest.mark.parametrize(
+    "field, header",
+    [("cs-user-agent", "User-Agent"), ("cs-referer", "Referer"), ("cs-host", "Host")],
+)
+def test_aws_waf_headers(field, header):
+    assert f"AND ({AW_HEADER.format(h=header)})" in _sql(AWSWAF, "webserver", _sel(field))
+
+
+def test_aws_waf_header_array_identity():
+    sql = _sql(AWSWAF, "webserver", _sel("httpRequest.headers.name", "host"))
+    assert (
+        "AND (exists(try_variant_get(httpRequest, '$.headers', 'ARRAY<VARIANT>'), "
+        "x0 -> lower(try_variant_get(x0, '$.name', 'string')) = lower('host')))"
+    ) in sql
+
+
+def test_aws_waf_rule_match_array_identity():
+    sql = _sql(AWSWAF, "webserver", _sel("ruleGroupList.terminatingRule.ruleMatchDetails.conditionType"))
+    assert (
+        "AND (exists(ruleGroupList, x0 -> exists("
+        "try_variant_get(x0, '$.terminatingRule.ruleMatchDetails', 'ARRAY<VARIANT>'), "
+        "x1 -> lower(try_variant_get(x1, '$.conditionType', 'string')) = lower('x'))))"
+    ) in sql
 
 
 # --- snapshots ------------------------------------------------------------------------------
@@ -355,8 +392,7 @@ def test_akamai_snapshot():
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
         "  AND (lower(httpMessage.method) = lower('POST') "
-        f"AND (contains(lower({AK_PATH}), lower('/owa/auth/')) "
-        f"OR contains(lower({AK_QUERY}), lower('/owa/auth/'))) "
+        f"AND contains(lower({AK_JOIN}), lower('/owa/auth/')) "
         "AND lower(httpMessage.status) = lower('200'))"
     )
 
@@ -368,7 +404,7 @@ def test_awswaf_snapshot():
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
         "  AND (lower(try_variant_get(httpRequest, '$.httpMethod', 'string')) = lower('POST') "
-        f"AND (contains(lower({AW_URI}), lower('/owa/auth/')) OR contains(lower({AW_ARGS}), lower('/owa/auth/'))))"
+        f"AND contains(lower({AW_JOIN}), lower('/owa/auth/')))"
     )
 
 

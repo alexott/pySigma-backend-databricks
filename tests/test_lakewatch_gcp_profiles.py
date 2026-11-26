@@ -79,10 +79,34 @@ def test_audit_data_protopayload_top_level_aliases():
     assert "AND (lower(try_variant_get(resource, '$.type', 'string')) = lower('x'))" in typ
 
 
-@pytest.mark.parametrize("leaf", ["permission", "granted"])
-def test_audit_authorization_info_fails(leaf):
-    err = _convert_error(AUDIT, "gcp.audit", _sel(f"data.protoPayload.authorizationInfo.{leaf}"))
-    assert f"field data.protoPayload.authorizationInfo.{leaf} is not supported by profile gcp_audit_log" in err
+AUTH = "exists(try_variant_get(protoPayload, '$.authorizationInfo', 'ARRAY<VARIANT>'), "
+
+
+@pytest.mark.parametrize(
+    "leaf, value, expected",
+    [
+        ("permission", "x", "x0 -> lower(try_variant_get(x0, '$.permission', 'string')) = lower('x')"),
+        ("granted", "true", "x0 -> lower(try_variant_get(x0, '$.granted', 'boolean')) = lower('true')"),
+    ],
+)
+@pytest.mark.parametrize("prefix", ["data.protoPayload", "protoPayload"])
+def test_audit_authorization_info(prefix, leaf, value, expected):
+    sql = _sql(AUDIT, "gcp.audit", _sel(f"{prefix}.authorizationInfo.{leaf}", value))
+    assert f"AND ({AUTH}{expected})" in sql
+
+
+def test_audit_array_identity_paths():
+    loc = _sql(AUDIT, "gcp.audit", _sel("protoPayload.resourceLocation.currentLocations", "us"))
+    assert (
+        "AND (exists(try_variant_get(protoPayload, '$.resourceLocation.currentLocations', 'ARRAY<STRING>'), "
+        "x0 -> lower(x0) = lower('us')))"
+    ) in loc
+    deleg_field = "protoPayload.authenticationInfo.serviceAccountDelegationInfo.principalSubject"
+    deleg = _sql(AUDIT, "gcp.audit", _sel(deleg_field))
+    assert (
+        "AND (exists(try_variant_get(protoPayload, '$.authenticationInfo.serviceAccountDelegationInfo', "
+        "'ARRAY<VARIANT>'), x0 -> lower(try_variant_get(x0, '$.principalSubject', 'string')) = lower('x')))"
+    ) in deleg
 
 
 @pytest.mark.parametrize(
@@ -164,10 +188,31 @@ def test_workspace_unknown_service_fails(field):
     assert "(profile google_workspace_reports)" in err
 
 
-@pytest.mark.parametrize("field", ["setting_name", "new_value"])
-def test_workspace_parameters_unmapped(field):
-    err = _convert_error(REPORTS, "google_workspace.admin", _sel(field))
-    assert f"field {field} is not mapped by profile google_workspace_reports" in err
+def _param(name):
+    entry = (
+        "try_element_at(filter(try_variant_get(parameters, '$', 'ARRAY<VARIANT>'), "
+        f"e -> try_variant_get(e, '$.name', 'STRING') = '{name}'), 1)"
+    )
+    return f"coalesce(try_variant_get({entry}, '$.value', 'STRING'), try_variant_get({entry}, '$.boolValue', 'STRING'))"
+
+
+def test_workspace_parameters_converts():
+    det = (
+        "    sel:\n        setting_name|startswith: ContextAwareAccess\n        new_value: 'false'\n"
+        "    condition: sel"
+    )
+    assert _sql(REPORTS, "google_workspace.admin", det) == (
+        "SELECT *, actor.email AS sigma_entity\n"
+        "FROM t\n"
+        "WHERE IN_TIMERANGE(time)\n"
+        f"  AND (startswith(lower({_param('SETTING_NAME')}), lower('ContextAwareAccess')) "
+        f"AND lower({_param('NEW_VALUE')}) = lower('false'))"
+    )
+
+
+@pytest.mark.parametrize("field, name", [("setting_name", "SETTING_NAME"), ("new_value", "NEW_VALUE")])
+def test_workspace_parameters_equality(field, name):
+    assert f"AND (lower({_param(name)}) = lower('x'))" in _sql(REPORTS, "google_workspace.admin", _sel(field))
 
 
 @pytest.mark.parametrize(
