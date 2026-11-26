@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **Azure Lakewatch profiles:** built-in `azure_audit`, `azure_signin`, `azure_monitor_activity`
+  and `azure_identity_protection` profiles for the `product: azure` services `auditlogs`,
+  `signinlogs`, `activitylogs` and `riskdetection`. The SigmaHQ `cloud/azure` rules go from 0/123
+  to 104/123 convertible. PIM rules have no Lakewatch parser, sign-in `Status` and
+  `ActivityDetails` aren't mapped, and array fields support only `|contains`, matched
+  approximately against the JSON text.
+
 ## [0.2.0] - 2026-11-26
 
 ### Breaking changes

@@ -648,8 +648,9 @@ fields:
 Current limitations:
 
 * Keyword (unbound) searches aren't supported yet.
-* Comparisons against a whole VARIANT column aren't supported yet, for example
-  `requestParameters|contains`. Use a path such as `requestParameters.bucketName` instead.
+* Comparisons against a whole VARIANT column: `|contains` is matched approximately against the
+  JSON text, with a warning; other comparisons fail. Use a path such as
+  `requestParameters.bucketName` for exact matching.
 * Rules that use these fail. With `sigma convert -s` they are skipped and reported.
 
 Writing profiles: `scripts/scaffold_profile.py PARSER --match product=windows,category=process_creation --rules <sigma rules dir>`
@@ -666,6 +667,10 @@ Built-in profiles:
 |---------|-----------|--------|
 | `aws_cloudtrail` | `product: aws`, `service: cloudtrail` | `aws_cloudtrail` |
 | `okta_system_log` | `product: okta`, `service: okta` | `okta_system_log` |
+| `azure_audit` | `product: azure`, `service: auditlogs` | `azure_audit` |
+| `azure_signin` | `product: azure`, `service: signinlogs` | `azure_signin` |
+| `azure_monitor_activity` | `product: azure`, `service: activitylogs` | `azure_monitor_activity` |
+| `azure_identity_protection` | `product: azure`, `service: riskdetection` | `azure_identity_protection` |
 | `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
 | `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
 | `carbonblack_endpoint_event` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event` or `network_connection` | `carbonblack_endpoint_event` |
@@ -687,6 +692,13 @@ Built-in profiles:
 | `windows_system`, `windows_application`, `windows_taskscheduler`, `windows_defender_detection`, `windows_wmi_activity`, `windows_ntlm_authentication`, `windows_applocker` | `product: windows` with `service: system`, `application`, `taskscheduler`, `windefend`, `wmi`, `ntlm`, `applocker` | the profile of the same name (requires the custom Windows parsers) |
 | `windows_event_other` | `product: windows` with `service: codeintegrity-operational`, `appxdeployment-server`, `firewall-as`, `msexchange-management`, `bits-client`, `dns-client`, `iis-configuration`, `security-mitigations` or `dns-server` (matched by `Channel`); classic PowerShell: `category: ps_classic_start`, `ps_classic_provider_start`, `ps_classic_script` or `service: powershell-classic` | `windows_event_other` (requires the custom Windows parsers) |
 | `windows_event_logs` | `product: windows` with any of the services above, plus `security` and `powershell` (matched by `Channel`); header columns only | `windows_event_logs` (Lakewatch built-in) |
+
+The Azure profiles convert most SigmaHQ `cloud/azure` rules. PIM alerts (`service: pim`) have no
+Lakewatch parser, so they stay unmatched. Sign-in `Status` isn't mapped (the diagnostic `status`
+is `{errorCode, additionalDetails}`), and `ActivityDetails` doesn't exist. Array fields
+(`targetResources`, `additionalDetails`, `networkLocationDetails`) map to the whole `properties`
+column and support only `|contains`, matched approximately against the JSON text. Rules that use
+them with equality fail.
 
 The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
 (`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which
