@@ -1,0 +1,95 @@
+# Built-in Lakewatch profile for the akamai_waf parser (Akamai Security Events / App & API Protector
+# SIEM log feed).
+# Field-name sources: Akamai SIEM Integration log field reference, the W3C Extended Log File Format
+# for the cs-/sc- names, and the SigmaHQ corpus for aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - cs-uri-query holds the whole request URI in SigmaHQ rules, but this parser stores the path and the
+#   query in two columns, so it maps to [httpMessage.path, httpMessage.query] (ORed). contains and
+#   endswith match the part that holds the value; contains|all may match its values across the two
+#   parts (an accepted approximation). A value with a literal ? or a ? wildcard can't match, because
+#   no single column holds both sides, so the reject transform fails that rule.
+# - cs-uri-stem maps to httpMessage.path. sc-status maps to httpMessage.status, a STRING column, so
+#   a number is compared as a string.
+# - cs-user-agent and cs-referer are unmapped: they exist only inside the raw httpMessage.requestHeaders
+#   string. cs-username and cs-content-type are unmapped: nothing equivalent is logged (only
+#   response headers exist).
+# - Akamai logs httpMessage.query URL-encoded, so values with raw special characters may not match;
+#   many SigmaHQ rules list both forms.
+# - Akamai logs only requests that triggered a security rule, so rules see a subset of the traffic.
+# - attackData.decodedRules.* is dropped from the scaffold: decodedRules is an array of structs, which
+#   is not a mappable path.
+profile: akamai_waf
+version: 1
+parser: akamai_waf
+entity: attackData.clientIP
+transforms:
+  split_uri: {reject: {pattern: '\?', reason: path and query are separate columns in this parser}}
+fields:
+  attackData.apiId: attackData.apiId
+  attackData.apiKey: attackData.apiKey
+  attackData.appliedAction: attackData.appliedAction
+  attackData.clientIP: attackData.clientIP
+  attackData.clientReputation: attackData.clientReputation
+  attackData.configId: attackData.configId
+  attackData.policyId: attackData.policyId
+  attackData.ruleActions: attackData.ruleActions
+  attackData.ruleData: attackData.ruleData
+  attackData.ruleMessages: attackData.ruleMessages
+  attackData.ruleSelectors: attackData.ruleSelectors
+  attackData.ruleTags: attackData.ruleTags
+  attackData.ruleVersions: attackData.ruleVersions
+  attackData.rules: attackData.rules
+  attackData.slowPostAction: attackData.slowPostAction
+  attackData.slowPostRate: attackData.slowPostRate
+  botData.botScore: botData.botScore
+  botData.responseSegment: botData.responseSegment
+  clientData.appBundleId: clientData.appBundleId
+  clientData.appVersion: clientData.appVersion
+  clientData.sdkVersion: clientData.sdkVersion
+  clientData.telemetryType: clientData.telemetryType
+  custom: custom
+  format: format
+  geo.asn: geo.asn
+  geo.city: geo.city
+  geo.continent: geo.continent
+  geo.country: geo.country
+  geo.regionCode: geo.regionCode
+  httpMessage.bytes: httpMessage.bytes
+  httpMessage.host: httpMessage.host
+  httpMessage.method: httpMessage.method
+  httpMessage.path: httpMessage.path
+  httpMessage.port: httpMessage.port
+  httpMessage.protocol: httpMessage.protocol
+  httpMessage.query: httpMessage.query
+  httpMessage.requestHeaders: httpMessage.requestHeaders
+  httpMessage.requestId: httpMessage.requestId
+  httpMessage.responseHeaders: httpMessage.responseHeaders
+  httpMessage.start: httpMessage.start
+  httpMessage.status: httpMessage.status
+  httpMessage.tls: httpMessage.tls
+  identity.ja4: identity.ja4
+  identity.tlsFingerprintV2: identity.tlsFingerprintV2
+  identity.tlsFingerprintV3: identity.tlsFingerprintV3
+  type: type
+  userRiskData.allow: userRiskData.allow
+  userRiskData.emailDomain: userRiskData.emailDomain
+  userRiskData.general: userRiskData.general
+  userRiskData.originUserId: userRiskData.originUserId
+  userRiskData.risk: userRiskData.risk
+  userRiskData.score: userRiskData.score
+  userRiskData.status: userRiskData.status
+  userRiskData.trust: userRiskData.trust
+  userRiskData.username: userRiskData.username
+  userRiskData.uuid: userRiskData.uuid
+  version: version
+  cs-uri-query:
+    field: [httpMessage.path, httpMessage.query]
+    transform: split_uri
+  cs-uri-stem: httpMessage.path
+  cs-method: httpMessage.method
+  sc-status: httpMessage.status
+  cs-host: httpMessage.host
+logsources:
+  - match: {category: webserver}
