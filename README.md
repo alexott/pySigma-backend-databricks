@@ -292,7 +292,10 @@ summary:
   tried. A profile is `convertible` when the rule converts without an error and with a non-empty
   query. Otherwise it's listed in `not_convertible` with the reason.
 * A rule with no matching profile gets `note: no profile matches the logsource`. A correlation
-  rule gets `note: correlation rules are not supported`.
+  rule gets `note: correlation rules are not supported`. A base rule that a correlation rule
+  references gets `note: referenced by a correlation rule`. A rule with Sigma status `deprecated`
+  or `unsupported` gets `note: status <status> (would be skipped)`: its lists still show, but it
+  counts toward neither `convertible_rules` nor `suggested_option`.
 * `summary.convertible_rules` counts the rules per profile. `failure_reasons` has the most
   frequent reasons (up to 20). `suggested_option` is a `-O parsers=...` value with every profile
   that can convert at least one rule, or `null` if none can. Pick the parsers that match the
@@ -364,7 +367,9 @@ rules:
   `status` is `converted` if any result converted. Otherwise it's `skipped` (Sigma status
   `deprecated` or `unsupported`, or every query empty: the reasons are `status deprecated`,
   `status unsupported` and `empty query`), or else `failed` with the error text as `reason`. A
-  correlation rule (with `-s`) is reported as `failed` with `correlation rules not supported by the lakewatch format`
+  base rule that only a correlation rule references makes no query of its own: it is `skipped`
+  with reason `referenced by a correlation rule`. A correlation rule (with `-s`) is reported as
+  `failed` with the reason `correlation rules not supported by the lakewatch format (rule '<title>')`
   and a `null` logsource.
 * **`results`**: one per selected profile, in conversion order (`profile` is `null` in OCSF mode).
   `rule_names` are the final names after de-duplication.
@@ -377,15 +382,16 @@ rules:
   * `unmapped`: none of the above (`targets` is empty).
 
   In OCSF mode `fields` is `{}`.
-* **`warnings`**: the warnings raised while the result converted, as strings. They are still
-  printed on stderr.
-* **`approximate`**: `true` if one of those warnings says the match is approximate: the raw
-  keyword search, or a text match on the JSON of a VARIANT. Review such rules before enabling them.
+* **`warnings`**: the warnings that were shown while the result converted, as strings. Warnings
+  hidden by a Python warning filter (or by its once-per-location dedup) are not listed. They are
+  still printed on stderr as usual.
+* **`approximate`**: `true` if the match is approximate: the raw keyword search, or a text match
+  on the JSON of a VARIANT. It is set even when the warning itself is filtered out. Review such rules before enabling them.
 * **`lint`**: hints that don't fail the rule. For a `lenient` field whose name matches a top-level
   column of the parser, ignoring case: `field <F> is read from <col>[<F>] by event_data any, but <Column> is a top-level column of parser <parser>; map it explicitly`.
 
 In Python, `backend.last_report` holds the report of the last `lakewatch` conversion, in the same
-structure as the file (`None` before the first one, and after a discovery run). `write_report` in
+structure as the file (`None` before the first one, after a discovery run, and after a run that aborted with an error). `write_report` in
 `sigma.backends.databricks.lakewatch_report` writes it.
 
 #### Target modes

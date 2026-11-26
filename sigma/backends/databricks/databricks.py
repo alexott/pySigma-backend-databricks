@@ -5,6 +5,7 @@ import dataclasses
 import json
 import re
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -13,6 +14,7 @@ from typing import (
     Dict,
     FrozenSet,
     Iterable,
+    Iterator,
     List,
     Mapping,
     Optional,
@@ -71,7 +73,6 @@ from .lakewatch_pack import content_resource_id, write_pack
 from .lakewatch_report import (
     ConversionReport,
     LakewatchApproximateWarning,
-    capture_warnings,
     describe_fields,
     discovery_summary,
     rule_fields,
@@ -88,6 +89,9 @@ if TYPE_CHECKING:  # pragma: no cover
 # Type of a Windows EventData-style VARIANT: a list of {_Name, _VALUE} elements.
 _NAMED_ENTRY_TYPE = "ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>"
 _NAMED_OBJECT_TYPE = "STRUCT<_Name: STRING, _VALUE: STRING>"
+
+REFERENCED_REASON = "referenced by a correlation rule"
+
 
 class LakewatchConversionError(SigmaConversionError):
     """Conversion error of the Lakewatch v2 parsed-table mode.
@@ -443,6 +447,10 @@ class DatabricksBackend(TextQueryBackend):
         self.last_report: Optional[Dict[str, Any]] = None
         self._current_report_key: Optional[str] = None
         self._errors_start = 0
+        # Set by a warning that makes the current result approximate, shown or not.
+        self._result_approximate = False
+        # True while convert() runs (a direct convert_rule call resets the report itself).
+        self._in_convert = False
         # True while discover_parsers() converts: queries are built but no documents.
         self._discovering = False
 
@@ -477,18 +485,22 @@ class DatabricksBackend(TextQueryBackend):
         """
         output_format = args[0] if args else kwargs.get("output_format")
         output_format = output_format or self.default_format
+        self.last_report = None
         if output_format == "lakewatch" and not self.parsers and self._parsed_mode(output_format):
             warnings.warn(
                 "no rules were converted: -O parsers=... was not given, so parser discovery ran "
                 "instead (report on stdout)", UserWarning, stacklevel=2)
-            self.last_report = None
             return yaml.safe_dump(self.discover_parsers(rule_collection), sort_keys=False, allow_unicode=True)
         self._converted_ids = set()
         self._raw_warned = False
         self._report = ConversionReport()
         self._current_report_key = None
         self._errors_start = len(self.errors)
-        return super().convert(rule_collection, *args, **kwargs)
+        self._in_convert = True
+        try:
+            return super().convert(rule_collection, *args, **kwargs)
+        finally:
+            self._in_convert = False
 
     def convert_rule(self, rule: SigmaRule, *args, **kwargs):
         """Convert a rule, remembering it and the output format to decide on OCSF field rendering.
@@ -497,6 +509,8 @@ class DatabricksBackend(TextQueryBackend):
         profile that matches its logsource (see ``_convert_rule_parsed``).
         """
         output_format = args[0] if args else kwargs.get("output_format")
+        if not self._in_convert:
+            self._report = ConversionReport()  # direct calls must not grow the report forever
         self._current_rule = rule
         self._current_format = output_format or self.default_format
         if self._parsed_mode(self._current_format):
@@ -508,30 +522,56 @@ class DatabricksBackend(TextQueryBackend):
         self._current_report_key = key
         first_error = len(self.errors)
         try:
-            with capture_warnings() as caught:
-                try:
-                    queries = super().convert_rule(rule, *args, **kwargs)
-                finally:
-                    self._record_warnings(result, caught)
+            with self._recording_warnings(result):
+                queries = super().convert_rule(rule, *args, **kwargs)
         finally:
             self._current_report_key = None
         self._record_errors(result, rule, first_error)
+        self._mark_referenced(key, rule, queries)
         return queries
 
     def convert_correlation_rule(self, rule, output_format=None, method=None, callback=None):
         """Collect correlation rules as failures under ``-s`` for lakewatch; otherwise defer to pySigma."""
         if (output_format or self.default_format) == "lakewatch" and self.collect_errors:
             self._report.ensure_record(rule)
-            self.errors.append((rule, SigmaConversionError(
-                rule, rule.source, "correlation rules not supported by the lakewatch format")))
+            self.errors.append((rule, LakewatchConversionError(
+                rule, "correlation rules not supported by the lakewatch format")))
             return []
         return super().convert_correlation_rule(rule, output_format, method, callback)
 
-    @staticmethod
-    def _record_warnings(result: Dict[str, Any], caught: Sequence[warnings.WarningMessage]) -> None:
-        """Store the captured warnings in the result and set its ``approximate`` flag."""
-        result["warnings"] = [str(w.message) for w in caught]
-        result["approximate"] = any(issubclass(w.category, LakewatchApproximateWarning) for w in caught)
+    @contextmanager
+    def _recording_warnings(self, result: Dict[str, Any]) -> Iterator[None]:
+        """Record the warnings that are shown into ``result``; filters and dedup stay untouched.
+
+        ``warnings.showwarning`` is wrapped (and restored): the wrapper notes the message and
+        forwards to the previous one. ``approximate`` comes from a backend flag instead, so it
+        is set whether or not the warning is shown.
+        """
+        previous = warnings.showwarning
+        self._result_approximate = False
+
+        def show(message: Any, category: Any, filename: Any, lineno: Any, file: Any = None,
+                 line: Any = None) -> None:
+            result["warnings"].append(str(message))
+            if previous is getattr(warnings, "_showwarning_orig", None):
+                # Inside catch_warnings(record=True) the default hook is restored; the
+                # recording sink is only reachable through _showwarnmsg_impl.
+                warnings._showwarnmsg_impl(  # type: ignore[attr-defined]
+                    warnings.WarningMessage(message, category, filename, lineno, file, line))
+            else:
+                previous(message, category, filename, lineno, file, line)
+
+        warnings.showwarning = show
+        try:
+            yield
+        finally:
+            warnings.showwarning = previous
+            result["approximate"] = self._result_approximate
+
+    def _mark_referenced(self, key: str, rule: Any, queries: Sequence[Any]) -> None:
+        """Skip the result of a rule that only a correlation rule references (no output of its own)."""
+        if not queries and not getattr(rule, "_output", True):
+            self._report.mark_skipped(key, REFERENCED_REASON)
 
     def _record_errors(self, result: Dict[str, Any], rule: SigmaRule, first_error: int) -> None:
         """Fail the result with the first error collected since ``first_error``."""
@@ -588,6 +628,7 @@ class DatabricksBackend(TextQueryBackend):
         if self._current_profile is None or not raw.approximate or self._raw_warned:
             return
         self._raw_warned = True
+        self._result_approximate = True
         self._warn(f"keyword search over the {raw.kind} source of profile "
                    f"{self._current_profile[0].profile} is approximate",
                    LakewatchApproximateWarning)
@@ -1325,6 +1366,12 @@ class DatabricksBackend(TextQueryBackend):
                     continue
                 ls = rule.logsource
                 entry["logsource"] = {"product": ls.product, "category": ls.category, "service": ls.service}
+                if not rule._output:
+                    entry["convertible"] = []
+                    entry["not_convertible"] = {}
+                    entry["note"] = REFERENCED_REASON
+                    entries.append(entry)
+                    continue
                 convertible: List[str] = []
                 failed: Dict[str, str] = {}
                 for profile, schema in profiles:
@@ -1338,7 +1385,10 @@ class DatabricksBackend(TextQueryBackend):
                         failed[profile.profile] = reason
                 entry["convertible"] = sorted(convertible)
                 entry["not_convertible"] = {pid: failed[pid] for pid in sorted(failed)}
-                if not convertible and not failed:
+                status = rule.status.name.lower() if rule.status is not None else None
+                if status in ("deprecated", "unsupported"):
+                    entry["note"] = f"status {status} (would be skipped)"
+                elif not convertible and not failed:
                     entry["note"] = "no profile matches the logsource"
                 entries.append(entry)
         finally:
@@ -1353,7 +1403,8 @@ class DatabricksBackend(TextQueryBackend):
         self._current_rule = rule
         self._current_format = "lakewatch"
         try:
-            with capture_warnings(reemit=False):
+            with warnings.catch_warnings(record=True):
+                warnings.simplefilter("always")
                 queries = self._convert_one_profile(rule, "lakewatch", selected, block, ("lakewatch",), {})
         except SigmaError as error:
             return str(error)
@@ -1459,11 +1510,10 @@ class DatabricksBackend(TextQueryBackend):
         result["fields"], result["lint"] = describe_fields(
             selected[0], block, selected[1], rule_fields(rule))
         try:
-            with capture_warnings() as caught:
-                try:
-                    return super().convert_rule(rule_copy, *args, **kwargs)
-                finally:
-                    self._record_warnings(result, caught)
+            with self._recording_warnings(result):
+                converted = super().convert_rule(rule_copy, *args, **kwargs)
+            self._mark_referenced(key, rule, converted)
+            return converted
         except LakewatchConversionError as error:
             if error.rule is rule_copy:
                 error.rule = rule
@@ -1645,6 +1695,7 @@ class DatabricksBackend(TextQueryBackend):
         """Prepare a contains match over the JSON text of a VARIANT: to_json() and an escaped value."""
         assert isinstance(cond.value, SigmaString)
         levels, leaf = self._render_path(path, cond.value, as_type="variant")
+        self._result_approximate = True
         self._warn(f"{cond.field} is matched against the JSON text of a VARIANT (approximate)",
                    LakewatchApproximateWarning)
         escaped = copy.copy(cond)
@@ -1985,7 +2036,7 @@ class DatabricksBackend(TextQueryBackend):
         if documents:
             self._warn_lakewatch_options()
         # rule_name must be unique within the target schema: suffix duplicates.
-        used = set()
+        used = {"conversion_report"} if self.output_dir and self.target != "content_pack" else set()
         resource_ids: Dict[str, str] = {}
         named: List[Tuple[str, Dict[str, Any]]] = []
         for name, doc, report_key in documents:

@@ -203,3 +203,38 @@ def test_discovery_after_conversion_resets_last_report():
         warnings.simplefilter("ignore")
         backend.convert(_rules(_rule()), "lakewatch")
     assert backend.last_report is None
+
+
+def test_discovery_deprecated_rule_note_and_no_counts():
+    deprecated = _rule(title="Old Rule", rule_id="5f1b9c8e-1111-4a2b-8c3d-000000000009").replace(
+        "status: test", "status: deprecated")
+    report = DatabricksBackend().discover_parsers(_rules(deprecated))
+    (entry,) = report["rules"]
+    assert entry["note"] == "status deprecated (would be skipped)"
+    assert SYSMON in entry["convertible"]
+    assert SECURITY in entry["not_convertible"]
+    assert report["summary"]["convertible_rules"] == {}
+    assert report["summary"]["suggested_option"] is None
+
+
+def test_discovery_base_rule_of_correlation():
+    text = _rule(title="Base") + """
+---
+title: Corr
+id: 5f1b9c8e-1111-4a2b-8c3d-000000000002
+status: test
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - Image
+    timespan: 5m
+    condition:
+        gte: 3
+"""
+    report = DatabricksBackend().discover_parsers(_rules(text))
+    base = next(e for e in report["rules"] if e["title"] == "Base")
+    assert base["note"] == "referenced by a correlation rule"
+    assert base["convertible"] == []
+    assert base["not_convertible"] == {}

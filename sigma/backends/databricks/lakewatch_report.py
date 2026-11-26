@@ -1,9 +1,7 @@
 """Lakewatch conversion report: per-result recording, field resolution, warning capture and lint."""
 
-import warnings
-from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 from sigma.exceptions import SigmaConfigurationError
@@ -17,24 +15,6 @@ if TYPE_CHECKING:
 
 class LakewatchApproximateWarning(UserWarning):
     """A conversion that only approximates the rule (raw keyword search, JSON text of a VARIANT)."""
-
-
-@contextmanager
-def capture_warnings(reemit: bool = True) -> Iterator[List[warnings.WarningMessage]]:
-    """Record the warnings raised inside the block; re-emit them on exit unless ``reemit`` is False."""
-    recorded: List[warnings.WarningMessage] = []
-    try:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            try:
-                yield caught
-            finally:
-                recorded.extend(caught)
-    finally:
-        # Outside catch_warnings, so that the outer filters apply; also when the block raised.
-        if reemit:
-            for w in recorded:
-                warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
 
 def _collect_fields(detection: Any, found: List[str]) -> None:
@@ -243,6 +223,8 @@ def discovery_summary(rules: List[Dict[str, Any]]) -> Dict[str, Any]:
     counts: Dict[str, int] = {}
     reasons: Dict[str, int] = {}
     for entry in rules:
+        if str(entry.get("note", "")).startswith("status "):
+            continue  # deprecated or unsupported: would be skipped, so it counts for nothing
         for profile in entry.get("convertible", []):
             counts[profile] = counts.get(profile, 0) + 1
         for reason in entry.get("not_convertible", {}).values():

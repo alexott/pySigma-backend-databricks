@@ -9,8 +9,6 @@ from sigma.collection import SigmaCollection
 
 from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.lakewatch_report import (
-    LakewatchApproximateWarning,
-    capture_warnings,
     describe_fields,
     rule_fields,
 )
@@ -117,7 +115,7 @@ def test_approximate_flag():
                       "sel:\n    - needle", "sel")
     backend = _backend(APP)
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+        warnings.simplefilter("always")
         backend.convert(_rules(rule), "lakewatch")
     result = backend.last_report["rules"][0]["results"][0]
     assert result["approximate"] is True
@@ -146,30 +144,10 @@ def test_ocsf_result_has_no_profile():
     assert result["fields"] == {}
 
 
-def test_capture_warnings_without_reemit():
-    with warnings.catch_warnings(record=True) as outer:
-        warnings.simplefilter("always")
-        with capture_warnings(reemit=False) as caught:
-            warnings.warn("quiet", LakewatchApproximateWarning, stacklevel=1)
-        assert [str(w.message) for w in caught] == ["quiet"]
-        assert outer == []
-        with capture_warnings() as caught:
-            warnings.warn("loud", UserWarning, stacklevel=1)
-    assert [str(w.message) for w in outer] == ["loud"]
-
-
 def test_last_report_is_plain_yaml_data():
     backend = _backend(SYSMON)
     backend.convert(_rules(SYSMON_RULE), "lakewatch")
     yaml.safe_dump(backend.last_report)
-
-
-def test_capture_warnings_reemits_when_block_raises():
-    with pytest.warns(UserWarning, match="before the error"):
-        with pytest.raises(RuntimeError):
-            with capture_warnings():
-                warnings.warn("before the error", UserWarning, stacklevel=1)
-                raise RuntimeError("fatal")
 
 
 def test_ocsf_errors_are_per_result():
@@ -278,7 +256,7 @@ correlation:
     assert report["summary"]["rules"] == 2
     corr = next(r for r in report["rules"] if r["title"] == "Corr")
     assert corr["status"] == "failed"
-    assert "correlation rules not supported by the lakewatch format" in corr["reason"]
+    assert corr["reason"] == "correlation rules not supported by the lakewatch format (rule 'Corr')"
     assert corr["logsource"] is None
     assert corr["results"] == []
     assert report["summary"]["by_logsource"]["correlation"]["failed"] == 1
@@ -325,3 +303,112 @@ correlation:
     backend = _backend(SYSMON, collect_errors=True)
     _convert_lw(backend, base + "\n---" + corr + "\n---" + other)
     assert [r["title"] for r in backend.last_report["rules"]] == ["Base", "Corr", "Other"]
+
+
+# --- warning capture keeps filters and dedup; approximate comes from a flag ---
+
+LENIENT = {"product": "windows", "service": "application"}
+
+
+def _two_lenient_rules():
+    one = _rule_yaml(LENIENT, "sel:\n    Foo: bar", title="First")
+    two = _rule_yaml(LENIENT, "sel:\n    Foo: bar", title="Second").replace("000000000001", "000000000002")
+    return _rules(one + "\n---\n" + two)
+
+
+def test_untitled_warning_is_shown_once_under_default_filter():
+    backend = _backend(APP)
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("default")
+        backend.convert(_two_lenient_rules(), "lakewatch")
+    assert len([w for w in shown if "not in a field list" in str(w.message)]) == 1
+    # only the warning that was shown is reported
+    listed = [r["results"][0]["warnings"] for r in backend.last_report["rules"]]
+    assert sum(any("not in a field list" in m for m in ws) for ws in listed) == 1
+
+
+def test_module_filter_still_suppresses_pipeline_warning():
+    backend = _backend(APP)
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("always")
+        warnings.filterwarnings("ignore", module=r"sigma\.pipelines\.databricks")
+        backend.convert(_rules(_rule_yaml(LENIENT, "sel:\n    Foo: bar")), "lakewatch")
+    assert not [w for w in shown if "not in a field list" in str(w.message)]
+    assert backend.last_report["rules"][0]["results"][0]["warnings"] == []
+
+
+def test_approximate_set_even_when_warning_is_ignored():
+    rule = _rule_yaml(LENIENT, "sel:\n    - needle", "sel")
+    backend = _backend(APP)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        backend.convert(_rules(rule), "lakewatch")
+    result = backend.last_report["rules"][0]["results"][0]
+    assert result["approximate"] is True
+    assert result["warnings"] == []
+
+
+def test_showwarning_is_restored():
+    before = warnings.showwarning
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _backend(SYSMON).convert(_rules(SYSMON_RULE), "lakewatch")
+        assert warnings.showwarning is before
+
+
+CORR_TEXT = SYSMON_RULE.replace("Report Test", "Base").replace("status: test", "name: base\nstatus: test") + """
+---
+title: Corr
+id: 5f1b9c8e-1111-4a2b-8c3d-000000000002
+status: test
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - Image
+    timespan: 5m
+    condition:
+        gte: 3
+"""
+
+
+def test_report_base_rule_of_correlation_is_skipped():
+    backend = _backend(SYSMON, collect_errors=True)
+    _convert_lw(backend, CORR_TEXT)
+    base = next(r for r in backend.last_report["rules"] if r["title"] == "Base")
+    assert base["status"] == "skipped"
+    assert base["reason"] == "referenced by a correlation rule"
+    assert base["results"][0]["status"] == "skipped"
+    assert backend.last_report["summary"]["skipped"] == 1
+
+
+def test_last_report_is_none_after_aborted_run():
+    backend = _backend(SYSMON)
+    _convert_lw(backend, SYSMON_RULE)
+    assert backend.last_report is not None
+    with pytest.raises(NotImplementedError):
+        _convert_lw(backend, CORR_TEXT)
+    assert backend.last_report is None
+
+
+def test_report_file_does_not_overwrite_rule_named_conversion_report(tmp_path):
+    rule = _rule_yaml(SYSMON_LS, "sel:\n    Image: x", title="Conversion Report")
+    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", ocsf=True,
+                                output_dir=str(tmp_path))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _convert_lw(backend, rule)
+    assert backend.last_report["rules"][0]["results"][0]["rule_names"] == ["conversion_report_2"]
+    assert (tmp_path / "conversion_report_2.yaml").exists()
+    assert yaml.safe_load((tmp_path / "conversion_report.yaml").read_text())["summary"]["rules"] == 1
+
+
+def test_direct_convert_rule_does_not_grow_report():
+    backend = _backend(SYSMON)
+    rules = _rules(_rule_yaml(SYSMON_LS, "sel:\n    Image: a", title="One")
+                   + "\n---\n" + _rule_yaml(SYSMON_LS, "sel:\n    Image: b", title="Two"
+                                            ).replace("000000000001", "000000000002")).rules
+    backend.convert_rule(rules[0], "lakewatch")
+    backend.convert_rule(rules[1], "lakewatch")
+    assert [r["title"] for r in backend._report._rules] == ["Two"]
