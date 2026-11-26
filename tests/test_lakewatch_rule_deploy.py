@@ -1,4 +1,4 @@
-"""Tests for lakewatch-deploy packaging and rule file loading."""
+"""Tests for lakewatch-rule-deploy packaging and rule file loading."""
 
 import copy
 import json
@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 import yaml
 
-from sigma.backends.databricks.lakewatch_deploy import (
+from sigma.backends.databricks.lakewatch_rule_deploy import (
     EXIT_API,
     EXIT_LOCAL,
     EXIT_OK,
@@ -35,7 +35,7 @@ from sigma.backends.databricks.lakewatch_deploy import (
     subset,
 )
 
-CONTENT_PACK_MSG = "content-pack documents can't be deployed with lakewatch-deploy; install the pack instead"
+CONTENT_PACK_MSG = "content-pack documents can't be deployed with lakewatch-rule-deploy; install the pack instead"
 
 
 def _rule(name: str, catalog: str = "c", schema: str = "s", sigma_id: str = "id-1", **extra: Any) -> Dict[str, Any]:
@@ -184,7 +184,7 @@ def test_module_imports_without_sdk():
         "            raise ModuleNotFoundError(name)\n"
         "        return None\n"
         "sys.meta_path.insert(0, Block())\n"
-        "import sigma.backends.databricks.lakewatch_deploy\n"
+        "import sigma.backends.databricks.lakewatch_rule_deploy\n"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
@@ -295,7 +295,7 @@ def test_no_sigma_id_never_owned():
     assert plan_rule(want, have, True).action == "noop"
 
 
-MISSING_EXTRA_MSG = 'lakewatch-deploy needs the deploy extra: pip install "pySigma-backend-databricks[deploy]"'
+MISSING_EXTRA_MSG = 'lakewatch-rule-deploy needs the deploy extra: pip install "pySigma-backend-databricks[deploy]"'
 
 
 class FakeApi:
@@ -682,7 +682,7 @@ def test_main_missing_sdk(tmp_path, capsys):
     path = _write(tmp_path / "r.yaml", _rule("r"))
 
     def factory(profile):
-        raise LocalError("lakewatch-deploy needs the deploy extra")
+        raise LocalError("lakewatch-rule-deploy needs the deploy extra")
 
     assert main([path], client_factory=factory) == EXIT_LOCAL
     captured = capsys.readouterr()

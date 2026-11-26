@@ -19,7 +19,7 @@ dependencies = [
 deploy = ["databricks-sdk>=0.171"]
 
 [project.scripts]
-lakewatch-deploy = "sigma.backends.databricks.lakewatch_deploy:main"
+lakewatch-rule-deploy = "sigma.backends.databricks.lakewatch_rule_deploy:main"
 
 [project.urls]
 Homepage = "https://github.com/alexott/pySigma-backend-databricks"

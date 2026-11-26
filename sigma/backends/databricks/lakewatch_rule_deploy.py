@@ -1,4 +1,4 @@
-"""lakewatch-deploy: upsert converted Lakewatch rule YAML files into a Databricks workspace.
+"""lakewatch-rule-deploy: upsert converted Lakewatch rule YAML files into a Databricks workspace.
 
 The Databricks SDK is an optional dependency (the ``deploy`` extra) and is never imported at module level.
 This part of the module loads the rule files, plans the upsert of each rule and talks to the Lakewatch REST API.
@@ -18,7 +18,7 @@ EXIT_OK, EXIT_LOCAL, EXIT_REJECTED, EXIT_API = 0, 2, 3, 4
 
 SKIPPED_NAMES = frozenset({"conversion_report.yaml", "revisions.yaml", "appIndex.rules.yaml"})
 
-CONTENT_PACK_MESSAGE = "content-pack documents can't be deployed with lakewatch-deploy; install the pack instead"
+CONTENT_PACK_MESSAGE = "content-pack documents can't be deployed with lakewatch-rule-deploy; install the pack instead"
 
 IDENTITY_KEYS = ("catalog_name", "schema_name", "rule_name")
 
@@ -191,7 +191,7 @@ def plan_rule(want: Dict[str, Any], have: Optional[Dict[str, Any]], force: bool)
     return Plan(action, name, changed, {k: adjusted[k] for k in changed}, rule_id, etag, reason, adjusted)
 
 
-MISSING_EXTRA_MESSAGE = 'lakewatch-deploy needs the deploy extra: pip install "pySigma-backend-databricks[deploy]"'
+MISSING_EXTRA_MESSAGE = 'lakewatch-rule-deploy needs the deploy extra: pip install "pySigma-backend-databricks[deploy]"'
 
 BASE = "/api/2.0/lakewatch"
 
@@ -438,7 +438,7 @@ def format_json(outcomes: Sequence[Outcome], mode: str) -> str:
 def build_parser() -> argparse.ArgumentParser:
     """Return the command line parser."""
     parser = argparse.ArgumentParser(
-        prog="lakewatch-deploy",
+        prog="lakewatch-rule-deploy",
         description="Create or update converted Lakewatch rules in a Databricks workspace.",
     )
     parser.add_argument("paths", nargs="+", metavar="PATH", help="rule file(s) or director(ies) of *.yaml rule files")
