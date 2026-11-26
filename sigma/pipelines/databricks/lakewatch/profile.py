@@ -23,9 +23,9 @@ from sigma.exceptions import SigmaConfigurationError
 from sigma.modifiers import modifier_mapping
 from sigma.rule import SigmaLogSource
 
-from sigma.backends.databricks.field_paths import UnknownFieldError, resolve_schema_path
+from sigma.backends.databricks.field_paths import UnknownFieldError, join_field_name, resolve_schema_path
 from sigma.backends.databricks.schema_catalog import ParserSchema
-from sigma.pipelines.databricks.lakewatch.transforms import Transform, parse_transform
+from sigma.pipelines.databricks.lakewatch.transforms import JoinTransform, Transform, parse_transform
 
 _TOP_KEYS = {
     "profile",
@@ -527,6 +527,9 @@ def _validate_mappings(profile: Profile, schema: ParserSchema, mappings: Dict[st
         for t in mapping.transforms:
             for path in t.required_paths():
                 _resolve(profile, schema, path, f"field '{name}' transform {t.kind} path")
+            if isinstance(t, JoinTransform):
+                # Resolving the join name checks that both parts are scalar fields.
+                _resolve(profile, schema, join_field_name(t.sep, t.parts), f"field '{name}' transform join")
         for sel, conditions in (mapping.select or {}).items():
             _validate_conditions(profile, schema, conditions, f"field '{name}' select_condition '{sel}': ")
         for target in mapping.targets:

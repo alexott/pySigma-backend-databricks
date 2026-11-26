@@ -1,8 +1,10 @@
 """Tests for the Lakewatch profile value transforms."""
 
+import json
 import warnings
 
 import pytest
+from sigma.collection import SigmaCollection
 from sigma.types import (
     CompareOperators,
     SigmaBool,
@@ -15,7 +17,10 @@ from sigma.types import (
     SpecialChars,
 )
 
+from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.field_paths import first_set_field_name, join_field_name
+from sigma.backends.databricks.schema_catalog import SchemaCatalog
+from sigma.pipelines.databricks.lakewatch.profile import ProfileError, load_profiles, validate_profile
 from sigma.pipelines.databricks.lakewatch.transforms import (
     TransformFailure,
     apply_chain,
@@ -449,3 +454,94 @@ def test_path_prefix_keep_original_unknown_param():
         parse_transform(
             {"path_prefix": {"rewrite": [{"from": "C:", "to": "D:"}], "keep_original": True, "nope": 1}}, {}
         )
+
+
+# --- join transform --------------------------------------------------------------------------
+
+
+def _join_profile(tmp_path, join):
+    (tmp_path / "j.yml").write_text(
+        "profile: joinp\nversion: 1\nparser: akamai_waf\nfields:\n"
+        f"  u: {{transform: {{join: {join}}}}}\n"
+        "logsources:\n  - match: {category: webserver}\n"
+    )
+    return str(tmp_path)
+
+
+_JOIN = "{parts: [httpMessage.path, httpMessage.query], sep: '?'}"
+
+
+def _join_sql(tmp_path, detection, join=_JOIN):
+    rule = SigmaCollection.from_yaml(
+        "title: T\nstatus: test\nlogsource:\n    category: webserver\n"
+        f"detection:\n    sel:\n        {detection}\n    condition: sel\n"
+    ).rules[0]
+    backend = DatabricksBackend(
+        parsers="joinp",
+        table_name="t",
+        catalog_name="c",
+        schema_name="s",
+        lakewatch_profiles_dir=_join_profile(tmp_path, join),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
+
+
+JOIN_EXPR = "concat_ws('?', nullif(httpMessage.path, ''), nullif(httpMessage.query, ''))"
+
+
+def test_join_transform_apply():
+    spec = {"join": {"parts": ["a", "b"], "sep": "?"}}
+    targets, value = one(spec, "/a?b=1")
+    assert targets == (join_field_name("?", ["a", "b"]),)
+    assert str(value) == "/a?b=1"
+    assert parse_transform(spec, {})[0].required_paths() == ("a", "b")
+
+
+def test_join_eq(tmp_path):
+    sql = _join_sql(tmp_path, "u: '/a\\?b=1'")
+    assert sql == f"SELECT *\nFROM t\nWHERE IN_TIMERANGE(time)\n  AND (lower({JOIN_EXPR}) = lower('/a?b=1'))"
+
+
+def test_join_modifiers(tmp_path):
+    for mod in ("contains", "endswith", "startswith", "re"):
+        assert JOIN_EXPR in _join_sql(tmp_path, f"u|{mod}: 'a'"), mod
+
+
+def test_join_empty_part(tmp_path):
+    sql = _join_sql(tmp_path, "u: 'x'")
+    assert "nullif(httpMessage.path, '')" in sql
+    assert "nullif(httpMessage.query, '')" in sql
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"parts": ["a"], "sep": "?"},
+        {"parts": ["a", "b", "c"], "sep": "?"},
+        {"parts": "ab", "sep": "?"},
+    ],
+)
+def test_join_validation_parts(params):
+    with pytest.raises(ValueError, match="parts"):
+        parse_transform({"join": params}, {})
+
+
+@pytest.mark.parametrize(
+    "params", [{"parts": ["a", "b"]}, {"parts": ["a", "b"], "sep": ""}, {"parts": ["a", "b"], "sep": 3}]
+)
+def test_join_validation_sep(params):
+    with pytest.raises(ValueError, match="sep"):
+        parse_transform({"join": params}, {})
+
+
+def test_join_validation_non_scalar_at_load(tmp_path):
+    d = _join_profile(tmp_path, "{parts: [httpMessage, httpMessage.query], sep: '?'}")
+    profile = load_profiles([d])["joinp"]
+    schema = SchemaCatalog.load(()).get("akamai_waf")
+    with pytest.raises(ProfileError, match="join parts must be scalar fields"):
+        validate_profile(profile, schema)
+    # The backend runs this validation before converting any rule.
+    with pytest.raises(ProfileError, match="join parts must be scalar fields"):
+        _join_sql(tmp_path, "u: 'x'", join="{parts: [httpMessage, httpMessage.query], sep: '?'}")

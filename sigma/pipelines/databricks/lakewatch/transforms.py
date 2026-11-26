@@ -557,6 +557,41 @@ class DomainUserTransform(Transform):
         return [((join_field_name("\\", [self.domain, self.user]),), _string(value))]
 
 
+class JoinTransform(Transform):
+    """Match values against two scalar fields joined with a separator, skipping empty parts."""
+
+    kind = "join"
+    supplies_targets = True
+
+    def __init__(self, parts: Sequence[str], sep: str):
+        """Store the validated parameters."""
+        self.parts = tuple(parts)
+        self.sep = sep
+
+    @classmethod
+    def from_params(cls, params: Any) -> "JoinTransform":
+        """Build the transform from validated profile parameters."""
+        params = _require_params(cls.kind, params)
+        _require_keys(cls.kind, params, ["parts", "sep"])
+        parts = params["parts"]
+        if not isinstance(parts, list) or len(parts) != 2:
+            raise ValueError(f"transform {cls.kind}: parts must be a list of exactly 2 field paths")
+        sep = params["sep"]
+        if not isinstance(sep, str) or not sep:
+            raise ValueError(f"transform {cls.kind}: sep must be a non-empty string")
+        return cls([_require_path(cls.kind, "parts", p) for p in parts], sep)
+
+    def required_paths(self):
+        """Return the schema paths named by the parameters."""
+        return self.parts
+
+    def apply(self, value, targets, *, field, all_values):
+        """Apply the transform to one value."""
+        if not isinstance(value, SigmaRegularExpression):
+            value = _string(value)
+        return [((join_field_name(self.sep, list(self.parts)),), value)]
+
+
 class FirstSetTransform(Transform):
     """Match the first of several fields (or domain/user joins) that is set."""
 
@@ -756,6 +791,7 @@ KINDS: Dict[str, Type[Transform]] = {
         RegistryPathTransform,
         HashesTransform,
         DomainUserTransform,
+        JoinTransform,
         FirstSetTransform,
         ToHexTransform,
         RegexReplaceTransform,
