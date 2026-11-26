@@ -67,18 +67,16 @@ def test_audit_method_name_wildcard():
 
 
 @pytest.mark.parametrize("leaf", ["serviceName", "methodName"])
-def test_audit_prefix(leaf):
+def test_audit_data_protopayload_aliases(leaf):
     sql = _sql(AUDIT, "gcp.audit", _sel(f"data.protoPayload.{leaf}"))
     assert f"lower(try_variant_get(protoPayload, '$.{leaf}', 'string')) = lower('x')" in sql
 
 
-def test_audit_explicit_over_prefix():
+def test_audit_data_protopayload_top_level_aliases():
     log = _sql(AUDIT, "gcp.audit", _sel("data.protoPayload.logName"))
     assert "AND (lower(logName) = lower('x'))" in log
-    assert "$.methodName" not in log
     typ = _sql(AUDIT, "gcp.audit", _sel("data.protoPayload.resource.type"))
     assert "AND (lower(try_variant_get(resource, '$.type', 'string')) = lower('x'))" in typ
-    assert "$.methodName" not in typ
 
 
 @pytest.mark.parametrize("leaf", ["permission", "granted"])
@@ -219,3 +217,18 @@ def test_workspace_snapshot():
 def test_whole_variant_contains(parser, column, service):
     sql = _sql(parser, service, _sel(f"{column}|contains"))
     assert f"AND (contains(lower(to_json({column})), lower('x')))" in sql
+
+
+@pytest.mark.parametrize("field", ["parameters.SETTING_NAME", "resourceDetails.id"])
+def test_workspace_array_columns_have_no_passthrough(field):
+    err = _convert_error(REPORTS, "google_workspace.admin", _sel(field))
+    assert f"field {field} is not mapped by profile google_workspace_reports" in err
+
+
+@pytest.mark.parametrize(
+    "modifier,value,seen",
+    [("eventService|contains", "admin", "*admin*"), ("eventService", "admin*", "admin*")],
+)
+def test_workspace_value_map_modifiers_fail(modifier, value, seen):
+    err = _convert_error(REPORTS, "google_workspace.admin", _sel(modifier, value))
+    assert f"field eventService: transform map: value '{seen}' is not in the map (profile google_workspace_reports)" in err

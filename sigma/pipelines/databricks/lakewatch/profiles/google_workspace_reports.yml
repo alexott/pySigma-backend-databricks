@@ -11,6 +11,11 @@
 # - setting_name and new_value are unmapped on purpose: they are the SETTING_NAME and NEW_VALUE
 #   entries of the parameters array, which needs named-entry array matching the backend lacks.
 #   Rules using them fail with "not mapped".
+# - parameters and resourceDetails are arrays of objects, so they map only to the whole column;
+#   |contains matches the JSON text approximately and equality fails. They have no .* passthrough:
+#   parameters.SETTING_NAME would render try_variant_get(parameters, '$.SETTING_NAME', ...), which
+#   silently never matches an array.
+# - userDeviceInfo.* is a passthrough on the assumption that userDeviceInfo is a single object.
 # - Workspace audit logs shared to Cloud Logging also land in gcp_audit_log, but there the event is
 #   an array inside a VARIANT, so google_workspace.* routes only to this profile.
 profile: google_workspace_reports
@@ -40,9 +45,7 @@ fields:
   networkInfo.subdivisionCode: networkInfo.subdivisionCode
   ownerDomain: ownerDomain
   parameters: parameters
-  parameters.*: parameters.*
   resourceDetails: resourceDetails
-  resourceDetails.*: resourceDetails.*
   resourceIds: resourceIds
   status: status
   type: type
