@@ -1,0 +1,142 @@
+# Built-in Lakewatch profile for the microsoft365_audit_exchange parser (Office 365 audit records of
+# the Exchange workload).
+# Field-name sources: the Office 365 Management Activity API schema and the SigmaHQ corpus for
+# aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - Parameters is an array of {Name, Value}. Sigma rules write Parameters|contains: DeleteMessage
+#   for a parameter *name*, so Parameters maps to both Parameters.Name and Parameters.Value
+#   (ORed, any element).
+# - eventSource, eventName and status are the ECS names that rules for service: exchange use for
+#   Workload, Operation and ResultStatus. status: success matches the ResultStatus spellings
+#   True, Succeeded and Success (ORed, case-insensitive).
+# - OperationProperties is unmapped on purpose: it is not in this schema.
+profile: microsoft365_audit_exchange
+version: 1
+parser: microsoft365_audit_exchange
+entity: UserId
+fields:
+  AffectedItems.Attachments: AffectedItems.Attachments
+  AffectedItems.Id: AffectedItems.Id
+  AffectedItems.ParentFolder.FolderItems.ClientRequestId: AffectedItems.ParentFolder.FolderItems.ClientRequestId
+  AffectedItems.ParentFolder.FolderItems.CreationTime: AffectedItems.ParentFolder.FolderItems.CreationTime
+  AffectedItems.ParentFolder.FolderItems.Id: AffectedItems.ParentFolder.FolderItems.Id
+  AffectedItems.ParentFolder.FolderItems.ImmutableId: AffectedItems.ParentFolder.FolderItems.ImmutableId
+  AffectedItems.ParentFolder.FolderItems.InternetMessageId: AffectedItems.ParentFolder.FolderItems.InternetMessageId
+  AffectedItems.ParentFolder.FolderItems.Sensitivity: AffectedItems.ParentFolder.FolderItems.Sensitivity
+  AffectedItems.ParentFolder.FolderItems.SizeInBytes: AffectedItems.ParentFolder.FolderItems.SizeInBytes
+  AffectedItems.ParentFolder.FolderItems.Subject: AffectedItems.ParentFolder.FolderItems.Subject
+  AffectedItems.ParentFolder.FolderItems.Teams: AffectedItems.ParentFolder.FolderItems.Teams
+  AffectedItems.ParentFolder.Id: AffectedItems.ParentFolder.Id
+  AffectedItems.ParentFolder.Path: AffectedItems.ParentFolder.Path
+  AffectedItems.Subject: AffectedItems.Subject
+  AppAccessContext.AADSessionId: AppAccessContext.AADSessionId
+  AppAccessContext.APIId: AppAccessContext.APIId
+  AppAccessContext.ClientAppId: AppAccessContext.ClientAppId
+  AppAccessContext.ClientAppName: AppAccessContext.ClientAppName
+  AppAccessContext.CorrelationId: AppAccessContext.CorrelationId
+  ClientIP: ClientIP
+  ClientIPAddress: ClientIPAddress
+  ClientInfoString: ClientInfoString
+  ClientMachineName: ClientMachineName
+  ClientProcessName: ClientProcessName
+  ClientVersion: ClientVersion
+  CreationTime: CreationTime
+  CrossMailboxOperations: CrossMailboxOperations
+  DestFolder.FolderItems.ClientRequestId: DestFolder.FolderItems.ClientRequestId
+  DestFolder.FolderItems.CreationTime: DestFolder.FolderItems.CreationTime
+  DestFolder.FolderItems.Id: DestFolder.FolderItems.Id
+  DestFolder.FolderItems.ImmutableId: DestFolder.FolderItems.ImmutableId
+  DestFolder.FolderItems.InternetMessageId: DestFolder.FolderItems.InternetMessageId
+  DestFolder.FolderItems.Sensitivity: DestFolder.FolderItems.Sensitivity
+  DestFolder.FolderItems.SizeInBytes: DestFolder.FolderItems.SizeInBytes
+  DestFolder.FolderItems.Subject: DestFolder.FolderItems.Subject
+  DestFolder.FolderItems.Teams: DestFolder.FolderItems.Teams
+  DestFolder.Id: DestFolder.Id
+  DestFolder.Path: DestFolder.Path
+  DestMailboxId: DestMailboxId
+  DestMailboxOwnerMasterAccountSid: DestMailboxOwnerMasterAccountSid
+  DestMailboxOwnerSid: DestMailboxOwnerSid
+  DestMailboxOwnerUPN: DestMailboxOwnerUPN
+  ExternalAccess: ExternalAccess
+  Folder.FolderItems.ClientRequestId: Folder.FolderItems.ClientRequestId
+  Folder.FolderItems.CreationTime: Folder.FolderItems.CreationTime
+  Folder.FolderItems.Id: Folder.FolderItems.Id
+  Folder.FolderItems.ImmutableId: Folder.FolderItems.ImmutableId
+  Folder.FolderItems.InternetMessageId: Folder.FolderItems.InternetMessageId
+  Folder.FolderItems.Sensitivity: Folder.FolderItems.Sensitivity
+  Folder.FolderItems.SizeInBytes: Folder.FolderItems.SizeInBytes
+  Folder.FolderItems.Subject: Folder.FolderItems.Subject
+  Folder.FolderItems.Teams: Folder.FolderItems.Teams
+  Folder.Id: Folder.Id
+  Folder.Path: Folder.Path
+  Folders.FolderItems.ClientRequestId: Folders.FolderItems.ClientRequestId
+  Folders.FolderItems.CreationTime: Folders.FolderItems.CreationTime
+  Folders.FolderItems.Id: Folders.FolderItems.Id
+  Folders.FolderItems.ImmutableId: Folders.FolderItems.ImmutableId
+  Folders.FolderItems.InternetMessageId: Folders.FolderItems.InternetMessageId
+  Folders.FolderItems.Sensitivity: Folders.FolderItems.Sensitivity
+  Folders.FolderItems.SizeInBytes: Folders.FolderItems.SizeInBytes
+  Folders.FolderItems.Subject: Folders.FolderItems.Subject
+  Folders.FolderItems.Teams: Folders.FolderItems.Teams
+  Folders.Id: Folders.Id
+  Folders.Path: Folders.Path
+  Id: Id
+  InternalLogonType: InternalLogonType
+  Item.Attachments: Item.Attachments
+  Item.Id: Item.Id
+  Item.ParentFolder.FolderItems.ClientRequestId: Item.ParentFolder.FolderItems.ClientRequestId
+  Item.ParentFolder.FolderItems.CreationTime: Item.ParentFolder.FolderItems.CreationTime
+  Item.ParentFolder.FolderItems.Id: Item.ParentFolder.FolderItems.Id
+  Item.ParentFolder.FolderItems.ImmutableId: Item.ParentFolder.FolderItems.ImmutableId
+  Item.ParentFolder.FolderItems.InternetMessageId: Item.ParentFolder.FolderItems.InternetMessageId
+  Item.ParentFolder.FolderItems.Sensitivity: Item.ParentFolder.FolderItems.Sensitivity
+  Item.ParentFolder.FolderItems.SizeInBytes: Item.ParentFolder.FolderItems.SizeInBytes
+  Item.ParentFolder.FolderItems.Subject: Item.ParentFolder.FolderItems.Subject
+  Item.ParentFolder.FolderItems.Teams: Item.ParentFolder.FolderItems.Teams
+  Item.ParentFolder.Id: Item.ParentFolder.Id
+  Item.ParentFolder.Path: Item.ParentFolder.Path
+  Item.Subject: Item.Subject
+  LogonType: LogonType
+  LogonUserDisplayName: LogonUserDisplayName
+  LogonUserSid: LogonUserSid
+  MailboxGuid: MailboxGuid
+  MailboxOwnerMasterAccountSid: MailboxOwnerMasterAccountSid
+  MailboxOwnerSid: MailboxOwnerSid
+  MailboxOwnerUPN: MailboxOwnerUPN
+  ModifiedObjectResolvedName: ModifiedObjectResolvedName
+  ModifiedProperties: ModifiedProperties
+  ObjectId: ObjectId
+  Operation: Operation
+  OrganizationId: OrganizationId
+  OrganizationName: OrganizationName
+  OriginatingServer: OriginatingServer
+  Parameters.Name: Parameters.Name
+  Parameters.Value: Parameters.Value
+  RecordType: RecordType
+  ResultStatus: ResultStatus
+  Scope: Scope
+  SendAsUserMailboxGuid: SendAsUserMailboxGuid
+  SendAsUserSmtp: SendAsUserSmtp
+  SendOnBehalfOfUserMailboxGuid: SendOnBehalfOfUserMailboxGuid
+  SendOnBehalfOfUserSmtp: SendOnBehalfOfUserSmtp
+  UserId: UserId
+  UserKey: UserKey
+  UserType: UserType
+  Version: Version
+  Workload: Workload
+  lw_id: lw_id
+  time: time
+  Parameters: [Parameters.Name, Parameters.Value]
+  eventSource: Workload
+  eventName: Operation
+  status:
+    field: ResultStatus
+    transform:
+      map:
+        values:
+          success: ['True', Succeeded, Success]
+logsources:
+  - match: {product: m365, service: audit}
+  - match: {product: m365, service: exchange}

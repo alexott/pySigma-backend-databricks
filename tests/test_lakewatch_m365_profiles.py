@@ -52,6 +52,7 @@ def _sel(field, value="x"):
 
 GENERAL = "microsoft365_audit_general"
 AAD = "microsoft365_audit_azure_active_directory"
+EXCHANGE = "microsoft365_audit_exchange"
 
 
 # --- microsoft365_audit_general -------------------------------------------------------------
@@ -78,6 +79,21 @@ def test_general_directionality():
 
 def test_general_entity():
     assert "UserId AS sigma_entity" in _sql(GENERAL, "audit", _sel("Operation"))
+
+
+def test_general_snapshot():
+    detection = (
+        "    sel:\n        Workload: ThreatIntelligence\n        Operation: TIMailData\n"
+        "        Directionality: Inbound\n    condition: sel"
+    )
+    assert _sql(GENERAL, "audit", detection) == (
+        "SELECT *, UserId AS sigma_entity\n"
+        "FROM t\n"
+        "WHERE IN_TIMERANGE(time)\n"
+        "  AND (lower(Workload) = lower('ThreatIntelligence') "
+        "AND lower(Operation) = lower('TIMailData') "
+        "AND lower(try_variant_get(payload, '$.Directionality', 'string')) = lower('Inbound'))"
+    )
 
 
 # --- microsoft365_audit_azure_active_directory ----------------------------------------------
@@ -110,21 +126,75 @@ def test_aad_snapshot():
     )
 
 
+# --- microsoft365_audit_exchange ------------------------------------------------------------------
+
+
+def test_exchange_parameters_name_or_value():
+    sql = _sql(EXCHANGE, "audit", "    sel:\n        Parameters|contains: DeleteMessage\n    condition: sel")
+    name = "exists(Parameters, x0 -> contains(lower(x0.Name), lower('DeleteMessage')))"
+    value = "exists(Parameters, x0 -> contains(lower(x0.Value), lower('DeleteMessage')))"
+    assert f"({name} OR {value})" in sql
+
+
+def test_exchange_status_value_map():
+    sql = _sql(EXCHANGE, "exchange", _sel("status", "success"))
+    for v in ("True", "Succeeded", "Success"):
+        assert f"lower(ResultStatus) = lower('{v}')" in sql
+    assert " OR " in sql
+
+
+def test_exchange_ecs_aliases():
+    assert "lower(Workload) = lower('x')" in _sql(EXCHANGE, "exchange", _sel("eventSource"))
+    assert "lower(Operation) = lower('x')" in _sql(EXCHANGE, "exchange", _sel("eventName"))
+
+
+def test_exchange_service_routes_to_exchange_only():
+    entries = DatabricksBackend().discover_parsers(SigmaCollection([_rule("exchange", _sel("eventName"))]))
+    text = json.dumps(entries, default=str)
+    assert EXCHANGE in text
+    assert GENERAL not in text
+    assert AAD not in text
+
+
+def test_exchange_entity():
+    assert "UserId AS sigma_entity" in _sql(EXCHANGE, "exchange", _sel("eventName"))
+
+
+def test_exchange_snapshot():
+    detection = (
+        "    sel:\n        Workload: Exchange\n        Operation: New-InboxRule\n"
+        "        Parameters|contains: DeleteMessage\n    condition: sel"
+    )
+    assert _sql(EXCHANGE, "audit", detection) == (
+        "SELECT *, UserId AS sigma_entity\n"
+        "FROM t\n"
+        "WHERE IN_TIMERANGE(time)\n"
+        "  AND (lower(Workload) = lower('Exchange') "
+        "AND lower(Operation) = lower('New-InboxRule') "
+        "AND (exists(Parameters, x0 -> contains(lower(x0.Name), lower('DeleteMessage'))) "
+        "OR exists(Parameters, x0 -> contains(lower(x0.Value), lower('DeleteMessage')))))"
+    )
+
+
 # --- shared -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("parser", [GENERAL, AAD])
+@pytest.mark.parametrize("parser", [GENERAL, AAD, EXCHANGE])
 def test_operation_properties_unmapped(parser):
     msg = _convert_error(parser, "audit", "    sel:\n        OperationProperties|contains: x\n    condition: sel")
     assert "not mapped" in msg
 
 
-@pytest.mark.parametrize("parser", [GENERAL, AAD])
+@pytest.mark.parametrize("parser", [GENERAL, AAD, EXCHANGE])
 def test_audit_operation_rule_converts_everywhere(parser):
     assert "lower(Operation) = lower('x')" in _sql(parser, "audit", _sel("Operation"))
-    backend = DatabricksBackend()
-    entries = backend.discover_parsers(SigmaCollection([_rule("audit", _sel("Operation"))]))
-    assert entries
+
+
+def test_audit_operation_rule_discovery_lists_three_profiles():
+    entries = DatabricksBackend().discover_parsers(SigmaCollection([_rule("audit", _sel("Operation"))]))
+    text = json.dumps(entries, default=str)
+    for parser in (GENERAL, AAD, EXCHANGE):
+        assert parser in text
 
 
 def test_threat_management_has_no_profile():
