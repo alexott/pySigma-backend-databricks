@@ -8,15 +8,17 @@
 #   equality and startswith on a path would silently never match; the modifiers allowlist (contains,
 #   endswith, re, plus all with contains) makes every other modifier, plain equality and a
 #   wildcard-only equality such as '*foo*' included, fail the rule. endswith matches a URL that ends
-#   with the value; a trailing query string makes it miss.
+#   with the value; a trailing query string makes it miss. A |re anchored at the start (^/admin, or ^https?:// here, since url has no scheme) converts
+#   but never matches on a whole URL.
 # - c-useragent, cs-method, cs-host and dst_ip map to useragent, requestmethod, hostname and serverip.
 #   Only spellings that SigmaHQ proxy rules use get aliases; there are no referrer or src_ip aliases
 #   (refererURL and ClientIP work under their own names).
 # - sc-status maps to status, a STRING column, so a number is compared as a string.
 # - c-uri-query, cs-uri-stem, c-uri-extension and cs-cookie are unmapped: the log has only the whole
 #   URL and no cookie.
-# - event is a VARIANT column with no declared children. It holds the raw event and is not known to be
-#   free of arrays, so it gets a bare line only and no prefix line.
+# - event is a VARIANT column with no declared children. It holds the vendor event record (contents
+#   unverified), is matched only as a whole value with |contains, and is not known to be free of
+#   arrays, so it gets a bare line only and no prefix line.
 profile: zscaler_zia_web_log
 version: 1
 parser: zscaler_zia_web_log

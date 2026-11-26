@@ -200,16 +200,12 @@ def test_entities():
 
 
 def test_routing():
-    web = json.dumps(
-        DatabricksBackend().discover_parsers(SigmaCollection([_rule("webserver", _sel("cs-method"))])), default=str
-    )
-    assert all(p in web for p in (CLOUDFLARE, GCPLB, AKAMAI, AWSWAF))
-    proxy = json.dumps(
-        DatabricksBackend().discover_parsers(SigmaCollection([_rule("proxy", _sel("cs-method"))])), default=str
-    )
-    assert not any(p in proxy for p in (CLOUDFLARE, GCPLB, AKAMAI, AWSWAF))
-    assert ZSCALER in proxy and UMBRELLA in proxy
-    assert not any(p in web for p in (ZSCALER, UMBRELLA))
+    def convertible(category):
+        rules = DatabricksBackend().discover_parsers(SigmaCollection([_rule(category, _sel("cs-method"))]))["rules"]
+        return rules[0]["convertible"]
+
+    assert convertible("webserver") == sorted([CLOUDFLARE, GCPLB, AKAMAI, AWSWAF])
+    assert convertible("proxy") == sorted([ZSCALER, UMBRELLA])
 
 
 # --- akamai_waf and aws_waf_web_acl (split path and query: U1) --------------------------------
@@ -299,6 +295,15 @@ def test_u1_does_not_reject(parser, value, mod):
 @pytest.mark.parametrize("field", ["labels.name", "requestHeadersInserted.name"])
 def test_awswaf_array_variant_members_unmapped(field):
     assert f"is not mapped by profile {AWSWAF}" in _convert_error(AWSWAF, "webserver", _sel(field))
+
+
+def test_awswaf_labels_whole_value():
+    ok = _sql(AWSWAF, "webserver", "    sel:\n        labels|contains: x\n    condition: sel")
+    assert "AND (contains(lower(to_json(labels)), lower('x')))" in ok
+    err = _convert_error(AWSWAF, "webserver", _sel("labels"))
+    assert err == (
+        f"comparison against the whole VARIANT column labels supports only contains (profile {AWSWAF}) (rule 'T')"
+    )
 
 
 @pytest.mark.parametrize("field", ["cs-user-agent", "cs-referer", "cs-host"])

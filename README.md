@@ -743,21 +743,27 @@ The web profiles cover the `category: webserver` rules (Cloudflare, GCP load bal
 and the `category: proxy` rules (Zscaler ZIA and Cisco Umbrella). A rule converts per profile, so use
 `sigma convert -s` (collect errors) to get a query for every profile that has all the rule's fields; without it, the
 first profile that lacks a field aborts the rule. Keyword searches (a detection with no field) fail on every web
-profile, because there is no raw event to search. The mappings follow the vendors' log field references and
+profile, because no raw event is configured to search. The mappings follow the vendors' log field references and
 haven't been checked against live data.
 
 - **URI semantics.** `cs-uri-query` (webserver) and `c-uri`/`cs-uri` (proxy) hold the whole URL or URI in SigmaHQ
   rules. Cloudflare maps it to `ClientRequestURI` (path and query), so it behaves as on an access log. GCP maps it to
   `httpRequest.requestUrl` (scheme, host, path and query), Zscaler to `url` (host, path and query, no scheme) and
   Umbrella to `url` (the full URL).
-- **U2, whole-URL fields.** On the GCP, Zscaler and Umbrella whole-URL fields, only `contains`, `endswith`, `re` and
-  `contains|all` are allowed. Plain equality, `startswith` and a wildcard-only equality such as `'*foo*'` fail the
-  rule, because they would silently never match a URL that starts with a scheme or host. `endswith` misses a URL
-  with a trailing query string.
+- **U2, whole-URL fields.** On the GCP, Zscaler and Umbrella whole-URL fields, the allowlist is the modifiers
+  `contains`, `endswith`, `re` and `all`. Plain equality, `startswith` and a wildcard-only equality such as `'*foo*'`
+  fail the rule, because they would silently never match a URL that starts with a scheme or host. `endswith` misses a
+  URL with a trailing query string. `all` is allowed in combination with the listed modifiers (`contains|all`,
+  `endswith|all`), but `|all` on its own (`c-uri|all: ['/a', '/b']`) also converts and still renders an AND of plain
+  equalities on the whole URL. This is a known gap; the backend follow-up is to assume `eq` when no match modifier
+  is present. A `|re` anchored at the start (`^/admin`, or `^https?://` on Zscaler, whose `url` has no scheme)
+  converts but never matches on a whole URL.
 - **U1, split path and query.** Akamai (`httpMessage.path`, `httpMessage.query`) and AWS WAF (`httpRequest.uri`,
   `httpRequest.args`) store the path and the query in separate columns, so `cs-uri-query` maps to both, ORed. A value
   with a literal `?` or a `?` wildcard fails the rule (a `reject` on the pattern `\?`), and `contains|all` may match
-  its values across the two parts. An exact `join` transform is a follow-up.
+  its values across the two parts. Other semantics: a plain `cs-uri-query: '/a'` gives
+  `path = '/a' OR query = '/a'`; `cs-uri-query: null` gives `path is null OR query is null`; and a `|re` value
+  containing `?` (a quantifier, or `(?i)`) is rejected by the `\?` pattern. An exact `join` transform is a follow-up.
 - **Unmapped fields.** A field that a log doesn't have fails the rule with `not mapped`: `cs-username` and
   `cs-content-type` on all four webserver profiles; `cs-uri-stem` and `cs-host` on GCP; `cs-user-agent` and `cs-referer` on
   Akamai (they exist only inside the raw `httpMessage.requestHeaders` string); `sc-status` on AWS WAF (it logs only
@@ -766,8 +772,8 @@ haven't been checked against live data.
 - **AWS WAF headers.** `cs-user-agent`, `cs-referer` and `cs-host` fail with `not supported`, because the request
   headers are an array inside the `httpRequest` VARIANT. `labels` and `requestHeadersInserted` are arrays too, so they
   map as whole columns and support only `|contains`; members such as `labels.name` aren't mapped.
-- **Zscaler.** `event` is a VARIANT that holds the raw event, so only the whole column is mapped and member access
-  isn't.
+- **Zscaler.** `event` is a VARIANT that holds the vendor event record. Its contents are unverified, so only the
+  whole column is mapped, member access isn't, and it is matched only as a whole value with `|contains`.
 - **Akamai caveats.** `httpMessage.query` is logged URL-encoded, so values with raw special characters may not
   match, and many SigmaHQ rules list both forms. Akamai logs only requests that triggered a security rule, so rules
   see a subset of the traffic. `httpMessage.status` is a STRING column.

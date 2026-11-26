@@ -10,7 +10,8 @@
 #   query), not only the query string. So plain equality and startswith on a path would silently never
 #   match; the modifiers allowlist (contains, endswith, re, plus all with contains) makes every other
 #   modifier, plain equality and a wildcard-only equality such as '*foo*' included, fail the rule.
-#   endswith matches a URL whose path ends with the value; a trailing query string makes it miss.
+#   endswith matches a URL whose path ends with the value; a trailing query string makes it miss. A |re
+#   anchored at the start (^/admin) converts but never matches on a whole URL.
 # - sc-status maps to httpRequest.status (BIGINT).
 # - cs-uri-stem and cs-host are unmapped: the log has only the whole URL, no separate path or host.
 #   cs-username and cs-content-type are unmapped: nothing equivalent is logged.
