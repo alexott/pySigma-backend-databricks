@@ -134,6 +134,7 @@ Generate [Lakewatch](https://www.databricks.com/product/lakewatch) detection rul
 Unity Catalog governed resource. By default, rules are converted against the tables of Lakewatch
 parsers (see [Lakewatch parsed tables](#lakewatch-parsed-tables)). Converting against OCSF gold
 tables is optional (see [OCSF (optional)](#ocsf-optional)).
+To deploy the converted rules, see [Deploying rules](#deploying-rules).
 
 ```bash
 sigma convert -s -t databricks -f lakewatch -O parsers=aws_cloudtrail \
@@ -825,6 +826,102 @@ fails with `no selected Lakewatch parser profile accepts <field> values [...] of
 **Unmapped fields.** `event_data: any` accepts any EventData name (each use raises a
 `UserWarning`); a list of names is strict. `unmapped_hint:` text is appended to the error of a
 field the profile does not map.
+
+## Deploying rules
+
+To deploy the converted workspace rules, use one of the options below. Content-pack output isn't
+deployed this way; install the pack instead.
+
+**UI.** Open Detection rules, pick the rule, then Edit rule, Edit as YAML, and Save changes. See
+[Edit a rule as YAML](https://docs.databricks.com/aws/en/lakewatch/detections/manage-detection-rules#edit-a-rule-as-yaml).
+`catalog_name`, `schema_name` and `rule_name` can't be changed after the rule is created.
+
+**One rule with the Databricks CLI** (Beta, CLI v1.27 or later). The CLI takes JSON, so convert the
+YAML file first:
+
+```bash
+python -c 'import json,sys,yaml; json.dump(yaml.safe_load(open(sys.argv[1])), sys.stdout)' rule.yaml > rule.json
+databricks lakewatch create-rule --json @rule.json --profile <profile>
+```
+
+**Many rules with `lakewatch-rule-deploy`.** The command creates or updates the workspace rules
+written by `sigma convert -t databricks -f lakewatch`. It deploys detection rules only, not parsers,
+data sources or content packs. Install it with the `deploy` extra:
+
+```bash
+pip install "pySigma-backend-databricks[deploy]"
+```
+
+```bash
+sigma convert -s -t databricks -f lakewatch -O parsers=aws_cloudtrail \
+  -O table_name=main.sec.aws_cloudtrail -O catalog_name=main -O schema_name=sec \
+  -O warehouse_id=1234567890abcdef -O output_dir=detections rules/
+lakewatch-rule-deploy --profile <profile> --dry-run detections/
+lakewatch-rule-deploy --profile <profile> detections/
+```
+
+`PATH` is a rule file, a multi-document YAML file, or a directory. A directory is read for its
+`*.yaml` files, not recursively; `conversion_report.yaml`, `revisions.yaml` and
+`appIndex.rules.yaml` are skipped.
+
+| Flag | Meaning |
+|------|---------|
+| `--profile PROFILE` | Databricks CLI profile. Default: the SDK's standard auth chain. |
+| `--dry-run` | Validate and print the planned changes with their bodies; write nothing. |
+| `--validate-only` | Validate the rules; write nothing. |
+| `--force` | Overwrite rules that were not made from this Sigma rule. |
+| `--warehouse-id ID` | Warehouse for the validateRule SQL dry run. Without it, the rule's `batch.warehouse_id` is used; with neither, validation is static only. |
+| `--catalog C` | Replace `catalog_name` in every rule. `batch.sql.default_catalog_name` follows if it equals the original catalog. |
+| `--schema S` | Replace `schema_name` in every rule. `batch.sql.default_schema_name` follows if it equals the original schema. |
+| `--json` | Print the result as JSON. |
+
+`--dry-run` and `--validate-only` are mutually exclusive.
+
+How it works:
+
+* Rules are identified by `(catalog_name, schema_name, rule_name)`. A rule is owned by the
+  converter when the server's `annotations.sigma_id` equals the file's. An owned rule is created if
+  missing, updated if it differs and left alone (`unchanged`) otherwise. Only changed top-level
+  fields are sent.
+* A rule that exists but isn't owned is a conflict and is left untouched. `--force` overwrites it.
+  A rule without `annotations.sigma_id` is never owned, so redeploying it is always a conflict
+  unless you pass `--force`.
+* `schedule.enabled` is kept on update. A rule you enabled in the UI stays enabled, and redeploying
+  never enables or disables a rule.
+* Nothing is ever deleted.
+* Every rule is checked with the server's validateRule before it's written. Pass `--warehouse-id`
+  to include the SQL dry run. Rules with errors are reported as `invalid` and skipped.
+* Creating or updating a rule starts a one-time run of it on the server. The output ends with a note
+  when anything was written.
+* Content-pack documents are rejected: `content-pack documents can't be deployed with
+  lakewatch-rule-deploy; install the pack instead`.
+
+Output is one line per rule, `<status> <catalog>.<schema>.<rule_name>`, with detail lines under it,
+then a summary:
+
+```
+updated main.sec.encoded_powershell
+  update_mask: batch,description
+unchanged main.sec.suspicious_login
+conflict main.sec.legacy_rule
+  exists and was not made from this Sigma rule (server sigma_id: none, file sigma_id: 3f1c...)
+created 0, updated 1, overwritten 0, unchanged 1, conflicts 1, invalid 0, errors 0
+```
+
+Statuses are `created`, `updated`, `overwritten`, `planned` (valid, but nothing was written),
+`unchanged`, `conflict`, `invalid` and `error`. Under `--dry-run` or `--validate-only` the summary
+starts with `dry run: would ` or `validate only: would `, for example `would create 1`. With
+`--json`, the output is `{"rules": [{"rule", "action", "status", "details"}], "summary": {...}}`;
+`--dry-run` adds the planned `body` to each rule.
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Everything is ok. |
+| 2 | Local error: bad file, content-pack document, missing identity keys, duplicate rule, missing `deploy` extra, or failed auth. Nothing is written. |
+| 3 | A conflict (without `--force`) or an invalid rule. |
+| 4 | An API error. |
+
+The highest applicable code wins.
 
 ## OCSF (optional)
 

@@ -24,6 +24,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- `lakewatch-rule-deploy` command (installed with the `deploy` extra: `pip install
+  "pySigma-backend-databricks[deploy]"`). It creates or updates the workspace rules written by
+  `-f lakewatch` in a Databricks workspace, with `--dry-run`, `--validate-only` and `--force`.
 - Lakewatch parsed-table mode: mapping profiles that convert Sigma rules to the output tables of
   Lakewatch parsers, selected with `-O parsers=...`. Related options:
   - `-O table_name` and `-O table_map` set the tables to read from;
