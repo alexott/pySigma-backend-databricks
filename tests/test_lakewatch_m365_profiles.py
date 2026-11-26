@@ -77,6 +77,11 @@ def test_general_directionality():
     assert pred in prefix
 
 
+def test_general_payload_contains():
+    sql = _sql(GENERAL, "audit", "    sel:\n        payload|contains: x\n    condition: sel")
+    assert "contains(lower(to_json(payload)), lower('x'))" in sql
+
+
 def test_general_entity():
     assert "UserId AS sigma_entity" in _sql(GENERAL, "audit", _sel("Operation"))
 
@@ -104,6 +109,11 @@ def test_aad_aliases():
     assert "lower(Operation) = lower('x')" in _sql(AAD, "audit", _sel("Operation"))
     sql = _sql(AAD, "audit", _sel("RequestType", "Cmsi:Cmsi"))
     assert "exists(ExtendedProperties, x0 -> lower(x0.Value) = lower('Cmsi:Cmsi'))" in sql
+
+
+def test_aad_modified_properties():
+    sql = _sql(AAD, "audit", "    sel:\n        ModifiedProperties|contains: x\n    condition: sel")
+    assert "exists(ModifiedProperties, x0 -> contains(lower(to_json(x0)), lower('x')))" in sql
 
 
 def test_aad_entity():
@@ -138,9 +148,23 @@ def test_exchange_parameters_name_or_value():
 
 def test_exchange_status_value_map():
     sql = _sql(EXCHANGE, "exchange", _sel("status", "success"))
-    for v in ("True", "Succeeded", "Success"):
-        assert f"lower(ResultStatus) = lower('{v}')" in sql
-    assert " OR " in sql
+    assert (
+        "(lower(ResultStatus) = lower('True') OR lower(ResultStatus) = lower('Succeeded') "
+        "OR lower(ResultStatus) = lower('Success'))"
+    ) in sql
+
+
+def test_exchange_status_failure_fails():
+    msg = _convert_error(EXCHANGE, "exchange", _sel("status", "failure"))
+    assert "not in the map" in msg
+    assert "value 'failure' is not in the map (profile microsoft365_audit_exchange)" in msg
+
+
+def test_exchange_result_status_has_no_value_map():
+    sql = _sql(EXCHANGE, "audit", _sel("ResultStatus", "True"))
+    assert "AND (lower(ResultStatus) = lower('True'))" in sql
+    assert "Succeeded" not in sql
+    assert " OR " not in sql
 
 
 def test_exchange_ecs_aliases():
@@ -182,7 +206,23 @@ def test_exchange_snapshot():
 @pytest.mark.parametrize("parser", [GENERAL, AAD, EXCHANGE])
 def test_operation_properties_unmapped(parser):
     msg = _convert_error(parser, "audit", "    sel:\n        OperationProperties|contains: x\n    condition: sel")
-    assert "not mapped" in msg
+    assert f"field OperationProperties is not mapped by profile {parser}" in msg
+
+
+@pytest.mark.parametrize(
+    "field, parser",
+    [
+        ("ApplicationId", GENERAL),
+        ("ApplicationId", EXCHANGE),
+        ("Directionality", AAD),
+        ("Directionality", EXCHANGE),
+        ("Parameters", GENERAL),
+        ("Parameters", AAD),
+    ],
+)
+def test_field_absent_on_other_parsers(field, parser):
+    msg = _convert_error(parser, "audit", _sel(field))
+    assert f"field {field} is not mapped by profile {parser}" in msg
 
 
 @pytest.mark.parametrize("parser", [GENERAL, AAD, EXCHANGE])

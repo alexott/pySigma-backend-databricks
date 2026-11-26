@@ -7,7 +7,8 @@
 # Alias notes:
 # - Parameters is an array of {Name, Value}. Sigma rules write Parameters|contains: DeleteMessage
 #   for a parameter *name*, so Parameters maps to both Parameters.Name and Parameters.Value
-#   (ORed, any element).
+#   (ORed, any element). Parameters|contains|all splits across Name and Value (standard field-list
+#   OR semantics).
 # - eventSource, eventName and status are the ECS names that rules for service: exchange use for
 #   Workload, Operation and ResultStatus. status: success matches the ResultStatus spellings
 #   True, Succeeded and Success (ORed, case-insensitive).
@@ -126,8 +127,6 @@ fields:
   UserType: UserType
   Version: Version
   Workload: Workload
-  lw_id: lw_id
-  time: time
   Parameters: [Parameters.Name, Parameters.Value]
   eventSource: Workload
   eventName: Operation

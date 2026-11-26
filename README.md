@@ -705,10 +705,12 @@ column and support only `|contains`, matched approximately against the JSON text
 them with any other comparison fail. `contains` searches the whole `properties` JSON, so it can
 also match text outside the named array.
 
-The Microsoft 365 profiles split the unified audit log by `Workload`. A `service: audit` rule converts
-for each parser that has all of its fields, and fails with "not mapped" for the others (for example,
-`ApplicationId` and `RequestType` exist only on the Azure AD parser, `Directionality` only on the general
-parser, `Parameters` only on the Exchange parser). `service: exchange` rules go to the Exchange parser. In the
+The Lakewatch M365 parsers split the unified audit log by workload; a `service: audit` rule converts
+for each selected parser that has all its fields, and fails with "not mapped" for the others. Among these
+three profiles, `ApplicationId` and `RequestType` exist only on the Azure AD parser, `Directionality` only on
+the general parser, and `Parameters` only on the Exchange parser. When several M365 parsers are selected, use
+`sigma convert -s` (collect errors); without it, the first profile that lacks a field aborts the rule before
+the others are tried. `service: exchange` rules go to the Exchange parser. In the
 Exchange profile, `status` maps to `ResultStatus` and only `status: success` is mapped (to `True`, `Succeeded` or
 `Success`, ORed), so a rule with any other `status` value, such as `failure`, fails to convert. `OperationProperties`
 isn't mapped, so rules that use it fail. The `threat_management` and `threat_detection` rules aren't supported yet,
