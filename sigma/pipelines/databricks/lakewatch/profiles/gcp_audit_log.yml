@@ -1,0 +1,83 @@
+# Built-in Lakewatch profile for the gcp_audit_log parser (Cloud Audit Logs in Cloud Logging).
+# Field-name sources: Google Cloud Audit Logs (AuditLog and LogEntry reference) and the
+# SigmaHQ corpus for aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - gcp.audit.method_name is the ECS-style name for protoPayload.methodName.
+# - data.protoPayload.serviceName/methodName are explicit lines: protoPayload declares children, so
+#   the loader rejects a protoPayload.* prefix target (prefix targets must be a free-form
+#   top-level VARIANT column). logName and resource.type are top-level LogEntry fields.
+# - Nested VARIANT members (metadata, request, response, ...) have no prefix mapping for the same
+#   reason; array members (authorizationInfo, serviceAccountDelegationInfo, resourceLocation
+#   locations) are not declared because the backend cannot match arrays inside a VARIANT.
+# - data.protoPayload.authorizationInfo.permission/granted are listed as unsupported so the rule
+#   fails with an explicit message.
+# - gcp_breakglass_container_workload_deployed fails by design: it uses keyword searches (there is
+#   no raw-event column) and its logName values (cloudaudit.googleapis.com/activity) never equal a
+#   full projects/<p>/logs/... name.
+profile: gcp_audit_log
+version: 1
+parser: gcp_audit_log
+entity: protoPayload.authenticationInfo.principalEmail
+fields:
+  httpRequest.cacheFillBytes: httpRequest.cacheFillBytes
+  httpRequest.cacheHit: httpRequest.cacheHit
+  httpRequest.cacheLookup: httpRequest.cacheLookup
+  httpRequest.cacheValidatedWithOriginServer: httpRequest.cacheValidatedWithOriginServer
+  httpRequest.latency: httpRequest.latency
+  httpRequest.protocol: httpRequest.protocol
+  httpRequest.referer: httpRequest.referer
+  httpRequest.remoteIP: httpRequest.remoteIP
+  httpRequest.requestMethod: httpRequest.requestMethod
+  httpRequest.requestSize: httpRequest.requestSize
+  httpRequest.requestURL: httpRequest.requestURL
+  httpRequest.responseSize: httpRequest.responseSize
+  httpRequest.serverIP: httpRequest.serverIP
+  httpRequest.status: httpRequest.status
+  httpRequest.userAgent: httpRequest.userAgent
+  insertId: insertId
+  labels.*: labels.*
+  logName: logName
+  operation.first: operation.first
+  operation.id: operation.id
+  operation.last: operation.last
+  operation.producer: operation.producer
+  "protoPayload.@type": "protoPayload.@type"
+  protoPayload.authenticationInfo.authoritySelector: protoPayload.authenticationInfo.authoritySelector
+  protoPayload.authenticationInfo.principalEmail: protoPayload.authenticationInfo.principalEmail
+  protoPayload.authenticationInfo.principalSubject: protoPayload.authenticationInfo.principalSubject
+  protoPayload.authenticationInfo.serviceAccountKeyName: protoPayload.authenticationInfo.serviceAccountKeyName
+  protoPayload.methodName: protoPayload.methodName
+  protoPayload.numResponseItems: protoPayload.numResponseItems
+  protoPayload.requestMetadata.callerIP: protoPayload.requestMetadata.callerIP
+  protoPayload.requestMetadata.callerNetwork: protoPayload.requestMetadata.callerNetwork
+  protoPayload.requestMetadata.callerSuppliedUserAgent: protoPayload.requestMetadata.callerSuppliedUserAgent
+  protoPayload.resourceName: protoPayload.resourceName
+  protoPayload.serviceName: protoPayload.serviceName
+  protoPayload.status.code: protoPayload.status.code
+  protoPayload.status.message: protoPayload.status.message
+  receiveTimestamp: receiveTimestamp
+  resource.type: resource.type
+  severity: severity
+  sourceLocation.file: sourceLocation.file
+  sourceLocation.function: sourceLocation.function
+  sourceLocation.line: sourceLocation.line
+  spanId: spanId
+  trace: trace
+  traceSampled: traceSampled
+  protoPayload: protoPayload
+  httpRequest: httpRequest
+  operation: operation
+  resource: resource
+  sourceLocation: sourceLocation
+  gcp.audit.method_name: protoPayload.methodName
+  data.protoPayload.serviceName: protoPayload.serviceName
+  data.protoPayload.methodName: protoPayload.methodName
+  data.protoPayload.logName: logName
+  data.protoPayload.resource.type: resource.type
+logsources:
+  - match: {product: gcp, service: gcp.audit}
+    unsupported:
+      - data.protoPayload.authorizationInfo.permission
+      - data.protoPayload.authorizationInfo.granted
