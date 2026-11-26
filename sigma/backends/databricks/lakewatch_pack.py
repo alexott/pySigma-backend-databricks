@@ -4,7 +4,7 @@ import hashlib
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import yaml
 from sigma.exceptions import SigmaConfigurationError
@@ -16,11 +16,13 @@ CONTENT_RESOURCE_NAMESPACE = uuid5(
 def content_resource_id(sigma_id: str, profile: str, index: int = 0) -> str:
     """Stable content_resource_id of the rule converted for a profile (from the Sigma id).
 
+    The id is UUIDv4-shaped, because the content marketplace accepts only UUIDv4: the bytes of the
+    UUIDv5 of ``<id>:<profile>`` with the version bits set to 4, so the id stays deterministic.
     ``index`` is the position of the query when a rule yields several (a condition list); index 0
     keeps the plain ``<id>:<profile>`` name.
     """
     name = f"{sigma_id.lower()}:{profile}" + (f":{index}" if index else "")
-    return str(uuid5(CONTENT_RESOURCE_NAMESPACE, name))
+    return str(UUID(bytes=uuid5(CONTENT_RESOURCE_NAMESPACE, name).bytes, version=4))
 
 
 def merge_revisions(existing: Optional[Dict[str, Any]], hashes: Mapping[str, str]) -> Dict[str, Any]:

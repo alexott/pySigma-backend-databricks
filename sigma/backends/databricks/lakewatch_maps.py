@@ -208,10 +208,14 @@ def build_v2_runbook(rule: SigmaRule) -> Optional[str]:
     return truncate(text, V2_RUNBOOK_MAX_LEN)
 
 
-def build_v2_annotations(rule: SigmaRule, profile: Optional[str] = None) -> Dict[str, str]:
+def build_v2_annotations(
+    rule: SigmaRule, profile: Optional[str] = None, converter_version: bool = True
+) -> Dict[str, str]:
     """Provenance annotations of a converted rule (Sigma id, status, author, tags, profile, converter).
 
     ``profile`` is the parser profile reference ``<id>@<version>`` (parsed mode only).
+    ``converter_version=False`` leaves out the converter version (content packs: a converter
+    release must not change the content hash of every rule).
     """
     tags = [f"{tag.namespace}.{tag.name}" for tag in rule.tags if tag.namespace != "attack"]
     candidates = {
@@ -220,7 +224,7 @@ def build_v2_annotations(rule: SigmaRule, profile: Optional[str] = None) -> Dict
         "sigma_author": (rule.author or "").strip(),
         "sigma_tags": ", ".join(tags),
         "sigma_profile": profile or "",
-        "converter_version": _converter_version(),
+        "converter_version": _converter_version() if converter_version else "",
     }
     return {
         key: truncate(value, V2_ANNOTATION_VALUE_MAX_LEN)

@@ -177,7 +177,8 @@ follows:
 * Sigma `falsepositives` become the `runbook` ("Known false positives: …", up to 4096 characters).
 * `annotations` record where the rule came from: `sigma_id`, `sigma_status`, `sigma_author`,
   `sigma_tags` (tags other than ATT&CK) and `converter_version`. Values are cut to 256 characters,
-  and empty values are left out.
+  and empty values are left out. Content-pack documents have no `converter_version`, so a new
+  converter release doesn't change the content hash of every rule in a pack.
 
 ### Lakewatch parsed tables
 
@@ -462,8 +463,10 @@ In `content_pack` mode:
 
 * The rule has no `catalog_name` or `schema_name`. The query reads `{{table.events}}`, which the
   pack binds to the parser's table, and `schedule` has no `enabled`.
-* `content_resource_id` is a UUIDv5 of the lower-case Sigma id and the profile id
-  (`<sigma id>:<profile>`), so converting the same rule again gives the same id. The rule must
+* `content_resource_id` is derived from the lower-case Sigma id and the profile id
+  (`<sigma id>:<profile>`), so converting the same rule again gives the same id. It's a UUIDv4,
+  as the content marketplace requires: the bytes of the UUIDv5 of that name, with the version
+  bits set to 4. The rule must
   have an `id`.
 * `metadata.table_parameters.events.parser_ids` holds the `uuid` of the parser's entry in the
   schema catalog. The built-in parsers have one, but the Windows parsers of the bundled

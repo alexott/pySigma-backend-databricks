@@ -58,7 +58,7 @@ def _docs(backend, collection, fmt="lakewatch"):
 
 def test_namespace_and_id():
     assert str(CONTENT_RESOURCE_NAMESPACE) == "674aac7d-2204-5e32-8cea-531a682c987b"
-    assert content_resource_id(SIGMA_ID.upper(), SYSMON) == "5974b21f-2777-59c9-8945-d30f12810a8e"
+    assert content_resource_id(SIGMA_ID.upper(), SYSMON) == "5974b21f-2777-49c9-8945-d30f12810a8e"
 
 
 def test_target_default_is_workspace():
@@ -83,7 +83,7 @@ def test_content_pack_document_shape(uuid_schema):
     }
     rule = doc["rule"]
     assert list(rule)[:2] == ["rule_name", "content_resource_id"]
-    assert rule["content_resource_id"] == "5974b21f-2777-59c9-8945-d30f12810a8e"
+    assert rule["content_resource_id"] == "5974b21f-2777-49c9-8945-d30f12810a8e"
     assert "catalog_name" not in rule and "schema_name" not in rule
     assert "catalog_name" not in json.dumps(doc) and "schema_name" not in json.dumps(doc)
     assert rule["schedule"] == {"at_least_every": "24h"}
@@ -332,7 +332,7 @@ def test_revisions_unsupported_layout_fails(tmp_path):
 
 def test_content_resource_id_index():
     first = content_resource_id(SIGMA_ID, SYSMON, 0)
-    assert first == "5974b21f-2777-59c9-8945-d30f12810a8e" == content_resource_id(SIGMA_ID, SYSMON)
+    assert first == "5974b21f-2777-49c9-8945-d30f12810a8e" == content_resource_id(SIGMA_ID, SYSMON)
     assert content_resource_id(SIGMA_ID, SYSMON, 1) != first
 
 
@@ -371,3 +371,26 @@ def test_unsupported_layout_writes_nothing(tmp_path):
     assert rule_file.read_text() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == before_dirs
     assert (tmp_path / "appIndex.rules.yaml").read_text() == index_before
+
+
+def test_content_resource_id_is_uuid4():
+    # the marketplace tooling accepts only UUIDv4 content_resource_ids
+    import uuid
+
+    for index in (0, 1):
+        parsed = uuid.UUID(content_resource_id(SIGMA_ID, SYSMON, index))
+        assert parsed.version == 4
+        assert parsed.variant == uuid.RFC_4122
+
+
+def test_content_pack_annotations_have_no_converter_version(uuid_schema):
+    # a converter release must not change every pack rule's contentHash
+    backend = DatabricksBackend(target="content_pack", parsers=SYSMON, lakewatch_schemas=uuid_schema)
+    annotations = _docs(backend, _collection(_rule()))[0]["rule"]["annotations"]
+    assert "converter_version" not in annotations
+    assert annotations["sigma_id"] == SIGMA_ID
+
+
+def test_workspace_annotations_keep_converter_version():
+    backend = DatabricksBackend(parsers=SYSMON, catalog_name="c", schema_name="s", warehouse_id="w", table_name="c.s.t")
+    assert "converter_version" in _docs(backend, _collection(_rule()))[0]["annotations"]
