@@ -1,0 +1,130 @@
+# Built-in Lakewatch profile for the cloudflare_http_request parser (Cloudflare Logpush http_requests dataset).
+# Field-name sources: Cloudflare Logpush HTTP requests dataset field reference, the W3C Extended Log File
+# Format for the cs-/sc- names, and the SigmaHQ corpus for aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - cs-uri-query maps to ClientRequestURI, which holds the path and the query string, so contains,
+#   endswith and plain equality behave as on a web server access log.
+# - sc-status maps to EdgeResponseStatus (the status Cloudflare returned to the client; SMALLINT, so
+#   the numeric comparison is exact).
+# - cs-username and cs-content-type are unmapped: Cloudflare logs no user name, and only the
+#   response content type exists (EdgeResponseContentType), not the request one.
+# - Cookies, JA4Signals, RequestHeaders and ResponseHeaders are free-form VARIANT columns: each has a
+#   bare line plus a prefix line for member access.
+profile: cloudflare_http_request
+version: 1
+parser: cloudflare_http_request
+entity: ClientIP
+fields:
+  BotDetectionIDs: BotDetectionIDs
+  BotScore: BotScore
+  BotScoreSrc: BotScoreSrc
+  BotTags: BotTags
+  CacheCacheStatus: CacheCacheStatus
+  CacheReserveUsed: CacheReserveUsed
+  CacheResponseBytes: CacheResponseBytes
+  CacheResponseStatus: CacheResponseStatus
+  CacheTieredFill: CacheTieredFill
+  ClientASN: ClientASN
+  ClientCountry: ClientCountry
+  ClientDeviceType: ClientDeviceType
+  ClientIP: ClientIP
+  ClientIPClass: ClientIPClass
+  ClientMTLSAuthCertFingerprint: ClientMTLSAuthCertFingerprint
+  ClientMTLSAuthStatus: ClientMTLSAuthStatus
+  ClientRegionCode: ClientRegionCode
+  ClientRequestBytes: ClientRequestBytes
+  ClientRequestHost: ClientRequestHost
+  ClientRequestMethod: ClientRequestMethod
+  ClientRequestPath: ClientRequestPath
+  ClientRequestProtocol: ClientRequestProtocol
+  ClientRequestReferer: ClientRequestReferer
+  ClientRequestScheme: ClientRequestScheme
+  ClientRequestSource: ClientRequestSource
+  ClientRequestURI: ClientRequestURI
+  ClientRequestUserAgent: ClientRequestUserAgent
+  ClientSSLCipher: ClientSSLCipher
+  ClientSSLProtocol: ClientSSLProtocol
+  ClientSrcPort: ClientSrcPort
+  ClientTCPRTTMs: ClientTCPRTTMs
+  ClientXRequestedWith: ClientXRequestedWith
+  ContentScanObjResults: ContentScanObjResults
+  ContentScanObjTypes: ContentScanObjTypes
+  EdgeCFConnectingO2O: EdgeCFConnectingO2O
+  EdgeColoCode: EdgeColoCode
+  EdgeColoID: EdgeColoID
+  EdgeEndTimestamp: EdgeEndTimestamp
+  EdgePathingOp: EdgePathingOp
+  EdgePathingSrc: EdgePathingSrc
+  EdgePathingStatus: EdgePathingStatus
+  EdgeRateLimitAction: EdgeRateLimitAction
+  EdgeRateLimitID: EdgeRateLimitID
+  EdgeRequestHost: EdgeRequestHost
+  EdgeResponseBodyBytes: EdgeResponseBodyBytes
+  EdgeResponseBytes: EdgeResponseBytes
+  EdgeResponseCompressionRatio: EdgeResponseCompressionRatio
+  EdgeResponseContentType: EdgeResponseContentType
+  EdgeResponseStatus: EdgeResponseStatus
+  EdgeServerIP: EdgeServerIP
+  EdgeTimeToFirstByteMs: EdgeTimeToFirstByteMs
+  FirewallMatchesActions: FirewallMatchesActions
+  FirewallMatchesRuleIDs: FirewallMatchesRuleIDs
+  FirewallMatchesSources: FirewallMatchesSources
+  JA3Hash: JA3Hash
+  JA4: JA4
+  LeakedCredentialCheckResult: LeakedCredentialCheckResult
+  OriginDNSResponseTimeMs: OriginDNSResponseTimeMs
+  OriginIP: OriginIP
+  OriginRequestHeaderSendDurationMs: OriginRequestHeaderSendDurationMs
+  OriginResponseBytes: OriginResponseBytes
+  OriginResponseDurationMs: OriginResponseDurationMs
+  OriginResponseHTTPExpires: OriginResponseHTTPExpires
+  OriginResponseHTTPLastModified: OriginResponseHTTPLastModified
+  OriginResponseHeaderReceiveDurationMs: OriginResponseHeaderReceiveDurationMs
+  OriginResponseStatus: OriginResponseStatus
+  OriginResponseTime: OriginResponseTime
+  OriginSSLProtocol: OriginSSLProtocol
+  OriginTCPHandshakeDurationMs: OriginTCPHandshakeDurationMs
+  OriginTLSHandshakeDurationMs: OriginTLSHandshakeDurationMs
+  ParentRayID: ParentRayID
+  RayID: RayID
+  SecurityAction: SecurityAction
+  SecurityActions: SecurityActions
+  SecurityLevel: SecurityLevel
+  SecurityRuleDescription: SecurityRuleDescription
+  SecurityRuleID: SecurityRuleID
+  SecurityRuleIDs: SecurityRuleIDs
+  SecuritySources: SecuritySources
+  SmartRouteColoID: SmartRouteColoID
+  UpperTierColoID: UpperTierColoID
+  WAFAction: WAFAction
+  WAFAttackScore: WAFAttackScore
+  WAFFlags: WAFFlags
+  WAFMatchedVar: WAFMatchedVar
+  WAFProfile: WAFProfile
+  WAFRCEAttackScore: WAFRCEAttackScore
+  WAFRuleID: WAFRuleID
+  WAFRuleMessage: WAFRuleMessage
+  WAFSQLiAttackScore: WAFSQLiAttackScore
+  WAFXSSAttackScore: WAFXSSAttackScore
+  WorkerCPUTime: WorkerCPUTime
+  WorkerStatus: WorkerStatus
+  WorkerSubrequest: WorkerSubrequest
+  WorkerSubrequestCount: WorkerSubrequestCount
+  WorkerWallTimeUs: WorkerWallTimeUs
+  ZoneID: ZoneID
+  ZoneName: ZoneName
+  Cookies.*: Cookies.*
+  JA4Signals.*: JA4Signals.*
+  RequestHeaders.*: RequestHeaders.*
+  ResponseHeaders.*: ResponseHeaders.*
+  cs-uri-query: ClientRequestURI
+  cs-uri-stem: ClientRequestPath
+  cs-method: ClientRequestMethod
+  sc-status: EdgeResponseStatus
+  cs-user-agent: ClientRequestUserAgent
+  cs-referer: ClientRequestReferer
+  cs-host: ClientRequestHost
+logsources:
+  - match: {category: webserver}

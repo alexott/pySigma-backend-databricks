@@ -1,0 +1,59 @@
+# Built-in Lakewatch profile for the gcp_http_load_balancer parser (external Application Load Balancer
+# request logs in Cloud Logging).
+# Field-name sources: Google Cloud Logging LogEntry and HttpRequest reference, Cloud Load Balancing
+# logging reference, the W3C Extended Log File Format for the cs-/sc- names, and the SigmaHQ corpus for
+# aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - cs-uri-query maps to httpRequest.requestUrl, which is the WHOLE URL (scheme, host, path and
+#   query), not only the query string. So plain equality and startswith on a path would silently never
+#   match; the modifiers allowlist (contains, endswith, re, plus all with contains) makes every other
+#   modifier, plain equality and a wildcard-only equality such as '*foo*' included, fail the rule.
+#   endswith matches a URL whose path ends with the value; a trailing query string makes it miss.
+# - sc-status maps to httpRequest.status (BIGINT).
+# - cs-uri-stem and cs-host are unmapped: the log has only the whole URL, no separate path or host.
+#   cs-username and cs-content-type are unmapped: nothing equivalent is logged.
+# - httpRequest and resource are VARIANT columns that declare children, so they get bare lines only;
+#   jsonPayload is a free-form VARIANT column and also gets a prefix line.
+profile: gcp_http_load_balancer
+version: 1
+parser: gcp_http_load_balancer
+entity: httpRequest.remoteIp
+fields:
+  httpRequest: httpRequest
+  httpRequest.latency: httpRequest.latency
+  httpRequest.referer: httpRequest.referer
+  httpRequest.remoteIp: httpRequest.remoteIp
+  httpRequest.requestMethod: httpRequest.requestMethod
+  httpRequest.requestSize: httpRequest.requestSize
+  httpRequest.requestUrl: httpRequest.requestUrl
+  httpRequest.responseSize: httpRequest.responseSize
+  httpRequest.serverIp: httpRequest.serverIp
+  httpRequest.status: httpRequest.status
+  httpRequest.userAgent: httpRequest.userAgent
+  insertId: insertId
+  jsonPayload: jsonPayload
+  jsonPayload.*: jsonPayload.*
+  logName: logName
+  receiveTimestamp: receiveTimestamp
+  resource: resource
+  resource.labels.backend_service_name: resource.labels.backend_service_name
+  resource.labels.forwarding_rule_name: resource.labels.forwarding_rule_name
+  resource.labels.project_id: resource.labels.project_id
+  resource.labels.target_proxy_name: resource.labels.target_proxy_name
+  resource.labels.url_map_name: resource.labels.url_map_name
+  resource.labels.zone: resource.labels.zone
+  resource.type: resource.type
+  severity: severity
+  spanId: spanId
+  trace: trace
+  cs-uri-query:
+    field: httpRequest.requestUrl
+    modifiers: [contains, endswith, re, all]
+  cs-method: httpRequest.requestMethod
+  sc-status: httpRequest.status
+  cs-user-agent: httpRequest.userAgent
+  cs-referer: httpRequest.referer
+logsources:
+  - match: {category: webserver}
