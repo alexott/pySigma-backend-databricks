@@ -4,10 +4,13 @@ The Databricks SDK is an optional dependency (the ``deploy`` extra) and is never
 This part of the module loads the rule files, plans the upsert of each rule and talks to the Lakewatch REST API.
 """
 
+import argparse
 import copy
+import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
 import yaml
 
@@ -290,3 +293,188 @@ def make_client(profile: Optional[str]) -> RuleClient:
     except (ValueError, DatabricksError) as exc:
         raise LocalError(str(exc)) from exc
     return SdkRuleClient(w)
+
+
+NOTE = "note: creating or updating a rule starts a one-time run of it on the server"
+
+MODE_PREFIX = {"deploy": "", "dry_run": "dry run: ", "validate_only": "validate only: "}
+
+
+@dataclass
+class Outcome:
+    """The result of deploying one rule."""
+
+    rule: str
+    action: str
+    status: str
+    details: List[str]
+    body: Optional[Dict[str, Any]] = None
+
+
+def _error_line(err: Dict[str, Any]) -> str:
+    return f"{err.get('error_code', '')} {err.get('field_path', '')}: {err.get('message', '')}".strip()
+
+
+def _deploy_one(
+    doc: RuleDoc,
+    have: Optional[Dict[str, Any]],
+    client: RuleClient,
+    mode: str,
+    force: bool,
+    warehouse_id: Optional[str],
+) -> Outcome:
+    plan = plan_rule(doc.doc, have, force)
+    label = doc.label
+    details: List[str] = []
+    if plan.action in ("update", "overwrite"):
+        details.append(f"update_mask: {','.join(plan.update_mask)}")
+    if plan.reason:
+        details.append(plan.reason)
+    if plan.action == "conflict":
+        return Outcome(label, plan.action, "conflict", details)
+    if plan.action == "noop":
+        return Outcome(label, plan.action, "unchanged", details)
+
+    try:
+        warehouse = warehouse_id or (plan.want.get("batch") or {}).get("warehouse_id")
+        if plan.action == "create":
+            errors = client.validate(plan.want, None, warehouse)
+        else:
+            errors = client.validate({**plan.want, "name": f"rules/{plan.rule_id}"}, plan.update_mask, warehouse)
+        if errors:
+            return Outcome(label, plan.action, "invalid", details + [_error_line(e) for e in errors])
+        if mode != "deploy":
+            return Outcome(label, plan.action, "planned", details, plan.body if mode == "dry_run" else None)
+        if plan.action == "create":
+            client.create(plan.want)
+            return Outcome(label, plan.action, "created", details)
+        assert plan.rule_id is not None
+        client.update(plan.rule_id, plan.body, plan.update_mask, plan.etag)
+        return Outcome(label, plan.action, "updated" if plan.action == "update" else "overwritten", details)
+    except Exception as exc:  # noqa: BLE001 - any API failure is reported per rule
+        return Outcome(label, plan.action, "error", details + [f"API error: {exc}"])
+
+
+def deploy(
+    docs: Sequence[RuleDoc], client: RuleClient, *, mode: str, force: bool, warehouse_id: Optional[str]
+) -> List[Outcome]:
+    """Plan, validate and (in ``deploy`` mode) write each rule, in input order."""
+    listed: Dict[Tuple[str, str], Any] = {}
+    for doc in docs:
+        pair = doc.key[:2]
+        if pair in listed:
+            continue
+        try:
+            listed[pair] = {r.get("rule_name"): r for r in client.list_rules(*pair)}
+        except Exception as exc:  # noqa: BLE001 - a failed listing only affects its own schema
+            listed[pair] = exc
+    outcomes: List[Outcome] = []
+    for doc in docs:
+        existing = listed[doc.key[:2]]
+        if isinstance(existing, Exception):
+            outcomes.append(Outcome(doc.label, "unplanned", "error", [f"API error: {existing}"]))
+        else:
+            outcomes.append(_deploy_one(doc, existing.get(doc.key[2]), client, mode, force, warehouse_id))
+    return outcomes
+
+
+def exit_code(outcomes: Sequence[Outcome], force: bool) -> int:
+    """Return the exit code: 4 for an error, 3 for an invalid rule or a conflict (without force), else 0."""
+    statuses = {o.status for o in outcomes}
+    if "error" in statuses:
+        return EXIT_API
+    if "invalid" in statuses or (not force and "conflict" in statuses):
+        return EXIT_REJECTED
+    return EXIT_OK
+
+
+def _counts(outcomes: Sequence[Outcome]) -> Dict[str, int]:
+    def n(status: str, action: Optional[str] = None) -> int:
+        return sum(1 for o in outcomes if o.status == status and (action is None or o.action == action))
+
+    return {
+        "created": n("created") + n("planned", "create"),
+        "updated": n("updated") + n("planned", "update"),
+        "overwritten": n("overwritten") + n("planned", "overwrite"),
+        "unchanged": n("unchanged"),
+        "conflicts": n("conflict"),
+        "invalid": n("invalid"),
+        "errors": n("error"),
+    }
+
+
+def format_text(outcomes: Sequence[Outcome], mode: str) -> str:
+    """Render the outcomes as text: a line per rule with details, the summary and, if written, the note."""
+    lines: List[str] = []
+    for o in outcomes:
+        lines.append(f"{o.status} {o.rule}")
+        lines.extend(f"  {d}" for d in o.details)
+        if o.body is not None:
+            lines.extend(f"    {line}" for line in json.dumps(o.body, indent=2, sort_keys=False).splitlines())
+    counts = _counts(outcomes)
+    words = [("created", "create"), ("updated", "update"), ("overwritten", "overwrite")]
+    parts = [f"{key} {counts[key]}" for key in ("unchanged", "conflicts", "invalid", "errors")]
+    if mode == "deploy":
+        head = [f"{key} {counts[key]}" for key, _ in words]
+    else:
+        head = [f"would {verb} {counts[key]}" for key, verb in words]
+    lines.append(MODE_PREFIX[mode] + ", ".join(head + parts))
+    if any(o.status in ("created", "updated", "overwritten") for o in outcomes):
+        lines.append(NOTE)
+    return "\n".join(lines)
+
+
+def format_json(outcomes: Sequence[Outcome], mode: str) -> str:
+    """Render the outcomes and the summary as JSON."""
+    rules = []
+    for o in outcomes:
+        entry: Dict[str, Any] = {"rule": o.rule, "action": o.action, "status": o.status, "details": o.details}
+        if mode == "dry_run":
+            entry["body"] = o.body
+        rules.append(entry)
+    return json.dumps({"rules": rules, "summary": {**_counts(outcomes), "mode": mode}}, indent=2)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Return the command line parser."""
+    parser = argparse.ArgumentParser(
+        prog="lakewatch-deploy",
+        description="Create or update converted Lakewatch rules in a Databricks workspace.",
+    )
+    parser.add_argument("paths", nargs="+", metavar="PATH", help="rule file(s) or director(ies) of *.yaml rule files")
+    parser.add_argument("--profile", help="Databricks CLI profile (default: the SDK's standard auth chain)")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--dry-run", action="store_true", help="validate and print the planned changes; write nothing")
+    modes.add_argument("--validate-only", action="store_true", help="validate the rules; write nothing")
+    parser.add_argument("--force", action="store_true", help="overwrite rules that were not made from this Sigma rule")
+    parser.add_argument("--warehouse-id", help="warehouse for the validateRule SQL dry-run")
+    parser.add_argument("--catalog", help="replace catalog_name in every rule")
+    parser.add_argument("--schema", help="replace schema_name in every rule")
+    parser.add_argument("--json", action="store_true", help="print the result as JSON")
+    return parser
+
+
+def main(
+    argv: Optional[Sequence[str]] = None,
+    client_factory: Callable[[Optional[str]], RuleClient] = make_client,
+) -> int:
+    """Run the command and return its exit code."""
+    args = build_parser().parse_args(argv)
+    docs, errors = load_documents(args.paths, args.catalog, args.schema)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return EXIT_LOCAL
+    try:
+        client = client_factory(args.profile)
+    except LocalError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_LOCAL
+    mode = "dry_run" if args.dry_run else "validate_only" if args.validate_only else "deploy"
+    outcomes = deploy(docs, client, mode=mode, force=args.force, warehouse_id=args.warehouse_id)
+    print(format_json(outcomes, mode) if args.json else format_text(outcomes, mode))
+    return exit_code(outcomes, args.force)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

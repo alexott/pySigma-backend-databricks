@@ -1,6 +1,7 @@
 """Tests for lakewatch-deploy packaging and rule file loading."""
 
 import copy
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -18,10 +19,17 @@ from sigma.backends.databricks.lakewatch_deploy import (
     IDENTITY_KEYS,
     SKIPPED_NAMES,
     LocalError,
+    Outcome,
     RuleDoc,
     SdkRuleClient,
     apply_location,
+    build_parser,
+    deploy,
+    exit_code,
+    format_json,
+    format_text,
     load_documents,
+    main,
     make_client,
     plan_rule,
     subset,
@@ -434,3 +442,286 @@ def test_make_client_passes_profile(monkeypatch):
     assert isinstance(make_client("p"), SdkRuleClient)
     make_client(None)
     assert seen == [{"profile": "p"}, {}]
+
+
+NOTE = "note: creating or updating a rule starts a one-time run of it on the server"
+SUMMARY = "created 1, updated 1, overwritten 0, unchanged 1, conflicts 0, invalid 0, errors 0"
+
+
+class FakeClient:
+    """An in-memory RuleClient that records its calls."""
+
+    def __init__(self, listed=None, invalid=None, list_fails=(), write_fails=()):
+        """Set up the listed rules, validate errors and failing operations."""
+        self.listed = listed or {}
+        self.invalid = invalid or {}
+        self.list_fails = set(list_fails)
+        self.write_fails = set(write_fails)
+        self.calls: List[tuple] = []
+
+    def list_rules(self, catalog, schema):
+        """List the configured rules."""
+        self.calls.append(("list", catalog, schema))
+        if (catalog, schema) in self.list_fails:
+            raise OSError("boom")
+        return self.listed.get((catalog, schema), [])
+
+    def create(self, rule):
+        """Record a create."""
+        self.calls.append(("create", rule))
+        if rule["rule_name"] in self.write_fails:
+            raise OSError("write boom")
+        return rule
+
+    def update(self, rule_id, fields, update_mask, etag):
+        """Record an update."""
+        self.calls.append(("update", rule_id, fields, update_mask, etag))
+        if rule_id in self.write_fails:
+            raise OSError("write boom")
+        return fields
+
+    def validate(self, rule, update_mask, warehouse):
+        """Record a validation."""
+        self.calls.append(("validate", rule, update_mask, warehouse))
+        return self.invalid.get(rule["rule_name"], [])
+
+    def of(self, kind):
+        """Return the recorded calls of ``kind``."""
+        return [c for c in self.calls if c[0] == kind]
+
+
+def _docs(*rules):
+    return [RuleDoc(f"{r['rule_name']}.yaml", r) for r in rules]
+
+
+def _server(rule, rule_id, etag="e1", **over):
+    have = copy.deepcopy(rule)
+    have.update({"rule_id": rule_id, "etag": etag})
+    have.update(over)
+    return have
+
+
+def _run(docs, client, mode="deploy", force=False, warehouse_id=None):
+    return deploy(docs, client, mode=mode, force=force, warehouse_id=warehouse_id)
+
+
+def _three():
+    new, changed, same = _rule("new"), _rule("changed", sigma_id="a"), _rule("same")
+    listed = {
+        ("c", "s"): [
+            _server(_rule("changed", sigma_id="a", extra_field=1), "id-changed", "etag-c") | {"batch": {"sql": {}}},
+            _server(same, "id-same"),
+        ]
+    }
+    return [new, changed, same], listed
+
+
+def test_deploy_creates_updates_skips():
+    rules, listed = _three()
+    client = FakeClient(listed)
+    outcomes = _run(_docs(*rules), client)
+    assert [(o.rule, o.action, o.status) for o in outcomes] == [
+        ("c.s.new", "create", "created"),
+        ("c.s.changed", "update", "updated"),
+        ("c.s.same", "noop", "unchanged"),
+    ]
+    assert len(client.of("create")) == 1 and len(client.of("update")) == 1
+    _, rule_id, fields, mask, etag = client.of("update")[0]
+    assert (rule_id, etag) == ("id-changed", "etag-c")
+    assert mask == ["batch"] and set(fields) == {"batch"}
+    text = format_text(outcomes, "deploy")
+    assert SUMMARY in text
+    assert text.rstrip().splitlines()[-1] == NOTE
+    assert "  update_mask: batch" in text
+    assert exit_code(outcomes, False) == EXIT_OK
+    assert client.calls[0] == ("list", "c", "s") and len(client.of("list")) == 1
+
+
+def test_validate_before_write():
+    rules, listed = _three()
+    client = FakeClient(listed)
+    _run(_docs(*rules), client, warehouse_id="wh")
+    kinds = [c[0] for c in client.calls]
+    assert kinds == ["list", "validate", "create", "validate", "update"]
+    upd_validate = client.of("validate")[1]
+    assert upd_validate[1]["name"] == "rules/id-changed"
+    assert upd_validate[2] == ["batch"] and upd_validate[3] == "wh"
+    assert "name" not in client.of("validate")[0][1] and client.of("validate")[0][2] is None
+
+
+def test_validate_not_called_for_noop_or_conflict():
+    rule = _rule("x")
+    client = FakeClient({("c", "s"): [_server(_rule("x", sigma_id="other"), "i")]})
+    out = _run(_docs(rule), client)
+    assert out[0].status == "conflict" and not client.of("validate")
+    client = FakeClient({("c", "s"): [_server(rule, "i")]})
+    assert _run(_docs(rule), client)[0].status == "unchanged" and not client.of("validate")
+
+
+def test_warehouse_falls_back_to_rule():
+    rule = _rule("x")
+    rule["batch"]["warehouse_id"] = "rule-wh"
+    client = FakeClient()
+    _run(_docs(rule), client)
+    assert client.of("validate")[0][3] == "rule-wh"
+
+
+def test_invalid_rule_skipped():
+    a, b = _rule("a"), _rule("b")
+    err = {"error_code": "BAD", "field_path": "batch.sql", "message": "nope"}
+    client = FakeClient(invalid={"a": [err]})
+    out = _run(_docs(a, b), client)
+    assert [o.status for o in out] == ["invalid", "created"]
+    assert [c[1]["rule_name"] for c in client.of("create")] == ["b"]
+    assert "  BAD batch.sql: nope" in format_text(out, "deploy")
+    assert exit_code(out, False) == EXIT_REJECTED
+
+
+def test_conflict_and_force():
+    rule = _rule("x")
+    listed = {("c", "s"): [_server(_rule("x", sigma_id="other", enabled=True), "i")]}
+    client = FakeClient(listed)
+    out = _run(_docs(rule), client)
+    assert out[0].status == "conflict" and not client.of("create") and not client.of("update")
+    assert exit_code(out, False) == EXIT_REJECTED
+    assert "exists and was not made from this Sigma rule" in format_text(out, "deploy")
+    client = FakeClient(listed)
+    out = _run(_docs(rule), client, force=True)
+    assert (out[0].action, out[0].status) == ("overwrite", "overwritten")
+    assert exit_code(out, True) == EXIT_OK
+    text = format_text(out, "deploy")
+    assert "server sigma_id: other, file sigma_id: id-1" in text
+    assert "overwritten 1" in text and len(client.of("update")) == 1
+
+
+@pytest.mark.parametrize(
+    "mode,prefix", [("dry_run", "dry run: would create 1"), ("validate_only", "validate only: would create 1")]
+)
+def test_dry_run_and_validate_only_write_nothing(mode, prefix):
+    rules, listed = _three()
+    client = FakeClient(listed)
+    out = _run(_docs(*rules), client, mode=mode)
+    assert not client.of("create") and not client.of("update")
+    assert len(client.of("validate")) == 2
+    assert [o.status for o in out] == ["planned", "planned", "unchanged"]
+    text = format_text(out, mode)
+    assert NOTE not in text
+    summary = text.rstrip().splitlines()[-1]
+    assert summary == prefix + ", would update 1, would overwrite 0, unchanged 1, conflicts 0, invalid 0, errors 0"
+    if mode == "dry_run":
+        assert '\n    {\n      "catalog_name": "c"' in text
+    else:
+        assert '"catalog_name"' not in text
+        assert all(o.body is None for o in out)
+
+
+def test_list_failure_isolated_per_schema():
+    a, b, c = _rule("a", schema="s1"), _rule("b", schema="s1"), _rule("c", schema="s2")
+    client = FakeClient(list_fails=[("c", "s1")])
+    out = _run(_docs(a, b, c), client)
+    assert [(o.action, o.status) for o in out] == [
+        ("unplanned", "error"),
+        ("unplanned", "error"),
+        ("create", "created"),
+    ]
+    assert out[0].details == ["API error: boom"]
+    assert exit_code(out, False) == EXIT_API
+    assert [c_[2] for c_ in client.of("list")] == ["s1", "s2"]
+
+
+def test_write_error_continues():
+    a, b = _rule("a"), _rule("b")
+    client = FakeClient(write_fails=["a"])
+    out = _run(_docs(a, b), client)
+    assert [o.status for o in out] == ["error", "created"]
+    assert out[0].details == ["API error: write boom"]
+    assert len(client.of("create")) == 2
+    assert exit_code(out, False) == EXIT_API
+
+
+def test_exit_code_precedence():
+    def o(status):
+        return Outcome("r", "a", status, [])
+
+    assert exit_code([o("conflict"), o("invalid"), o("error")], False) == EXIT_API
+    assert exit_code([o("conflict")], False) == EXIT_REJECTED
+    assert exit_code([o("conflict")], True) == EXIT_OK
+    assert exit_code([o("invalid")], True) == EXIT_REJECTED
+    assert exit_code([], False) == EXIT_OK
+
+
+def test_json_output():
+    rules, listed = _three()
+    out = _run(_docs(*rules), FakeClient(listed), mode="dry_run")
+    data = json.loads(format_json(out, "dry_run"))
+    assert set(data) == {"rules", "summary"}
+    assert data["rules"][0]["body"]["rule_name"] == "new"
+    assert set(data["rules"][0]) == {"rule", "action", "status", "details", "body"}
+    assert data["summary"] == {
+        "created": 1, "updated": 1, "overwritten": 0, "unchanged": 1,
+        "conflicts": 0, "invalid": 0, "errors": 0, "mode": "dry_run",
+    }  # fmt: skip
+    out = _run(_docs(*rules), FakeClient(listed))
+    data = json.loads(format_json(out, "deploy"))
+    assert set(data["rules"][0]) == {"rule", "action", "status", "details"}
+    assert data["summary"]["mode"] == "deploy" and data["summary"]["created"] == 1
+
+
+def test_main_local_errors_before_client(tmp_path, capsys):
+    pack = _write(tmp_path / "pack.yaml", {"rule": {}, "metadata": {"rule_kind": "x"}})
+
+    def factory(profile):
+        raise AssertionError("client must not be built")
+
+    assert main([pack], client_factory=factory) == EXIT_LOCAL
+    captured = capsys.readouterr()
+    assert CONTENT_PACK_MSG in captured.err and captured.out == ""
+
+
+def test_main_missing_sdk(tmp_path, capsys):
+    path = _write(tmp_path / "r.yaml", _rule("r"))
+
+    def factory(profile):
+        raise LocalError("lakewatch-deploy needs the deploy extra")
+
+    assert main([path], client_factory=factory) == EXIT_LOCAL
+    captured = capsys.readouterr()
+    assert "needs the deploy extra" in captured.err and captured.out == ""
+
+
+def test_main_flags(tmp_path, capsys):
+    path = _write(tmp_path / "r.yaml", _rule("r"))
+    client = FakeClient({("cat2", "sch2"): [_server(_rule("r", catalog="cat2", schema="sch2", sigma_id="z"), "rid")]})
+    seen = []
+
+    def factory(profile):
+        seen.append(profile)
+        return client
+
+    rc = main(
+        [path, "--catalog", "cat2", "--schema", "sch2", "--warehouse-id", "w1", "--force", "--json", "--profile", "p"],
+        client_factory=factory,
+    )
+    assert rc == EXIT_OK and seen == ["p"]
+    assert client.of("list")[0][1:] == ("cat2", "sch2")
+    assert client.of("validate")[0][3] == "w1"
+    assert client.of("update")[0][1] == "rid"
+    data = json.loads(capsys.readouterr().out)
+    assert data["rules"][0]["status"] == "overwritten" and data["summary"]["mode"] == "deploy"
+
+
+def test_main_text_to_stdout_and_modes(tmp_path, capsys):
+    path = _write(tmp_path / "r.yaml", _rule("r"))
+    client = FakeClient()
+    assert main([path, "--dry-run"], client_factory=lambda p: client) == EXIT_OK
+    out = capsys.readouterr().out
+    assert out.startswith("planned c.s.r") and "dry run: would create 1" in out
+    assert not client.of("create")
+
+
+def test_main_exclusive_modes(tmp_path):
+    path = _write(tmp_path / "r.yaml", _rule("r"))
+    with pytest.raises(SystemExit) as exc:
+        main([path, "--dry-run", "--validate-only"], client_factory=lambda p: FakeClient())
+    assert exc.value.code == 2
+    assert build_parser().parse_args(["a", "b"]).paths == ["a", "b"]
