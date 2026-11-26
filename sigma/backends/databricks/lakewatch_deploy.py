@@ -1,13 +1,13 @@
 """lakewatch-deploy: upsert converted Lakewatch rule YAML files into a Databricks workspace.
 
 The Databricks SDK is an optional dependency (the ``deploy`` extra) and is never imported at module level.
-This part of the module loads the rule files and plans the upsert of each rule.
+This part of the module loads the rule files, plans the upsert of each rule and talks to the Lakewatch REST API.
 """
 
 import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 import yaml
 
@@ -186,3 +186,107 @@ def plan_rule(want: Dict[str, Any], have: Optional[Dict[str, Any]], force: bool)
         return Plan("noop", name, [], {}, rule_id, etag, None, adjusted)
     action = "update" if owned else "overwrite"
     return Plan(action, name, changed, {k: adjusted[k] for k in changed}, rule_id, etag, reason, adjusted)
+
+
+MISSING_EXTRA_MESSAGE = 'lakewatch-deploy needs the deploy extra: pip install "pySigma-backend-databricks[deploy]"'
+
+BASE = "/api/2.0/lakewatch"
+
+
+class RuleClient(Protocol):
+    """The Lakewatch rule operations used by the run loop. All rules are plain dicts."""
+
+    def list_rules(self, catalog: str, schema: str) -> List[Dict[str, Any]]:
+        """Return the rules of ``catalog.schema``."""
+        ...
+
+    def create(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        """Create ``rule`` and return the server's rule."""
+        ...
+
+    def update(
+        self, rule_id: str, fields: Dict[str, Any], update_mask: List[str], etag: Optional[str]
+    ) -> Dict[str, Any]:
+        """Update the fields of ``update_mask`` of rule ``rule_id`` and return the server's rule."""
+        ...
+
+    def validate(
+        self, rule: Dict[str, Any], update_mask: Optional[List[str]], warehouse: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """Return the validation errors of ``rule`` (an empty list when it is valid)."""
+        ...
+
+
+class SdkRuleClient:
+    """A ``RuleClient`` that calls the Lakewatch REST API through ``api_client.do`` with plain dicts."""
+
+    def __init__(self, w: Any) -> None:
+        """Wrap the workspace client ``w``."""
+        self._w = w
+
+    def _headers(self, write: bool) -> Dict[str, str]:
+        headers = {"Accept": "application/json"}
+        if write:
+            headers["Content-Type"] = "application/json"
+        workspace_id = getattr(self._w.config, "workspace_id", None)
+        if workspace_id:
+            headers["X-Databricks-Workspace-Id"] = str(workspace_id)
+        return headers
+
+    def list_rules(self, catalog: str, schema: str) -> List[Dict[str, Any]]:
+        """Return the rules of ``catalog.schema``, following the page tokens."""
+        rules: List[Dict[str, Any]] = []
+        token: Optional[str] = None
+        while True:
+            query: Dict[str, Any] = {"catalog_name": catalog, "schema_name": schema, "page_size": 100}
+            if token:
+                query["page_token"] = token
+            page = self._w.api_client.do("GET", f"{BASE}/rules", query=query, headers=self._headers(False)) or {}
+            rules.extend(r for r in page.get("rules") or [] if r.get("schema_name") == schema)
+            token = page.get("next_page_token")
+            if not token:
+                return rules
+
+    def create(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        """Create ``rule`` and return the server's rule."""
+        return self._w.api_client.do("POST", f"{BASE}/rules", headers=self._headers(True), body=rule) or {}
+
+    def update(
+        self, rule_id: str, fields: Dict[str, Any], update_mask: List[str], etag: Optional[str]
+    ) -> Dict[str, Any]:
+        """Patch the fields of ``update_mask`` of rule ``rule_id``."""
+        query: Dict[str, Any] = {"update_mask": ",".join(update_mask)}
+        if etag:
+            query["etag"] = etag
+        return (
+            self._w.api_client.do(
+                "PATCH", f"{BASE}/rules/{rule_id}", query=query, headers=self._headers(True), body=fields
+            )
+            or {}
+        )
+
+    def validate(
+        self, rule: Dict[str, Any], update_mask: Optional[List[str]], warehouse: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """Return the ``errors`` of ``validateRule`` for ``rule``."""
+        body: Dict[str, Any] = {"rule": rule}
+        if update_mask:
+            body["update_mask"] = ",".join(update_mask)
+        if warehouse:
+            body["warehouse"] = warehouse
+        resp = self._w.api_client.do("POST", f"{BASE}/rules:validateRule", headers=self._headers(True), body=body)
+        return list((resp or {}).get("errors") or [])
+
+
+def make_client(profile: Optional[str]) -> RuleClient:
+    """Return a ``RuleClient`` for the workspace of ``profile`` (the default auth when ``profile`` is None)."""
+    try:
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.errors import DatabricksError
+    except ImportError:
+        raise LocalError(MISSING_EXTRA_MESSAGE) from None
+    try:
+        w = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
+    except (ValueError, DatabricksError) as exc:
+        raise LocalError(str(exc)) from exc
+    return SdkRuleClient(w)

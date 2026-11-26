@@ -4,8 +4,10 @@ import copy
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
+import pytest
 import yaml
 
 from sigma.backends.databricks.lakewatch_deploy import (
@@ -17,8 +19,10 @@ from sigma.backends.databricks.lakewatch_deploy import (
     SKIPPED_NAMES,
     LocalError,
     RuleDoc,
+    SdkRuleClient,
     apply_location,
     load_documents,
+    make_client,
     plan_rule,
     subset,
 )
@@ -281,3 +285,152 @@ def test_no_sigma_id_never_owned():
     have = _have(want)
     assert plan_rule(want, have, False).action == "conflict"
     assert plan_rule(want, have, True).action == "noop"
+
+
+MISSING_EXTRA_MSG = 'lakewatch-deploy needs the deploy extra: pip install "pySigma-backend-databricks[deploy]"'
+
+
+class FakeApi:
+    """Record ``do`` calls and return queued responses."""
+
+    def __init__(self, *responses: Any) -> None:
+        """Queue the responses."""
+        self.responses: List[Any] = list(responses)
+        self.calls: List[Dict[str, Any]] = []
+
+    def do(
+        self,
+        method: str,
+        path: Optional[str] = None,
+        query: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        body: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Record the call and return the next queued response."""
+        self.calls.append(
+            {
+                "method": method,
+                "path": path,
+                "query": None if query is None else dict(query),
+                "headers": headers,
+                "body": body,
+            }
+        )
+        return self.responses.pop(0) if self.responses else {}
+
+
+def _client(*responses: Any, workspace_id: Optional[str] = "123") -> "tuple[SdkRuleClient, FakeApi]":
+    api = FakeApi(*responses)
+    w = SimpleNamespace(api_client=api, config=SimpleNamespace(workspace_id=workspace_id))
+    return SdkRuleClient(w), api
+
+
+def test_list_rules_pages_and_filters():
+    client, api = _client(
+        {
+            "rules": [{"rule_name": "a", "schema_name": "s"}, {"rule_name": "b", "schema_name": "other"}],
+            "next_page_token": "t",
+        },
+        {},
+    )
+    assert client.list_rules("c", "s") == [{"rule_name": "a", "schema_name": "s"}]
+    assert len(api.calls) == 2
+    assert all(c["method"] == "GET" and c["path"] == "/api/2.0/lakewatch/rules" for c in api.calls)
+    assert all(
+        c["query"]["catalog_name"] == "c" and c["query"]["schema_name"] == "s" and c["query"]["page_size"] == 100
+        for c in api.calls
+    )
+    assert api.calls[1]["query"]["page_token"] == "t"
+
+
+def test_headers():
+    client, api = _client({})
+    client.list_rules("c", "s")
+    assert api.calls[0]["headers"] == {"Accept": "application/json", "X-Databricks-Workspace-Id": "123"}
+    client, api = _client({})
+    client.create({"rule_name": "a"})
+    assert api.calls[0]["headers"] == {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Databricks-Workspace-Id": "123",
+    }
+    client, api = _client({}, workspace_id=None)
+    client.list_rules("c", "s")
+    assert api.calls[0]["headers"] == {"Accept": "application/json"}
+
+
+def test_create_sends_unmodeled_fields():
+    client, api = _client({"rule_id": "1"})
+    rule = _rule("a", x_custom=1)
+    assert client.create(rule) == {"rule_id": "1"}
+    assert api.calls[0]["method"] == "POST"
+    assert api.calls[0]["path"] == "/api/2.0/lakewatch/rules"
+    assert api.calls[0]["body"] == rule
+    assert api.calls[0]["body"]["x_custom"] == 1
+
+
+def test_listed_unmodeled_fields_kept():
+    client, _ = _client({"rules": [{"rule_name": "a", "schema_name": "s", "x_custom": {"a": 1}}]})
+    assert client.list_rules("c", "s")[0]["x_custom"] == {"a": 1}
+
+
+def test_update_request():
+    client, api = _client({"rule_id": "42"}, {})
+    assert client.update("42", {"severity": "High"}, ["severity"], "e1") == {"rule_id": "42"}
+    call = api.calls[0]
+    assert call["method"] == "PATCH"
+    assert call["path"] == "/api/2.0/lakewatch/rules/42"
+    assert call["query"] == {"update_mask": "severity", "etag": "e1"}
+    assert call["body"] == {"severity": "High"}
+    client.update("42", {"severity": "High", "title": "t"}, ["severity", "title"], "")
+    assert api.calls[1]["query"] == {"update_mask": "severity,title"}
+
+
+def test_validate_request_and_errors():
+    errors = [{"error_code": "X", "field_path": "a", "message": "m"}]
+    client, api = _client({"errors": errors}, {}, None, {"errors": []})
+    r = _rule("a")
+    assert client.validate(r, ["a", "b"], "w1") == errors
+    call = api.calls[0]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/2.0/lakewatch/rules:validateRule"
+    assert call["body"] == {"rule": r, "update_mask": "a,b", "warehouse": "w1"}
+    assert client.validate(r, ["a"], "w1") == []
+    assert client.validate(r, ["a"], "w1") == []
+    assert client.validate(r, None, None) == []
+    assert api.calls[3]["body"] == {"rule": r}
+    client.validate(r, [], None)
+    assert api.calls[3]["body"] == {"rule": r}
+
+
+def test_make_client_missing_sdk(monkeypatch):
+    monkeypatch.setitem(sys.modules, "databricks.sdk", None)
+    monkeypatch.setitem(sys.modules, "databricks.sdk.errors", None)
+    with pytest.raises(LocalError) as exc:
+        make_client(None)
+    assert str(exc.value) == MISSING_EXTRA_MSG
+
+
+def test_make_client_bad_profile(monkeypatch):
+    sdk = pytest.importorskip("databricks.sdk")
+
+    def boom(**kwargs: Any) -> Any:
+        raise ValueError("no such profile")
+
+    monkeypatch.setattr(sdk, "WorkspaceClient", boom)
+    with pytest.raises(LocalError, match="no such profile"):
+        make_client("missing")
+
+
+def test_make_client_passes_profile(monkeypatch):
+    sdk = pytest.importorskip("databricks.sdk")
+    seen: List[Dict[str, Any]] = []
+
+    def fake(**kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return SimpleNamespace(api_client=FakeApi(), config=SimpleNamespace(workspace_id=None))
+
+    monkeypatch.setattr(sdk, "WorkspaceClient", fake)
+    assert isinstance(make_client("p"), SdkRuleClient)
+    make_client(None)
+    assert seen == [{"profile": "p"}, {}]
