@@ -25,6 +25,16 @@ class FieldPath:
     ``allowed`` is the declared set of values of a column, STRUCT or declared VARIANT leaf.
     ``join`` holds the two resolved parts of a join field (see ``join_field_name``), which
     renders as the parts concatenated with ``join_sep``.
+
+    ``variant_arrays`` holds the schema-declared arrays crossed *inside* a VARIANT, outermost
+    first, each as ``(json_path, element_type)``: the keys from the level's container to the
+    array, and the declared element type (``VARIANT`` or a scalar type). The container of the
+    first level is the VARIANT ``leaf`` (read from the innermost ``arrays`` element, if any);
+    the container of each further level is the previous level's element. Every level is one
+    any-element ``exists`` level after those of ``arrays``. ``json_path`` then holds the keys
+    inside the last element (empty for a scalar element, whose type is ``leaf_type``). A
+    consumer that wants "the array inside a VARIANT at path P" takes
+    ``variant_arrays[-1]`` of the path to the array itself, which has no ``json_path``.
     """
 
     arrays: Tuple[Tuple[str, ...], ...]
@@ -39,6 +49,7 @@ class FieldPath:
     join_sep: str = ""
     first: Tuple["FieldPath", ...] = ()
     first_unset: Tuple[str, ...] = ()
+    variant_arrays: Tuple[Tuple[Tuple[str, ...], str], ...] = ()
 
     @property
     def whole_variant(self) -> bool:
@@ -153,26 +164,32 @@ def _resolve_variant(
     allow_undeclared: bool = False,
     allowed: Optional[Tuple[str, ...]] = None,
 ) -> FieldPath:
+    var_arrays: List[Tuple[Tuple[str, ...], str]] = []
+
+    def result(json_path: Sequence[str], json_type: Optional[str] = None, ltype: Optional[str] = None,
+               allowed: Optional[Tuple[str, ...]] = None) -> FieldPath:
+        return FieldPath(
+            tuple(arrays), leaf, tuple(json_path), json_type, ltype, allowed=allowed,
+            variant_arrays=tuple(var_arrays),
+        )
+
     if not remaining:
-        return FieldPath(tuple(arrays), leaf, (), None, leaf_type, allowed=allowed)
+        return result((), None, leaf_type, allowed)
     if not _has_children(schema, base):
-        return FieldPath(tuple(arrays), leaf, tuple(remaining), None, None)
+        return result(remaining)
     prefix = base
     json_path: List[str] = []
     json_type: Optional[str] = None
+    info = None
     for i, segment in enumerate(remaining):
         if json_path and not _has_children(schema, prefix):
             # A declared free-form VARIANT member: the rest is unconstrained.
             if json_type == "VARIANT":
-                return FieldPath(
-                    tuple(arrays), leaf, tuple(json_path + remaining[i:]), None, None
-                )
+                return result(json_path + remaining[i:])
         key = _find(schema, prefix, segment)
         if key is None:
             if allow_undeclared:
-                return FieldPath(
-                    tuple(arrays), leaf, tuple(json_path + remaining[i:]), None, None
-                )
+                return result(json_path + remaining[i:])
             raise UnknownFieldError(
                 path, schema.name, f"'{segment}' is not declared under '{prefix}'"
             )
@@ -187,13 +204,18 @@ def _resolve_variant(
             )
         info = schema.paths[key]
         if info.type == "ARRAY":
-            raise UnknownFieldError(
-                path, schema.name, "arrays inside VARIANT are not supported"
-            )
+            # A declared array: one any-element level; the rest is relative to its element.
+            element = info.element or "VARIANT"
+            var_arrays.append((tuple(json_path + [declared]), element))
+            json_path, json_type, prefix = [], None, key + "[]"
+            if i == len(remaining) - 1:
+                return result((), None, element)
+            continue
         json_path.append(declared)
         json_type = info.type
         prefix = key
-    return FieldPath(tuple(arrays), leaf, tuple(json_path), json_type, None, allowed=info.allowed)
+    assert info is not None
+    return result(json_path, json_type, None, info.allowed)
 
 
 _NAMED_ENTRY = re.compile(r"(?P<base>.+)\[(?P<name>[^\[\]]+)\]")
@@ -206,11 +228,11 @@ def _resolve_named_entry(schema: ParserSchema, path: str, base: str, name: str) 
     """
     if name == "*":
         target = resolve_schema_path(schema, base)
-        if target.arrays or not target.whole_variant:
+        if target.arrays or target.variant_arrays or not target.whole_variant:
             raise UnknownFieldError(path, schema.name, f"'[*]' needs a whole VARIANT field, '{base}' is not one")
         return FieldPath((), target.leaf, (), None, "STRING", entry="*", entry_variant=True)
     target = resolve_schema_path(schema, base)
-    if not target.arrays and target.whole_variant:
+    if not target.arrays and not target.variant_arrays and target.whole_variant:
         return FieldPath((), target.leaf, (), None, "STRING", entry=name, entry_variant=True)
     if (
         len(target.arrays) == 1 and not target.leaf and target.leaf_type == "STRUCT"
@@ -245,7 +267,7 @@ def _resolve_join(schema: ParserSchema, path: str, allow_undeclared: bool) -> Fi
 def _is_scalar(part: FieldPath) -> bool:
     """Whether a path is a scalar (also a named entry, but not ``[*]``) usable as a join part."""
     return (
-        not part.join and not part.first and part.entry != "*" and not part.arrays
+        not part.join and not part.first and part.entry != "*" and not part.arrays and not part.variant_arrays
         and not part.whole_variant
         and (part.entry is not None or part.json_path or part.leaf_type not in ("STRUCT", "ARRAY"))
         and part.json_type not in ("STRUCT", "ARRAY", "VARIANT")

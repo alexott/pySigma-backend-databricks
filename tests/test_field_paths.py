@@ -31,6 +31,10 @@ SCHEMA = ParserSchema("p1", "u-1", 2, {
     "userIdentity.sessionContext": _p("STRUCT", "variant"),
     "userIdentity.sessionContext.mfa": _p("STRING", "variant"),
     "userIdentity.tags": _p("ARRAY", "variant", "STRING"),
+    "userIdentity.grants": _p("ARRAY", "variant", "VARIANT"),
+    "userIdentity.grants[].name": _p("STRING", "variant"),
+    "userIdentity.grants[].items": _p("ARRAY", "variant", "VARIANT"),
+    "userIdentity.grants[].items[].id": _p("BIGINT", "variant"),
     "requestParameters": _p("VARIANT", "column"),
     "resources": _p("ARRAY", "column", "VARIANT"),
     "resources[].arn": _p("STRING", "variant"),
@@ -128,9 +132,30 @@ def test_resolve_whole_variant():
     assert resolve_schema_path(SCHEMA, "userIdentity.arn").whole_variant is False
 
 
-def test_resolve_array_inside_variant_fails():
-    with pytest.raises(UnknownFieldError, match="arrays inside VARIANT are not supported"):
-        resolve_schema_path(SCHEMA, "userIdentity.tags")
+def test_resolve_array_inside_variant():
+    path = resolve_schema_path(SCHEMA, "userIdentity.tags")
+    assert path.leaf == ("userIdentity",)
+    assert path.variant_arrays == ((("tags",), "STRING"),)
+    assert (path.json_path, path.leaf_type, path.arrays) == ((), "STRING", ())
+    assert hash(path) == hash(resolve_schema_path(SCHEMA, "userIdentity.tags"))
+
+
+def test_resolve_nested_arrays_inside_variant():
+    path = resolve_schema_path(SCHEMA, "userIdentity.grants.items.id")
+    assert path.variant_arrays == ((("grants",), "VARIANT"), (("items",), "VARIANT"))
+    assert (path.json_path, path.json_type) == (("id",), "BIGINT")
+    whole = resolve_schema_path(SCHEMA, "userIdentity.grants")
+    assert whole.variant_arrays == ((("grants",), "VARIANT"),) and whole.whole_variant
+
+
+def test_resolve_array_inside_variant_undeclared_member_fails():
+    with pytest.raises(UnknownFieldError, match="'nope' is not declared under 'userIdentity.grants\\[\\]'"):
+        resolve_schema_path(SCHEMA, "userIdentity.grants.nope")
+
+
+def test_resolve_array_inside_variant_is_not_a_named_entry_base():
+    with pytest.raises(UnknownFieldError, match="named entry needs"):
+        resolve_schema_path(SCHEMA, "userIdentity.grants[Foo]")
 
 
 def test_resolve_named_entry_of_variant():

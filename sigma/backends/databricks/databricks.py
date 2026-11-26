@@ -712,6 +712,10 @@ class DatabricksBackend(TextQueryBackend):
             levels.append((self._struct_ref(base, segments), var))
             base = var
         leaf = self._struct_ref(base, path.leaf)
+        for json_path, element in path.variant_arrays:
+            var = f"x{len(levels)}"
+            levels.append((self._variant_array(leaf, json_path, element), var))
+            leaf = var
         if path.json_path:
             if self._current_profile is not None:
                 leaf = self._variant_get(leaf, path, value, as_type)
@@ -1620,7 +1624,7 @@ class DatabricksBackend(TextQueryBackend):
                 continue
         if path is None:
             raise self._parsed_error(fail.format("is not a Sigma field or a schema path"))
-        if path.arrays:
+        if path.arrays or path.variant_arrays:
             raise self._parsed_error(fail.format("is inside an array; use an SQL expression"))
         return self._render_path(path, SigmaString(""))[1]
 
@@ -1712,7 +1716,7 @@ class DatabricksBackend(TextQueryBackend):
                 f"(profile {self._current_profile[0].profile})"
             )
         if any(
-            p.arrays or self._is_variant_object(p) or (p.leaf_type == "STRUCT" and not p.json_path)
+            p.arrays or p.variant_arrays or self._is_variant_object(p) or (p.leaf_type == "STRUCT" and not p.json_path)
             for p in (path, ref_path)
         ):
             raise self._parsed_error(
@@ -1761,6 +1765,12 @@ class DatabricksBackend(TextQueryBackend):
         else:
             coerced.value = SigmaString(str(value))
         return coerced
+
+    def _variant_array(self, container: str, keys: Tuple[str, ...], element: str) -> str:
+        """Return the declared array at ``keys`` inside a VARIANT, as ``ARRAY<VARIANT>`` or ``ARRAY<scalar>``."""
+        json_path = self._json_path(keys)
+        json_path = ("$" if json_path.startswith("[") else "$.") + json_path
+        return f"try_variant_get({container}, '{self.sql_quote_regex(json_path)}', 'ARRAY<{element}>')"
 
     def _variant_get(self, expr: str, path: FieldPath, value: Any, as_type: Optional[str] = None) -> str:
         """try_variant_get() of a key inside a VARIANT, typed by the schema or the compared value."""
