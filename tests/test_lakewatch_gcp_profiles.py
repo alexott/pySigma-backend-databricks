@@ -134,3 +134,79 @@ def test_audit_snapshot():
         "  AND (lower(try_variant_get(protoPayload, '$.methodName', 'string')) = lower('storage.buckets.list') "
         "OR lower(try_variant_get(protoPayload, '$.methodName', 'string')) = lower('storage.buckets.listChannels'))"
     )
+
+# --- google_workspace_reports ---------------------------------------------------------------
+
+WS_SERVICES = ["google_workspace.admin", "google_workspace.login"]
+
+
+@pytest.mark.parametrize("service", WS_SERVICES)
+@pytest.mark.parametrize("field", ["eventName", "protoPayload.metadata.event.eventName"])
+def test_workspace_event_name(service, field):
+    sql = _sql(REPORTS, service, _sel(field))
+    assert "AND (lower(name) = lower('x'))" in sql
+
+
+@pytest.mark.parametrize(
+    "field,value,mapped",
+    [
+        ("eventService", "admin.googleapis.com", "admin"),
+        ("protoPayload.serviceName", "login.googleapis.com", "login"),
+    ],
+)
+def test_workspace_service_value_map(field, value, mapped):
+    sql = _sql(REPORTS, "google_workspace.admin", _sel(field, value))
+    assert f"AND (lower(application) = lower('{mapped}'))" in sql
+
+
+@pytest.mark.parametrize("field", ["eventService", "protoPayload.serviceName"])
+def test_workspace_unknown_service_fails(field):
+    err = _convert_error(REPORTS, "google_workspace.admin", _sel(field, "drive.googleapis.com"))
+    assert f"field {field}: transform map: value 'drive.googleapis.com' is not in the map" in err
+    assert "(profile google_workspace_reports)" in err
+
+
+@pytest.mark.parametrize("field", ["setting_name", "new_value"])
+def test_workspace_parameters_unmapped(field):
+    err = _convert_error(REPORTS, "google_workspace.admin", _sel(field))
+    assert f"field {field} is not mapped by profile google_workspace_reports" in err
+
+
+@pytest.mark.parametrize(
+    "field,expected",
+    [
+        ("name", "lower(name) = lower('x')"),
+        ("application", "lower(application) = lower('x')"),
+        ("ipAddress", "lower(ipAddress) = lower('x')"),
+        ("actor.email", "lower(actor.email) = lower('x')"),
+    ],
+)
+def test_workspace_identity_columns(field, expected):
+    assert f"AND ({expected})" in _sql(REPORTS, "google_workspace.admin", _sel(field))
+
+
+def test_workspace_entity():
+    sql = _sql(REPORTS, "google_workspace.login", _sel("eventName"))
+    assert "actor.email AS sigma_entity" in sql
+
+
+@pytest.mark.parametrize("service", WS_SERVICES)
+def test_workspace_routes_to_reports_only(service):
+    entries = DatabricksBackend().discover_parsers(SigmaCollection([_rule(service, _sel("eventName"))]))
+    text = json.dumps(entries, default=str)
+    assert REPORTS in text
+    assert AUDIT not in text
+
+
+def test_workspace_snapshot():
+    detection = (
+        "    selection:\n        protoPayload.serviceName: login.googleapis.com\n"
+        "        protoPayload.metadata.event.eventName: suspicious_login\n"
+        "    condition: selection"
+    )
+    assert _sql(REPORTS, "google_workspace.login", detection) == (
+        "SELECT *, actor.email AS sigma_entity\n"
+        "FROM t\n"
+        "WHERE IN_TIMERANGE(time)\n"
+        "  AND (lower(application) = lower('login') AND lower(name) = lower('suspicious_login'))"
+    )

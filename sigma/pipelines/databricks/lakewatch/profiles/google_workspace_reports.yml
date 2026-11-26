@@ -1,0 +1,66 @@
+# Built-in Lakewatch profile for the google_workspace_reports parser (Google Workspace Admin SDK
+# Reports API `activities` resource, one row per event).
+# Field-name sources: the Admin SDK Reports API activities resource and the SigmaHQ corpus for
+# aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - eventName and protoPayload.metadata.event.eventName both map to name. eventService and
+#   protoPayload.serviceName map to application through a value map: admin.googleapis.com -> admin,
+#   login.googleapis.com -> login. Any other service value fails to convert.
+# - setting_name and new_value are unmapped on purpose: they are the SETTING_NAME and NEW_VALUE
+#   entries of the parameters array, which needs named-entry array matching the backend lacks.
+#   Rules using them fail with "not mapped".
+# - Workspace audit logs shared to Cloud Logging also land in gcp_audit_log, but there the event is
+#   an array inside a VARIANT, so google_workspace.* routes only to this profile.
+profile: google_workspace_reports
+version: 1
+parser: google_workspace_reports
+entity: actor.email
+fields:
+  actor.applicationInfo.applicationName: actor.applicationInfo.applicationName
+  actor.applicationInfo.impersonation: actor.applicationInfo.impersonation
+  actor.applicationInfo.oauthClientId: actor.applicationInfo.oauthClientId
+  actor.callerType: actor.callerType
+  actor.email: actor.email
+  actor.key: actor.key
+  actor.profileId: actor.profileId
+  application: application
+  etag: etag
+  id.applicationName: id.applicationName
+  id.customerId: id.customerId
+  id.time: id.time
+  id.uniqueQualifier: id.uniqueQualifier
+  ipAddress: ipAddress
+  isAgenticAction: isAgenticAction
+  kind: kind
+  name: name
+  networkInfo.ipAsn: networkInfo.ipAsn
+  networkInfo.regionCode: networkInfo.regionCode
+  networkInfo.subdivisionCode: networkInfo.subdivisionCode
+  ownerDomain: ownerDomain
+  parameters.*: parameters.*
+  resourceDetails.*: resourceDetails.*
+  resourceIds: resourceIds
+  status: status
+  type: type
+  userDeviceInfo.*: userDeviceInfo.*
+  eventName: name
+  protoPayload.metadata.event.eventName: name
+  eventService:
+    field: application
+    transform:
+      map:
+        values:
+          admin.googleapis.com: [admin]
+          login.googleapis.com: [login]
+  protoPayload.serviceName:
+    field: application
+    transform:
+      map:
+        values:
+          admin.googleapis.com: [admin]
+          login.googleapis.com: [login]
+logsources:
+  - match: {product: gcp, service: google_workspace.admin}
+  - match: {product: gcp, service: google_workspace.login}
