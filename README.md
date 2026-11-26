@@ -674,6 +674,8 @@ Built-in profiles:
 | `microsoft365_audit_general` | `product: m365`, `service: audit` | `microsoft365_audit_general` |
 | `microsoft365_audit_azure_active_directory` | `product: m365`, `service: audit` | `microsoft365_audit_azure_active_directory` |
 | `microsoft365_audit_exchange` | `product: m365`, `service: audit` or `exchange` | `microsoft365_audit_exchange` |
+| `gcp_audit_log` | `product: gcp`, `service: gcp.audit` | `gcp_audit_log` |
+| `google_workspace_reports` | `product: gcp`, `service: google_workspace.admin` or `google_workspace.login` | `google_workspace_reports` |
 | `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
 | `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
 | `carbonblack_endpoint_event` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event` or `network_connection` | `carbonblack_endpoint_event` |
@@ -716,6 +718,19 @@ Exchange profile, `status` maps to `ResultStatus` and only `status: success` is 
 isn't mapped, so rules that use it fail. The `threat_management` and `threat_detection` rules aren't supported yet,
 because they match Security & Compliance alert records, which these parsers don't cover. The mappings follow the
 Office 365 Management Activity API schema and haven't been checked against live data.
+
+The GCP profiles map Cloud Audit Logs (`gcp_audit_log`) and the Google Workspace Admin SDK Reports
+`activities` resource (`google_workspace_reports`). The service fields (`eventService` and
+`data.protoPayload.serviceName`) go through a value map: `admin.googleapis.com` becomes `admin` and
+`login.googleapis.com` becomes `login`, and any other service value fails to convert. In `gcp_audit_log`,
+only `data.protoPayload.serviceName`, `.methodName`, `.logName` and `.resource.type` are mapped (there is no
+`data.protoPayload.*` prefix), and any other `data.protoPayload.<x>` fails as not mapped. A trailing `*` in
+`gcp.audit.method_name` renders `startswith()`. The `authorizationInfo` array
+(`data.protoPayload.authorizationInfo.permission` and `.granted`) isn't supported and fails with "not supported by
+profile". In `google_workspace_reports`, the `parameters` entries `setting_name` and `new_value` aren't mapped, so rules
+that use them fail. Workspace rules (`service: google_workspace.*`) route only to `google_workspace_reports`, because the
+same events in `gcp_audit_log` sit in an array inside a VARIANT. The SigmaHQ `cloud/gcp` rules go from 0/26 to 22/26
+convertible; the 4 that fail use `authorizationInfo`, a keyword search, `setting_name` or `new_value`.
 
 The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
 (`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which

@@ -18,6 +18,10 @@ All notable changes to this project are documented in this file. The format is b
   `product: m365` services `audit` and `exchange`. The SigmaHQ `cloud/m365` rules
   go from 0/19 to 5/19 convertible. `threat_management` and `threat_detection` alert rules aren't
   supported yet, `OperationProperties` isn't mapped, and in the Exchange profile only `status: success` is mapped.
+- **GCP and Google Workspace Lakewatch profiles:** built-in `gcp_audit_log` and
+  `google_workspace_reports` profiles for `product: gcp` (`service: gcp.audit`, `google_workspace.admin` and `google_workspace.login`). The SigmaHQ `cloud/gcp` rules go from 0/26 to 22/26 convertible.
+  `authorizationInfo`, keyword searches and the `parameters` entries `setting_name` and `new_value`
+  aren't supported, and only the `admin` and `login` service values are mapped.
 
 ## [0.2.0] - 2026-11-26
 
