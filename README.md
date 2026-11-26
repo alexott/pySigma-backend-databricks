@@ -191,12 +191,12 @@ Each selected parser produces one rule per Sigma rule, named `<rule_name>__<prof
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `parsers` | *(required)* | Comma-separated profile ids, for example `aws_cloudtrail,okta_system_log`. |
+| `parsers` | *(none)* | Comma-separated profile ids, for example `aws_cloudtrail,okta_system_log`. Without it, no rules are converted: parser discovery runs and reports which profiles can convert the rules (see [Parser discovery](#parser-discovery)). |
 | `table_name` | *(none)* | Table to read from. Use it when exactly one parser is selected. |
 | `table_map` | *(none)* | `profile:table,profile:table` for several parsers. Every selected profile needs a table. |
 | `lakewatch_profiles_dir` | *(none)* | Directory with your own `*.yml` profiles. They are added to the built-in ones, and an id replaces a built-in id. |
 | `lakewatch_schemas` | *(none)* | JSON file with additional parser schemas, in the format of the bundled catalog. |
-| `output_dir` | *(none)* | Write one `<rule_name>.yaml` file per rule into this directory (created if missing) instead of one multi-document YAML file. With `target=content_pack` it's the pack's `rules/` directory (see [Content-pack output](#content-pack-output)). |
+| `output_dir` | *(none)* | Write one `<rule_name>.yaml` file per rule into this directory (created if missing) instead of one multi-document YAML file. With `target=content_pack` it's the pack's `rules/` directory (see [Content-pack output](#content-pack-output)). It also receives `conversion_report.yaml` (see [Conversion report](#conversion-report)). |
 | `target` | `workspace` | `workspace` creates rules for the Lakewatch API. `content_pack` creates the rule documents of a Lakewatch content pack (see [Target modes](#target-modes)). |
 | `overrides` | *(none)* | YAML file with per-rule `summary`, `context` and `select` settings, keyed by Sigma id (see [Alert summaries](#alert-summaries)). |
 
@@ -250,6 +250,143 @@ fields:
   # renders as try_element_at(filter(try_variant_get(EventData, '$',
   #   'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>'), e -> e._Name = 'Image'), 1)._VALUE
 ```
+
+#### Parser discovery
+
+If you don't know which parsers fit your rules, leave out `-O parsers`. With `-f lakewatch` in
+parsed mode (no `-O ocsf=true`, no `-p ocsf`) and no `parsers`, the backend converts nothing.
+It tries every loaded profile (built-in and from `lakewatch_profiles_dir`) on each rule and
+prints a report on stdout. It needs no `catalog_name`, `schema_name` or table options, and it
+writes no files, even with `output_dir`. A warning on stderr says so:
+
+```bash
+sigma convert -t databricks -f lakewatch rules/windows/proc_creation_encoded_ps.yml
+```
+
+```text
+UserWarning: no rules were converted: -O parsers=... was not given, so parser discovery ran instead (report on stdout)
+rules:
+- sigma_id: 5f1b9c8e-1111-4222-8333-444455556666
+  title: Encoded PowerShell
+  logsource:
+    product: windows
+    category: process_creation
+    service: null
+  convertible:
+  - carbonblack_endpoint_event
+  - crowdstrike_fdr_event
+  - sentinelone_deep_visibility
+  - windows_security_process
+  - windows_sysmon_process
+  not_convertible: {}
+summary:
+  rules: 1
+  convertible_rules:
+    carbonblack_endpoint_event: 1
+    ...
+  failure_reasons: {}
+  suggested_option: -O parsers=carbonblack_endpoint_event,crowdstrike_fdr_event,sentinelone_deep_visibility,windows_security_process,windows_sysmon_process
+```
+
+* Only the profiles whose `logsources` block matches the rule's logsource and routes it are
+  tried. A profile is `convertible` when the rule converts without an error and with a non-empty
+  query. Otherwise it's listed in `not_convertible` with the reason.
+* A rule with no matching profile gets `note: no profile matches the logsource`. A correlation
+  rule gets `note: correlation rules are not supported`.
+* `summary.convertible_rules` counts the rules per profile. `failure_reasons` has the most
+  frequent reasons (up to 20). `suggested_option` is a `-O parsers=...` value with every profile
+  that can convert at least one rule, or `null` if none can. Pick the parsers that match the
+  data you have: the suggestion lists every profile that fits, not the ones you ingest.
+* Python API: `DatabricksBackend.discover_parsers(rules)` returns the same structure as a dict.
+  It leaves `errors` and the other backend state as they were.
+
+Calling `convert_rule` directly without `parsers` is still a configuration error.
+
+#### Conversion report
+
+With `-O output_dir=<dir>`, a conversion also writes `<dir>/conversion_report.yaml` in both
+targets. With `target=content_pack` it sits in the pack's `rules/` directory next to
+`revisions.yaml`. Don't commit it to the pack. Without `output_dir`, stdout stays the
+multi-document YAML and no report is written. The report never fails a conversion that would
+otherwise succeed. With `-s` it also lists failed rules. Without `-s`, the first error aborts the
+run and no report is written.
+
+```bash
+sigma convert -s -t databricks -f lakewatch \
+  -O parsers=windows_sysmon_process,windows_security_process \
+  -O table_map=windows_sysmon_process:main.sec.sysmon,windows_security_process:main.sec.winsec \
+  -O catalog_name=main -O schema_name=sec -O output_dir=out rules/windows/
+```
+
+```yaml
+summary:
+  rules: 2
+  converted: 1
+  failed: 0
+  skipped: 1
+  by_logsource:
+    windows/process_creation/-:
+      converted: 1
+      failed: 0
+      skipped: 1
+rules:
+- sigma_id: 5f1b9c8e-1111-4222-8333-444455556666
+  title: Encoded PowerShell
+  source: rules/windows/pc.yml
+  logsource: {product: windows, category: process_creation, service: null}
+  status: converted
+  reason: null
+  results:
+  - profile: windows_security_process@1
+    status: converted
+    rule_names: [encoded_powershell__windows_security_process]
+    reason: null
+    approximate: false
+    fields:
+      Image:
+        targets: [EventData[NewProcessName]]
+        resolution: mapped
+      CommandLine:
+        targets: [EventData[CommandLine]]
+        resolution: event_data
+    warnings: []
+    lint: []
+- sigma_id: 6f1b9c8e-1111-4222-8333-444455556666
+  title: Old Rule
+  status: skipped
+  reason: status deprecated
+  ...
+```
+
+* **`summary`**: input rule counts (correlation rules included) and the same counts per logsource,
+  keyed `<product>/<category>/<service>` with `-` for an unset part.
+* **`rules`**: one entry per input rule, in input order. `source` is the rule's file, or `null`.
+  `status` is `converted` if any result converted. Otherwise it's `skipped` (Sigma status
+  `deprecated` or `unsupported`, or every query empty: the reasons are `status deprecated`,
+  `status unsupported` and `empty query`), or else `failed` with the error text as `reason`. A
+  correlation rule (with `-s`) is reported as `failed` with `correlation rules not supported by the lakewatch format`
+  and a `null` logsource.
+* **`results`**: one per selected profile, in conversion order (`profile` is `null` in OCSF mode).
+  `rule_names` are the final names after de-duplication.
+* **`fields`**: for each field of the rule's detection items, in first-use order, the profile
+  `targets` and how the field was resolved. `resolution` is one of:
+  * `mapped`: an explicit `fields` mapping of the profile or the logsource block;
+  * `event_data`: a name from an `event_data` list;
+  * `prefix`: a prefix mapping;
+  * `lenient`: `event_data: any`, read as `<event_data_column>[<field>]`;
+  * `unmapped`: none of the above (`targets` is empty).
+
+  In OCSF mode `fields` is `{}`.
+* **`warnings`**: the warnings raised while the result converted, as strings. They are still
+  printed on stderr.
+* **`approximate`**: `true` if one of those warnings says the match is approximate: the raw
+  keyword search, or a text match on the JSON of a VARIANT. Review such rules before enabling them.
+* **`lint`**: hints that don't fail the rule. For a `lenient` field whose name matches a top-level
+  column of the parser, ignoring case: `field <F> is read from <col>[<F>] by event_data any, but <Column> is a top-level column of parser <parser>; map it explicitly`.
+
+In Python, `backend.last_report` has the same structure as the file after every `lakewatch`
+`convert()` (`None` before the first one). `write_report` in
+`sigma.backends.databricks.lakewatch_report` writes it.
 
 #### Target modes
 

@@ -9,8 +9,9 @@ All notable changes to this project are documented in this file. The format is b
 
 - **Parsed tables are the default for `-f lakewatch`.** Rules are converted against the columns
   of a Lakewatch parser's table instead of OCSF gold tables, so `-f lakewatch` without `-p ocsf`
-  needs `-O parsers=...`. To keep the OCSF behavior, pass `-O ocsf=true`, or `-p ocsf`, which
-  still selects OCSF.
+  needs `-O parsers=...`. Without it, no rules are converted: parser discovery runs and reports
+  which profiles can convert the rules. To keep the OCSF behavior, pass `-O ocsf=true`, or
+  `-p ocsf`, which still selects OCSF.
 - The Lakewatch v1 rule format (`kind: Rule` YAML) was removed.
 - The `lakewatch_v2` format was renamed to `lakewatch`, with no alias: `-f lakewatch_v2` fails
   with the unknown-format error.
@@ -36,6 +37,14 @@ All notable changes to this project are documented in this file. The format is b
   - Carbon Black endpoint events;
   - Windows Event Log: Sysmon, Security, PowerShell, the channel parsers, a catch-all, and the
     header-only `windows_event_logs`.
+- Conversion report: with `-O output_dir`, `conversion_report.yaml` is written into the output
+  directory, in workspace and content-pack mode. It lists the status of each rule (converted,
+  failed or skipped) with the reason, the profile results with the rule names, how each field was
+  resolved, the captured warnings, an `approximate` flag and lint hints, and totals by logsource.
+  In Python, `backend.last_report` has the same structure.
+- Parser discovery: without `-O parsers`, `-f lakewatch` reports which profiles can convert each
+  rule and suggests a `-O parsers=...` value. `DatabricksBackend.discover_parsers()` does the same
+  in Python.
 - Schema-aware field rendering: STRUCT access, `try_variant_get()` for VARIANT keys, `exists()`
   over arrays, and named entries such as `EventData[Name]`.
 - Profile value transforms (base name, hashes, registry paths, `to_hex`, `first_set` and others),
