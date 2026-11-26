@@ -459,6 +459,19 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
         if ident in seen:
             raise ProfileError(source, f"duplicate logsource match {block.match}")
         seen.add(ident)
+    entries = _parse_entries(data["entries"], source) if "entries" in data else {}
+    raw = _parse_raw(data["raw"], source) if "raw" in data else None
+    special = {"event_data_column": column}
+    if raw is not None and raw.kind == "entries":
+        special["raw entries source"] = raw.value
+    for key in entries:
+        for what, special_column in special.items():
+            if key.lower() == special_column.lower():
+                raise ProfileError(
+                    source,
+                    f"entries key '{key}' equals the {what} '{special_column}': that column keeps the "
+                    "_Name/_VALUE members",
+                )
     return Profile(
         profile=data["profile"],
         version=version,
@@ -470,10 +483,10 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
         products=products,
         event_data_column=column,
         event_data=_parse_event_data(data["event_data"], source, "") if "event_data" in data else (),
-        raw=_parse_raw(data["raw"], source) if "raw" in data else None,
+        raw=raw,
         entity=entity,
         unmapped_hint=hint,
-        entries=_parse_entries(data["entries"], source) if "entries" in data else {},
+        entries=entries,
     )
 
 

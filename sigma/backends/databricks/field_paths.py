@@ -280,6 +280,20 @@ def _resolve_declared_entry(
     raise UnknownFieldError(path, schema.name, kinds)
 
 
+def _declared_entry(
+    schema: ParserSchema, base: str, entries: Mapping[str, EntrySpec]
+) -> Optional[EntrySpec]:
+    """Return the ``entries`` declaration for ``base``, matching keys like schema lookup (ignoring case)."""
+    def canon(column: str) -> str:
+        return _find(schema, "", column) or column.lower()
+
+    wanted = canon(base)
+    for column, spec in entries.items():
+        if column == base or canon(column) == wanted:
+            return spec
+    return None
+
+
 def _resolve_named_entry(
     schema: ParserSchema, path: str, base: str, name: str,
     entries: Optional[Mapping[str, EntrySpec]] = None,
@@ -290,8 +304,15 @@ def _resolve_named_entry(
     ``base`` declared in ``entries`` is read with its declared members instead of
     ``_Name``/``_VALUE``.
     """
-    if name != "*" and entries and base in entries:
-        return _resolve_declared_entry(schema, path, base, name, entries[base], entries)
+    declared = _declared_entry(schema, base, entries) if entries else None
+    if entries and declared is not None:
+        if name == "*":
+            raise UnknownFieldError(
+                path, schema.name,
+                f"'[*]' isn't supported on '{base}': it is declared in entries, so name a member, "
+                f"such as '{base}[Name]'",
+            )
+        return _resolve_declared_entry(schema, path, base, name, declared, entries)
     if name == "*":
         target = resolve_schema_path(schema, base)
         if target.arrays or target.variant_arrays or not target.whole_variant:

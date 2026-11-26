@@ -249,7 +249,8 @@ An array inside a VARIANT column matches the same way, but only when the parser 
 array. The target is then the leaf path without a `[]` marker, and a rule matches when any element
 matches. It renders as
 `exists(try_variant_get(col, '$.path', 'ARRAY<VARIANT>'), x0 -> ...)`, or with `'ARRAY<<elem>>'`
-when the elements are scalars. An array the schema doesn't declare gets no such rendering.
+when the elements are scalars. Each condition gets its own `exists()`, so two conditions on the same array may match
+different elements. An array the schema doesn't declare gets no such rendering.
 
 Windows event fields are often a list of `{_Name, _VALUE}` entries, for example the `EventData`
 column of the Windows parsers. A target `EventData[Image]` reads the `_VALUE` of the entry whose
@@ -280,7 +281,7 @@ fields:
   (so `boolValue` renders as `'true'` or `'false'`).
 * `ignore_case: true` compares the entry name case-insensitively, for example for HTTP headers.
 * `entries` works on a top-level VARIANT column, on a top-level `ARRAY<STRUCT>` column, and on a
-  declared array one level inside a VARIANT. `[*]` isn't supported on a declared column. A
+  declared array one level inside a VARIANT. `[*]` isn't supported on a declared column and fails with an error that mentions `entries`. A
   declared VARIANT array has no single-object fallback, unlike an undeclared VARIANT column.
 * A column without an `entries` key uses `_Name` and `_VALUE`. A target with `[Name]` also works
   for `entity`.
@@ -667,7 +668,7 @@ fields:
   `|base64offset`) on transformed fields fail as well.
 * `modifiers` lists the Sigma modifiers allowed on a field (`eq` for none). Any other modifier
   fails the rule with `field <F>: modifier <m> is not supported`. Unless a comparison modifier
-  (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `exists`, `fieldref`)
+  (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `neq`, `exists`, `fieldref`)
   is present, the comparison is an equality, so the field must allow `eq` as well. For example,
   `c-uri|all: [...]` needs both `eq` and `all` in the list, and fails otherwise, while
   `c-uri|contains|all` needs only `contains` and `all`.
@@ -767,7 +768,8 @@ name passes through unchanged. Of the `data.protoPayload.*` names, only `data.pr
 `data.protoPayload.*` prefix), and any other `data.protoPayload.<x>` fails as not mapped. A trailing `*` in
 `gcp.audit.method_name` renders `startswith()`. The declared arrays inside `protoPayload`
 (`authorizationInfo`, for example `data.protoPayload.authorizationInfo.permission` and `.granted`) match any
-element, rendered as `exists(try_variant_get(...), x0 -> ...)`. In `google_workspace_reports`, `setting_name` and
+element, rendered as `exists(try_variant_get(...), x0 -> ...)`. Each condition gets its own `exists()`, so
+`permission` and `granted` of one rule may be satisfied by different elements. In `google_workspace_reports`, `setting_name` and
 `new_value` map to the `SETTING_NAME` and `NEW_VALUE` entries of `parameters` through `entries`
 (`new_value` takes `value`, or `boolValue` as a string). Workspace rules (`service: google_workspace.*`) route only to `google_workspace_reports`, because the
 same events in `gcp_audit_log` sit in an array inside a VARIANT. The SigmaHQ `cloud/gcp` rules go from 0/26 to 25/26

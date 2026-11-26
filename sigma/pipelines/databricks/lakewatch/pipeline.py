@@ -41,7 +41,7 @@ STATE_PARSER = "lakewatch_parser"
 
 # Modifiers that replace the implied equality comparison.
 COMPARISON_MODIFIERS = frozenset(
-    {"contains", "startswith", "endswith", "re", "cidr", "gt", "gte", "lt", "lte", "exists", "fieldref"}
+    {"contains", "startswith", "endswith", "re", "cidr", "gt", "gte", "lt", "lte", "neq", "exists", "fieldref"}
 )
 
 

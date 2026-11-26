@@ -398,6 +398,12 @@ def test_modifiers_restricted():
         run_win(profile, block, "    sel:\n        X|contains: foo\n    condition: sel")
 
 
+def test_modifiers_neq_allowed():
+    profile, block = make_win({"X": {"field": "x", "modifiers": ["neq"]}})
+    r = run_win(profile, block, "    sel:\n        X|neq: foo\n    condition: sel")
+    assert leaves(r.detection.detections["sel"]) == [("x", "foo")]
+
+
 def test_modifiers_restricted_eq_not_listed():
     profile, block = make_win({"X": {"field": "x", "modifiers": ["endswith"]}})
     with pytest.raises(SigmaTransformationError, match="field X: modifier eq is not supported"):

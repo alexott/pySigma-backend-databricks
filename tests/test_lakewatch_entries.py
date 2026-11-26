@@ -265,3 +265,32 @@ def test_entries_validate_entity_and_undeclared_probe():
     data["fields"] = {"A": {"field": "v.arr[h]", "undeclared": True}}
     with pytest.raises(ProfileError, match="'undeclared' is not needed"):
         validate_profile(parse_profile(data, "<dict>"), schema)
+
+
+def test_entries_star_rejected_on_declared_columns(tmp_path):
+    spec = {"name": "name", "value": "value"}
+    with pytest.raises(Exception, match=r"'\[\*\]' isn't supported on 'parameters'.*declared in entries"):
+        _where(tmp_path, "google_workspace_reports", {"nv": "parameters[*]"}, {"parameters": spec}, "nv", "x")
+    with pytest.raises(Exception, match=r"'\[\*\]' isn't supported on 'httpRequest.headers'.*entries"):
+        _where(
+            tmp_path, "aws_waf_web_acl", {"ua": "httpRequest.headers[*]"}, {"httpRequest.headers": spec}, "ua", "x"
+        )
+
+
+def test_entries_key_matches_target_ignoring_case(tmp_path):
+    spec = {"name": "name", "value": ["value", "boolValue"]}
+    where = _where(
+        tmp_path, "google_workspace_reports", {"nv": "Parameters[NEW_VALUE]"}, {"parameters": spec}, "nv", "'false'",
+    )
+    assert "try_variant_get(" in where and "'$.boolValue'" in where, where
+
+
+@pytest.mark.parametrize("extra, key, match", [
+    ({}, "EventData", r"entries key 'EventData' equals the event_data_column 'EventData'.*_Name/_VALUE"),
+    ({"event_data_column": "Data"}, "Data", r"event_data_column 'Data': that column keeps the _Name/_VALUE members"),
+    ({"raw": {"entries": "v.arr"}}, "v.arr", r"raw entries source 'v.arr': that column keeps the _Name/_VALUE"),
+])
+def test_entries_key_equal_to_special_column_rejected(extra, key, match):
+    data = {**_profile({key: {"name": "n", "value": "x"}}), **extra}
+    with pytest.raises(ProfileError, match=match):
+        parse_profile(data, "<dict>")

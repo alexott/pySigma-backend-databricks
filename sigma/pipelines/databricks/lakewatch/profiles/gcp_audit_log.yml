@@ -12,6 +12,8 @@
 #   reason. The declared arrays inside protoPayload (authorizationInfo, serviceAccountDelegationInfo,
 #   resourceLocation locations) are identity-mapped at their leaf paths, such as
 #   protoPayload.authorizationInfo.permission; a rule matches when any element matches.
+#   Each condition gets its own exists(), so two conditions on the same array (for example permission
+#   and granted) may match different elements.
 #   data.protoPayload.authorizationInfo.permission/granted are aliases for the same two paths.
 # - gcp_breakglass_container_workload_deployed fails by design: it uses keyword searches (there is
 #   no raw-event column) and its logName values (cloudaudit.googleapis.com/activity) never equal a

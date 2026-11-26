@@ -8,7 +8,7 @@ All notable changes to this project are documented in this file. The format is b
 ### Added
 
 - **Implied `eq` in the `modifiers` allowlist:** a field with no comparison modifier
-  (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `exists`, `fieldref`)
+  (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `neq`, `exists`, `fieldref`)
   is now checked as `eq`, so `field|all` alone fails unless the profile lists `eq`.
 - **`join` transform:** matches two scalar columns joined with a non-empty `sep`, rendered as
   `concat_ws(sep, nullif(a, ''), nullif(b, ''))`. `null` on a joined field fails to convert.
@@ -18,7 +18,7 @@ All notable changes to this project are documented in this file. The format is b
 - **`entries` profile key:** named entries with configurable `name` and `value` members (`value` may be a
   list, coalesced as strings) and `ignore_case`. It works on a top-level VARIANT, a top-level
   `ARRAY<STRUCT>` and a one-level declared VARIANT array, and for `entity`. `[*]` isn't supported on a
-  declared column.
+  declared column and fails with an error that mentions `entries`.
 - **Azure Lakewatch profiles:** built-in `azure_audit`, `azure_signin`, `azure_monitor_activity`
   and `azure_identity_protection` profiles for the `product: azure` services `auditlogs`,
   `signinlogs`, `activitylogs` and `riskdetection`. The SigmaHQ `cloud/azure` rules go from 0/123
@@ -43,7 +43,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - **Profiles adopt the new features:** `akamai_waf` and `aws_waf_web_acl` map `cs-uri-query` through `join`
   (path and query joined with `?`, exact instead of the former OR and `?` reject), which takes the rules from
-  47 to 60 and from 31 to 51 of 86. `aws_waf_web_acl` maps `cs-user-agent`, `cs-referer` and `cs-host` to the
+  47 to 60 and from 31 to 51 of 86. A rule with `cs-uri-query: null` (one corpus rule, CVE-2026-63030) now
+  fails to convert on these two profiles, because a joined field is never NULL. `aws_waf_web_acl` maps `cs-user-agent`, `cs-referer` and `cs-host` to the
   `httpRequest.headers` entries (`entries`, case-insensitive). `gcp_audit_log` matches the
   `authorizationInfo` array any-element, and `google_workspace_reports` maps `setting_name` and `new_value` to the
   `parameters` entries (`value` or `boolValue`).
