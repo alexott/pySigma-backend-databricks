@@ -408,7 +408,7 @@ def test_validate_request_and_errors():
     assert client.validate(r, None, None) == []
     assert api.calls[3]["body"] == {"rule": r}
     client.validate(r, [], None)
-    assert api.calls[3]["body"] == {"rule": r}
+    assert api.calls[4]["body"] == {"rule": r}
 
 
 def test_make_client_missing_sdk(monkeypatch):
@@ -419,26 +419,33 @@ def test_make_client_missing_sdk(monkeypatch):
     assert str(exc.value) == MISSING_EXTRA_MSG
 
 
-def test_make_client_bad_profile(monkeypatch):
-    sdk = pytest.importorskip("databricks.sdk")
+def _fake_sdk(monkeypatch, workspace_client):
+    class DatabricksError(Exception):
+        pass
 
+    sdk = SimpleNamespace(WorkspaceClient=workspace_client)
+    monkeypatch.setitem(sys.modules, "databricks", SimpleNamespace(sdk=sdk))
+    monkeypatch.setitem(sys.modules, "databricks.sdk", sdk)
+    monkeypatch.setitem(sys.modules, "databricks.sdk.errors", SimpleNamespace(DatabricksError=DatabricksError))
+
+
+def test_make_client_bad_profile(monkeypatch):
     def boom(**kwargs: Any) -> Any:
         raise ValueError("no such profile")
 
-    monkeypatch.setattr(sdk, "WorkspaceClient", boom)
+    _fake_sdk(monkeypatch, boom)
     with pytest.raises(LocalError, match="no such profile"):
         make_client("missing")
 
 
 def test_make_client_passes_profile(monkeypatch):
-    sdk = pytest.importorskip("databricks.sdk")
     seen: List[Dict[str, Any]] = []
 
     def fake(**kwargs: Any) -> Any:
         seen.append(kwargs)
         return SimpleNamespace(api_client=FakeApi(), config=SimpleNamespace(workspace_id=None))
 
-    monkeypatch.setattr(sdk, "WorkspaceClient", fake)
+    _fake_sdk(monkeypatch, fake)
     assert isinstance(make_client("p"), SdkRuleClient)
     make_client(None)
     assert seen == [{"profile": "p"}, {}]
@@ -725,3 +732,52 @@ def test_main_exclusive_modes(tmp_path):
         main([path, "--dry-run", "--validate-only"], client_factory=lambda p: FakeClient())
     assert exc.value.code == 2
     assert build_parser().parse_args(["a", "b"]).paths == ["a", "b"]
+
+
+def test_error_line_joins_present_parts():
+    from sigma.backends.databricks.lakewatch_rule_deploy import _error_line
+
+    assert _error_line({"message": "msg"}) == "msg"
+    assert _error_line({"error_code": "CODE", "message": "msg"}) == "CODE: msg"
+    assert _error_line({"field_path": "path", "message": "msg"}) == "path: msg"
+    assert _error_line({"error_code": "CODE", "field_path": "path", "message": "msg"}) == "CODE path: msg"
+
+
+def test_json_formatting_tolerates_dates():
+    import datetime
+
+    outcome = Outcome("c.s.r", "create", "planned", [], {"when": datetime.date(2026, 1, 2)})
+    assert "2026-01-02" in format_text([outcome], "dry_run")
+    assert "2026-01-02" in format_json([outcome], "dry_run")
+
+
+def test_plan_rule_tolerates_non_dict_annotations_and_schedule():
+    want = _rule("a", schedule={"enabled": True})
+    plan = plan_rule(want, _server(want, "i", annotations="x"), False)
+    assert plan.action == "conflict"
+    plan = plan_rule(want, _server(want, "i", schedule="x"), False)
+    assert plan.action == "update" and plan.want["schedule"]["enabled"] is False
+    bad_file = _rule("a", annotations="x")
+    assert plan_rule(bad_file, _server(_rule("a"), "i"), False).action == "conflict"
+
+
+def test_planning_exception_becomes_error_outcome(monkeypatch):
+    import sigma.backends.databricks.lakewatch_rule_deploy as mod
+
+    real = mod.plan_rule
+
+    def flaky(want, have, force):
+        if want["rule_name"] == "bad":
+            raise RuntimeError("kaboom")
+        return real(want, have, force)
+
+    monkeypatch.setattr(mod, "plan_rule", flaky)
+    client = FakeClient()
+    outcomes = _run(_docs(_rule("one"), _rule("bad"), _rule("two")), client)
+    assert [(o.rule, o.action, o.status) for o in outcomes] == [
+        ("c.s.one", "create", "created"),
+        ("c.s.bad", "unplanned", "error"),
+        ("c.s.two", "create", "created"),
+    ]
+    assert outcomes[1].details == ["error: kaboom"]
+    assert exit_code(outcomes, False) == EXIT_API

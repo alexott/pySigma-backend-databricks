@@ -866,9 +866,9 @@ lakewatch-rule-deploy --profile <profile> detections/
 
 | Flag | Meaning |
 |------|---------|
-| `--profile PROFILE` | Databricks CLI profile. Default: the SDK's standard auth chain. |
+| `--profile PROFILE` | Databricks CLI profile. Default: the SDK's standard auth chain. A bad profile or missing credentials exit with 2; a rejected or expired token (401/403) fails on the first call and is reported as API errors (exit 4). |
 | `--dry-run` | Validate and print the planned changes with their bodies; write nothing. |
-| `--validate-only` | Validate the rules; write nothing. |
+| `--validate-only` | Validate the rules that would be created, updated or overwritten; write nothing. Unchanged and conflicting rules aren't validated. |
 | `--force` | Overwrite rules that were not made from this Sigma rule. |
 | `--warehouse-id ID` | Warehouse for the validateRule SQL dry run. Without it, the rule's `batch.warehouse_id` is used; with neither, validation is static only. |
 | `--catalog C` | Replace `catalog_name` in every rule. `batch.sql.default_catalog_name` follows if it equals the original catalog. |
@@ -906,6 +906,7 @@ unchanged main.sec.suspicious_login
 conflict main.sec.legacy_rule
   exists and was not made from this Sigma rule (server sigma_id: none, file sigma_id: 3f1c...)
 created 0, updated 1, overwritten 0, unchanged 1, conflicts 1, invalid 0, errors 0
+note: creating or updating a rule starts a one-time run of it on the server
 ```
 
 Statuses are `created`, `updated`, `overwritten`, `planned` (valid, but nothing was written),
@@ -917,9 +918,9 @@ starts with `dry run: would ` or `validate only: would `, for example `would cre
 | Exit code | Meaning |
 |-----------|---------|
 | 0 | Everything is ok. |
-| 2 | Local error: bad file, content-pack document, missing identity keys, duplicate rule, missing `deploy` extra, or failed auth. Nothing is written. |
+| 2 | Local error: bad file, content-pack document, missing identity keys, duplicate rule, missing `deploy` extra, a bad profile, or no credentials. Nothing is written. |
 | 3 | A conflict (without `--force`) or an invalid rule. |
-| 4 | An API error. |
+| 4 | An API error, including a rejected or expired token (401/403). |
 
 The highest applicable code wins.
 

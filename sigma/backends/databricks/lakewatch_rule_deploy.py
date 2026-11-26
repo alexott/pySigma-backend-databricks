@@ -160,7 +160,9 @@ class Plan:
 
 
 def _sigma_id(rule: Dict[str, Any]) -> Optional[str]:
-    return (rule.get("annotations") or {}).get("sigma_id")
+    annotations = rule.get("annotations")
+    sigma_id = annotations.get("sigma_id") if isinstance(annotations, dict) else None
+    return sigma_id if isinstance(sigma_id, str) else None
 
 
 def plan_rule(want: Dict[str, Any], have: Optional[Dict[str, Any]], force: bool) -> Plan:
@@ -183,7 +185,10 @@ def plan_rule(want: Dict[str, Any], have: Optional[Dict[str, Any]], force: bool)
 
     adjusted = copy.deepcopy(want)
     if isinstance(adjusted.get("schedule"), dict):
-        adjusted["schedule"]["enabled"] = bool((have.get("schedule") or {}).get("enabled", False))
+        have_schedule = have.get("schedule")
+        adjusted["schedule"]["enabled"] = (
+            bool(have_schedule.get("enabled", False)) if isinstance(have_schedule, dict) else False
+        )
     changed = sorted(k for k, v in adjusted.items() if k not in IDENTITY_KEYS and not subset(v, have.get(k)))
     if not changed:
         return Plan("noop", name, [], {}, rule_id, etag, None, adjusted)
@@ -312,7 +317,9 @@ class Outcome:
 
 
 def _error_line(err: Dict[str, Any]) -> str:
-    return f"{err.get('error_code', '')} {err.get('field_path', '')}: {err.get('message', '')}".strip()
+    head = " ".join(str(err[k]) for k in ("error_code", "field_path") if err.get(k))
+    message = str(err.get("message") or "")
+    return f"{head}: {message}" if head and message else head or message
 
 
 def _deploy_one(
@@ -323,8 +330,11 @@ def _deploy_one(
     force: bool,
     warehouse_id: Optional[str],
 ) -> Outcome:
-    plan = plan_rule(doc.doc, have, force)
     label = doc.label
+    try:
+        plan = plan_rule(doc.doc, have, force)
+    except Exception as exc:  # noqa: BLE001 - a planning failure is reported per rule
+        return Outcome(label, "unplanned", "error", [f"error: {exc}"])
     details: List[str] = []
     if plan.action in ("update", "overwrite"):
         details.append(f"update_mask: {','.join(plan.update_mask)}")
@@ -410,7 +420,9 @@ def format_text(outcomes: Sequence[Outcome], mode: str) -> str:
         lines.append(f"{o.status} {o.rule}")
         lines.extend(f"  {d}" for d in o.details)
         if o.body is not None:
-            lines.extend(f"    {line}" for line in json.dumps(o.body, indent=2, sort_keys=False).splitlines())
+            lines.extend(
+                f"    {line}" for line in json.dumps(o.body, indent=2, sort_keys=False, default=str).splitlines()
+            )
     counts = _counts(outcomes)
     words = [("created", "create"), ("updated", "update"), ("overwritten", "overwrite")]
     parts = [f"{key} {counts[key]}" for key in ("unchanged", "conflicts", "invalid", "errors")]
@@ -432,7 +444,7 @@ def format_json(outcomes: Sequence[Outcome], mode: str) -> str:
         if mode == "dry_run":
             entry["body"] = o.body
         rules.append(entry)
-    return json.dumps({"rules": rules, "summary": {**_counts(outcomes), "mode": mode}}, indent=2)
+    return json.dumps({"rules": rules, "summary": {**_counts(outcomes), "mode": mode}}, indent=2, default=str)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -445,7 +457,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", help="Databricks CLI profile (default: the SDK's standard auth chain)")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--dry-run", action="store_true", help="validate and print the planned changes; write nothing")
-    modes.add_argument("--validate-only", action="store_true", help="validate the rules; write nothing")
+    modes.add_argument(
+        "--validate-only",
+        action="store_true",
+        help=(
+            "validate the rules that would be created, updated or overwritten; write nothing; "
+            "unchanged and conflicting rules aren't validated"
+        ),
+    )
     parser.add_argument("--force", action="store_true", help="overwrite rules that were not made from this Sigma rule")
     parser.add_argument("--warehouse-id", help="warehouse for the validateRule SQL dry-run")
     parser.add_argument("--catalog", help="replace catalog_name in every rule")
