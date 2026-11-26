@@ -119,6 +119,39 @@ def test_u2_converts():
     assert "AND (try_variant_get(httpRequest, '$.requestUrl', 'string') rlike 'a.+b')" in rx
 
 
+@pytest.mark.parametrize("parser, col", [(ZSCALER, "url"), (UMBRELLA, "url")])
+@pytest.mark.parametrize("field", ["c-uri", "cs-uri"])
+def test_u2_converts_proxy(parser, col, field):
+    sql = _sql(parser, "proxy", f"    sel:\n        {field}|contains: /a\n    condition: sel")
+    assert f"AND (contains(lower({col}), lower('/a')))" in sql
+    all_ = _sql(
+        parser,
+        "proxy",
+        f"    sel:\n        {field}|contains|all:\n            - /a\n            - /b\n    condition: sel",
+    )
+    assert f"AND (contains(lower({col}), lower('/a')) AND contains(lower({col}), lower('/b')))" in all_
+    end = _sql(parser, "proxy", f"    sel:\n        {field}|endswith: .hta\n    condition: sel")
+    assert f"AND (endswith(lower({col}), lower('.hta')))" in end
+    rx = _sql(parser, "proxy", f"    sel:\n        {field}|re: 'a.+b'\n    condition: sel")
+    assert f"AND ({col} rlike 'a.+b')" in rx
+
+
+@pytest.mark.parametrize("parser", [ZSCALER, UMBRELLA])
+@pytest.mark.parametrize("field", ["c-uri", "cs-uri"])
+@pytest.mark.parametrize(
+    "detection, modifier",
+    [
+        ("{f}: /x", "eq"),
+        ("{f}|startswith: /x", "startswith"),
+        ("{f}: '*foo*'", "eq"),
+    ],
+)
+def test_u2_rejects_proxy(parser, field, detection, modifier):
+    det = "    sel:\n        " + detection.format(f=field) + "\n    condition: sel"
+    msg = _convert_error(parser, "proxy", det)
+    assert msg == f"field {field}: modifier {modifier} is not supported (profile {parser})"
+
+
 @pytest.mark.parametrize(
     "detection, modifier",
     [
@@ -140,10 +173,12 @@ def test_u2_rejects(detection, modifier):
     "parser, field",
     [(p, f) for p in (CLOUDFLARE, GCPLB) for f in ("cs-username", "cs-content-type")]
     + [(AKAMAI, f) for f in ("cs-user-agent", "cs-referer", "cs-username", "cs-content-type")]
-    + [(AWSWAF, f) for f in ("sc-status", "cs-username", "cs-content-type")],
+    + [(AWSWAF, f) for f in ("sc-status", "cs-username", "cs-content-type")]
+    + [(p, f) for p in (ZSCALER, UMBRELLA) for f in ("c-uri-query", "cs-uri-stem", "c-uri-extension", "cs-cookie")],
 )
 def test_unmapped(parser, field):
-    assert f"is not mapped by profile {parser}" in _convert_error(parser, "webserver", _sel(field))
+    category = "proxy" if parser in (ZSCALER, UMBRELLA) else "webserver"
+    assert f"is not mapped by profile {parser}" in _convert_error(parser, category, _sel(field))
 
 
 @pytest.mark.parametrize("field", ["cs-uri-stem", "cs-host"])
@@ -160,6 +195,8 @@ def test_entities():
     assert "try_variant_get(httpRequest, '$.clientIp', 'string') AS sigma_entity" in _sql(
         AWSWAF, "webserver", _sel("cs-method")
     )
+    assert "user AS sigma_entity" in _sql(ZSCALER, "proxy", _sel("cs-method"))
+    assert "identity AS sigma_entity" in _sql(UMBRELLA, "proxy", _sel("cs-method"))
 
 
 def test_routing():
@@ -171,6 +208,8 @@ def test_routing():
         DatabricksBackend().discover_parsers(SigmaCollection([_rule("proxy", _sel("cs-method"))])), default=str
     )
     assert not any(p in proxy for p in (CLOUDFLARE, GCPLB, AKAMAI, AWSWAF))
+    assert ZSCALER in proxy and UMBRELLA in proxy
+    assert not any(p in web for p in (ZSCALER, UMBRELLA))
 
 
 # --- akamai_waf and aws_waf_web_acl (split path and query: U1) --------------------------------
@@ -325,4 +364,76 @@ def test_awswaf_snapshot():
         "WHERE IN_TIMERANGE(time)\n"
         "  AND (lower(try_variant_get(httpRequest, '$.httpMethod', 'string')) = lower('POST') "
         f"AND (contains(lower({AW_URI}), lower('/owa/auth/')) OR contains(lower({AW_ARGS}), lower('/owa/auth/'))))"
+    )
+
+
+# --- zscaler_zia_web_log and ciscoumbrella_proxy (proxy; whole-URL U2) -------------------------
+
+
+@pytest.mark.parametrize("field", ["c-uri", "cs-uri"])
+@pytest.mark.parametrize("parser", [ZSCALER, UMBRELLA])
+def test_proxy_url_alias_is_u2(parser, field):
+    # The URL alias is the whole-URL column, so only U2 modifiers convert (see test_u2_*_proxy).
+    sql = _sql(parser, "proxy", f"    sel:\n        {field}|contains: x\n    condition: sel")
+    assert "AND (contains(lower(url), lower('x')))" in sql
+
+
+@pytest.mark.parametrize(
+    "field, expected",
+    [
+        ("c-useragent", "lower(useragent) = lower('x')"),
+        ("cs-method", "lower(requestmethod) = lower('x')"),
+        ("cs-host", "lower(hostname) = lower('x')"),
+        ("dst_ip", "lower(serverip) = lower('x')"),
+    ],
+)
+def test_zscaler_aliases(field, expected):
+    assert f"AND ({expected})" in _sql(ZSCALER, "proxy", _sel(field))
+
+
+@pytest.mark.parametrize(
+    "field, expected",
+    [
+        ("c-useragent", "lower(userAgent) = lower('x')"),
+        ("cs-method", "lower(requestMethod) = lower('x')"),
+        ("cs-host", "lower(hostName) = lower('x')"),
+        ("dst_ip", "lower(destinationIp) = lower('x')"),
+    ],
+)
+def test_umbrella_aliases(field, expected):
+    assert f"AND ({expected})" in _sql(UMBRELLA, "proxy", _sel(field))
+
+
+def test_proxy_sc_status():
+    det = "    sel:\n        sc-status: 200\n    condition: sel"
+    # Zscaler status is a STRING column; Umbrella statusCode is INT.
+    assert "AND (lower(status) = lower('200'))" in _sql(ZSCALER, "proxy", det)
+    assert "AND (statusCode = 200)" in _sql(UMBRELLA, "proxy", det)
+
+
+PROXY_SNAP = (
+    "    sel:\n        c-uri|endswith: .hta\n        cs-method: GET\n        c-useragent|contains: curl\n"
+    "    condition: sel"
+)
+
+
+def test_zscaler_snapshot():
+    assert _sql(ZSCALER, "proxy", PROXY_SNAP) == (
+        "SELECT *, user AS sigma_entity\n"
+        "FROM t\n"
+        "WHERE IN_TIMERANGE(time)\n"
+        "  AND (endswith(lower(url), lower('.hta')) "
+        "AND lower(requestmethod) = lower('GET') "
+        "AND contains(lower(useragent), lower('curl')))"
+    )
+
+
+def test_umbrella_snapshot():
+    assert _sql(UMBRELLA, "proxy", PROXY_SNAP) == (
+        "SELECT *, identity AS sigma_entity\n"
+        "FROM t\n"
+        "WHERE IN_TIMERANGE(time)\n"
+        "  AND (endswith(lower(url), lower('.hta')) "
+        "AND lower(requestMethod) = lower('GET') "
+        "AND contains(lower(userAgent), lower('curl')))"
     )

@@ -1,0 +1,79 @@
+# Built-in Lakewatch profile for the zscaler_zia_web_log parser (Zscaler Internet Access web logs, NSS feed).
+# Field-name sources: Zscaler ZIA Web Log (NSS feed) field reference, the W3C Extended Log File Format
+# for the c-/cs-/sc- names, and the SigmaHQ corpus for aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - c-uri and cs-uri map to url, which holds the host, path and query WITHOUT the scheme. So plain
+#   equality and startswith on a path would silently never match; the modifiers allowlist (contains,
+#   endswith, re, plus all with contains) makes every other modifier, plain equality and a
+#   wildcard-only equality such as '*foo*' included, fail the rule. endswith matches a URL that ends
+#   with the value; a trailing query string makes it miss.
+# - c-useragent, cs-method, cs-host and dst_ip map to useragent, requestmethod, hostname and serverip.
+#   Only spellings that SigmaHQ proxy rules use get aliases; there are no referrer or src_ip aliases
+#   (refererURL and ClientIP work under their own names).
+# - sc-status maps to status, a STRING column, so a number is compared as a string.
+# - c-uri-query, cs-uri-stem, c-uri-extension and cs-cookie are unmapped: the log has only the whole
+#   URL and no cookie.
+# - event is a VARIANT column with no declared children. It holds the raw event and is not known to be
+#   free of arrays, so it gets a bare line only and no prefix line.
+profile: zscaler_zia_web_log
+version: 1
+parser: zscaler_zia_web_log
+entity: user
+fields:
+  ClientIP: ClientIP
+  action: action
+  appclass: appclass
+  appname: appname
+  bwthrottle: bwthrottle
+  clientpublicIP: clientpublicIP
+  contenttype: contenttype
+  department: department
+  devicehostname: devicehostname
+  deviceowner: deviceowner
+  dlpdictionaries: dlpdictionaries
+  dlpengine: dlpengine
+  event: event
+  event_id: event_id
+  fileclass: fileclass
+  filetype: filetype
+  hostname: hostname
+  keyprotectiontype: keyprotectiontype
+  location: location
+  pagerisk: pagerisk
+  product: product
+  protocol: protocol
+  reason: reason
+  refererURL: refererURL
+  requestmethod: requestmethod
+  requestsize: requestsize
+  responsesize: responsesize
+  serverip: serverip
+  sourcetype: sourcetype
+  status: status
+  threatcategory: threatcategory
+  threatclass: threatclass
+  threatname: threatname
+  transactionsize: transactionsize
+  unscannabletype: unscannabletype
+  url: url
+  urlcategory: urlcategory
+  urlclass: urlclass
+  urlsupercategory: urlsupercategory
+  user: user
+  useragent: useragent
+  vendor: vendor
+  c-uri:
+    field: url
+    modifiers: [contains, endswith, re, all]
+  cs-uri:
+    field: url
+    modifiers: [contains, endswith, re, all]
+  c-useragent: useragent
+  cs-method: requestmethod
+  cs-host: hostname
+  sc-status: status
+  dst_ip: serverip
+logsources:
+  - match: {category: proxy}

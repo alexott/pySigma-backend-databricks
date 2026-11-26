@@ -1,0 +1,89 @@
+# Built-in Lakewatch profile for the ciscoumbrella_proxy parser (Cisco Umbrella secure web gateway
+# proxy logs).
+# Field-name sources: Cisco Umbrella proxy log format reference, the W3C Extended Log File Format for
+# the c-/cs-/sc- names, and the SigmaHQ corpus for aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - c-uri and cs-uri map to url, which holds the FULL URL (scheme, host, path and query). So plain
+#   equality and startswith on a path would silently never match; the modifiers allowlist (contains,
+#   endswith, re, plus all with contains) makes every other modifier, plain equality and a
+#   wildcard-only equality such as '*foo*' included, fail the rule. endswith matches a URL that ends
+#   with the value; a trailing query string makes it miss.
+# - c-useragent, cs-method, cs-host and dst_ip map to userAgent, requestMethod, hostName and
+#   destinationIp. Only spellings that SigmaHQ proxy rules use get aliases; there are no referrer or
+#   src_ip aliases (referrer and internalIp work under their own names).
+# - RISK: cs-host maps to hostName by decision, but the parser comment says only "Host name". If it is
+#   the client host rather than the destination, cs-host rules match the wrong thing. There is no live
+#   data to confirm it.
+# - sc-status maps to statusCode, an INT column, so a number is compared numerically.
+# - c-uri-query, cs-uri-stem, c-uri-extension and cs-cookie are unmapped: the log has only the whole
+#   URL and no cookie.
+profile: ciscoumbrella_proxy
+version: 1
+parser: ciscoumbrella_proxy
+entity: identity
+fields:
+  ampDisposition: ampDisposition
+  ampMalwareName: ampMalwareName
+  ampScore: ampScore
+  appEntityCategory: appEntityCategory
+  appEntityName: appEntityName
+  applicationIds_raw: applicationIds_raw
+  avDetections_raw: avDetections_raw
+  blockedCategories_raw: blockedCategories_raw
+  categories_raw: categories_raw
+  certificateErrors_raw: certificateErrors_raw
+  contentType: contentType
+  dataCenter: dataCenter
+  destinationCountries_raw: destinationCountries_raw
+  destinationIp: destinationIp
+  destinationListIds_raw: destinationListIds_raw
+  detectedFileType: detectedFileType
+  dlpStatus: dlpStatus
+  egress: egress
+  externalIp: externalIp
+  fileAction: fileAction
+  fileName: fileName
+  forwardingMethod: forwardingMethod
+  hostName: hostName
+  identities_raw: identities_raw
+  identity: identity
+  identityType: identityType
+  identityTypes_raw: identityTypes_raw
+  internalIp: internalIp
+  isolateAction: isolateAction
+  mspOrganizationId: mspOrganizationId
+  organizationId: organizationId
+  producer: producer
+  puas_raw: puas_raw
+  referrer: referrer
+  requestMethod: requestMethod
+  requestSize: requestSize
+  responseBodySize: responseBodySize
+  responseSize: responseSize
+  ruleId: ruleId
+  rulesetId: rulesetId
+  securityOverridden: securityOverridden
+  serverName: serverName
+  sha: sha
+  statusCode: statusCode
+  timeBasedRule: timeBasedRule
+  url: url
+  userAgent: userAgent
+  verdict: verdict
+  warnCategories_raw: warnCategories_raw
+  warnStatus: warnStatus
+  c-uri:
+    field: url
+    modifiers: [contains, endswith, re, all]
+  cs-uri:
+    field: url
+    modifiers: [contains, endswith, re, all]
+  c-useragent: userAgent
+  cs-method: requestMethod
+  cs-host: hostName
+  sc-status: statusCode
+  dst_ip: destinationIp
+logsources:
+  - match: {category: proxy}
