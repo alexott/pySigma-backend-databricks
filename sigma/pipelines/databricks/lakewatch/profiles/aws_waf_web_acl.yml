@@ -15,8 +15,10 @@
 # - cs-user-agent, cs-referer and cs-host are unsupported: the request headers are an array inside the
 #   httpRequest VARIANT (httpRequest.headers), which can't be queried by path. They fail with a clear
 #   message. cs-username and cs-content-type are unmapped: nothing equivalent is logged.
-# - httpRequest declares children, so it gets a bare line and no prefix line; labels and
-#   requestHeadersInserted are free-form VARIANT columns with a bare line plus a prefix line.
+# - httpRequest declares children, so it gets a bare line and no prefix line. labels ([{name}]) and
+#   requestHeadersInserted ([{name, value}]) are VARIANT columns that hold arrays, so they get bare
+#   lines only and no prefix line: they can only be queried as a whole value with |contains, and a
+#   member such as labels.name is not mapped.
 # - Dropped from the scaffold: httpRequest.headers.name and .value (array paths inside a VARIANT) and
 #   the ARRAY columns (nonTerminatingMatchingRules, rateBasedRuleList, ruleGroupList,
 #   terminatingRuleMatchDetails) with their members.
@@ -40,9 +42,7 @@ fields:
   httpSourceId: httpSourceId
   httpSourceName: httpSourceName
   labels: labels
-  labels.*: labels.*
   requestHeadersInserted: requestHeadersInserted
-  requestHeadersInserted.*: requestHeadersInserted.*
   responseCodeSent: responseCodeSent
   terminatingRuleId: terminatingRuleId
   terminatingRuleType: terminatingRuleType

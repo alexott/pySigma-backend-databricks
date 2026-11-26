@@ -252,8 +252,14 @@ def test_u1_rejects(parser, detection):
 
 @pytest.mark.parametrize("parser", [AKAMAI, AWSWAF])
 @pytest.mark.parametrize("value", ["/login/index.php", "login="])
-def test_u1_does_not_reject(parser, value):
-    _sql(parser, "webserver", f"    sel:\n        cs-uri-query|contains: '{value}'\n    condition: sel")
+@pytest.mark.parametrize("mod", ["contains", "contains|all", "endswith"])
+def test_u1_does_not_reject(parser, value, mod):
+    _sql(parser, "webserver", f"    sel:\n        cs-uri-query|{mod}: '{value}'\n    condition: sel")
+
+
+@pytest.mark.parametrize("field", ["labels.name", "requestHeadersInserted.name"])
+def test_awswaf_array_variant_members_unmapped(field):
+    assert f"is not mapped by profile {AWSWAF}" in _convert_error(AWSWAF, "webserver", _sel(field))
 
 
 @pytest.mark.parametrize("field", ["cs-user-agent", "cs-referer", "cs-host"])
