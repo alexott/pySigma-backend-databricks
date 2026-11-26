@@ -720,10 +720,11 @@ because they match Security & Compliance alert records, which these parsers don'
 Office 365 Management Activity API schema and haven't been checked against live data.
 
 The GCP profiles map Cloud Audit Logs (`gcp_audit_log`) and the Google Workspace Admin SDK Reports
-`activities` resource (`google_workspace_reports`). The service fields (`eventService` and
-`data.protoPayload.serviceName`) go through a value map: `admin.googleapis.com` becomes `admin` and
-`login.googleapis.com` becomes `login`, and any other service value fails to convert. In `gcp_audit_log`,
-only `data.protoPayload.serviceName`, `.methodName`, `.logName` and `.resource.type` are mapped (there is no
+`activities` resource (`google_workspace_reports`). In `google_workspace_reports`, the service fields
+(`eventService` and `protoPayload.serviceName`) go through a value map: `admin.googleapis.com` becomes `admin` and
+`login.googleapis.com` becomes `login`, and any other service value fails to convert. In `gcp_audit_log`, the service
+name passes through unchanged. Of the `data.protoPayload.*` names, only `data.protoPayload.serviceName`,
+`.methodName`, `.logName` and `.resource.type` are mapped (there is no
 `data.protoPayload.*` prefix), and any other `data.protoPayload.<x>` fails as not mapped. A trailing `*` in
 `gcp.audit.method_name` renders `startswith()`. The `authorizationInfo` array
 (`data.protoPayload.authorizationInfo.permission` and `.granted`) isn't supported and fails with "not supported by
