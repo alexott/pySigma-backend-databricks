@@ -39,11 +39,14 @@ fields:
   networkInfo.regionCode: networkInfo.regionCode
   networkInfo.subdivisionCode: networkInfo.subdivisionCode
   ownerDomain: ownerDomain
+  parameters: parameters
   parameters.*: parameters.*
+  resourceDetails: resourceDetails
   resourceDetails.*: resourceDetails.*
   resourceIds: resourceIds
   status: status
   type: type
+  userDeviceInfo: userDeviceInfo
   userDeviceInfo.*: userDeviceInfo.*
   eventName: name
   protoPayload.metadata.event.eventName: name

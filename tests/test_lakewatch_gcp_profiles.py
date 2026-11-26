@@ -210,3 +210,12 @@ def test_workspace_snapshot():
         "WHERE IN_TIMERANGE(time)\n"
         "  AND (lower(application) = lower('login') AND lower(name) = lower('suspicious_login'))"
     )
+
+
+@pytest.mark.parametrize(
+    "parser,column,service",
+    [(REPORTS, "parameters", "google_workspace.admin"), (AUDIT, "labels", "gcp.audit")],
+)
+def test_whole_variant_contains(parser, column, service):
+    sql = _sql(parser, service, _sel(f"{column}|contains"))
+    assert f"AND (contains(lower(to_json({column})), lower('x')))" in sql

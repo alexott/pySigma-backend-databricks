@@ -37,6 +37,7 @@ fields:
   httpRequest.status: httpRequest.status
   httpRequest.userAgent: httpRequest.userAgent
   insertId: insertId
+  labels: labels
   labels.*: labels.*
   logName: logName
   operation.first: operation.first
