@@ -787,7 +787,9 @@ class DatabricksBackend(TextQueryBackend):
         """Value of a named entry whose members are declared by ``entries`` (``name`` is quoted).
 
         A VARIANT list is read as ``ARRAY<VARIANT>`` with per-element ``try_variant_get``, so
-        elements may have other members of any type; an ARRAY<STRUCT> by member access.
+        elements may have other members of any type; an ARRAY<STRUCT> by member access. A VARIANT list
+        has no single-object fallback (unlike the ``_Name``/``_VALUE`` form): a value that isn't an
+        array gives NULL.
         """
         spec = path.entry_spec
         assert spec is not None

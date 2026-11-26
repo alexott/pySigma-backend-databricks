@@ -574,7 +574,7 @@ def _validate_mappings(profile: Profile, schema: ParserSchema, mappings: Dict[st
                     try:
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
-                            resolve_schema_path(schema, target)
+                            resolve_schema_path(schema, target, entries=profile.entries)
                     except UnknownFieldError:
                         continue
                     raise ProfileError(
@@ -639,7 +639,7 @@ def validate_profile(profile: Profile, schema: ParserSchema) -> None:
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                fp = resolve_schema_path(schema, profile.entity)
+                fp = resolve_schema_path(schema, profile.entity, entries=profile.entries)
         except UnknownFieldError as e:
             raise ProfileError(profile.source, f"profile '{profile.profile}': entity {profile.entity}: {e}") from None
         if fp.arrays:

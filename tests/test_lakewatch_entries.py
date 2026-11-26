@@ -217,3 +217,51 @@ def test_entries_validation(entries, match):
 def test_variant_array_named_entry_needs_declaration(tmp_path):
     with pytest.raises(Exception, match="needs a VARIANT or ARRAY<STRUCT<_Name, _VALUE>> field"):
         _where(tmp_path, "aws_waf_web_acl", {"ua": "httpRequest.headers[User-Agent]"}, None, "ua", "x")
+
+
+def test_entries_entity_renders_through_declared_entry(tmp_path):
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    data = {
+        "profile": "aws_waf_web_acl", "version": 1, "parser": "aws_waf_web_acl",
+        "fields": {"ua": "httpRequest.headers[User-Agent]"},
+        "entity": "httpRequest.headers[User-Agent]",
+        "entries": {"httpRequest.headers": {"name": "name", "value": "value", "ignore_case": True}},
+        "logsources": [{"match": {"product": "test", "service": "svc"}}],
+    }
+    (profiles / "p.yml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    backend = DatabricksBackend(
+        parsers="aws_waf_web_acl", table_name="t", catalog_name="c", schema_name="s",
+        lakewatch_profiles_dir=str(profiles),
+    )
+    rule = SigmaCollection.from_yaml("""
+title: T
+status: test
+logsource:
+    product: test
+    service: svc
+detection:
+    sel:
+        ua: x
+    condition: sel
+""").rules[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
+    assert sql.startswith(
+        "SELECT *, try_variant_get(try_element_at(filter(try_variant_get(httpRequest, '$.headers', "
+        "'ARRAY<VARIANT>'), e -> lower(try_variant_get(e, '$.name', 'STRING')) = lower('User-Agent')), 1), "
+        "'$.value', 'STRING') AS sigma_entity"
+    )
+
+
+def test_entries_validate_entity_and_undeclared_probe():
+    schema = _schema()
+    profile = parse_profile({**_profile({"v.arr": {"name": "n", "value": "x"}}),
+                             "entity": "v.arr[h]"}, "<dict>")
+    validate_profile(profile, schema)
+    # 'undeclared' on a declared-entry target is flagged as not needed.
+    data = _profile({"v.arr": {"name": "n", "value": "x"}})
+    data["fields"] = {"A": {"field": "v.arr[h]", "undeclared": True}}
+    with pytest.raises(ProfileError, match="'undeclared' is not needed"):
+        validate_profile(parse_profile(data, "<dict>"), schema)
