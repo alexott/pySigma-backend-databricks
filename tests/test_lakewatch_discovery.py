@@ -186,3 +186,20 @@ def test_ocsf_mode_not_discovery():
     assert not [w for w in caught if "discovery" in str(w.message)]
     assert "batch:" in out and "FROM t" in out
     assert "summary" not in yaml.safe_load(out).get("rules", {})
+
+
+def test_discovery_after_conversion_resets_last_report():
+    backend = DatabricksBackend()
+    backend.parsers = [SYSMON]
+    backend.table_name = "t"
+    backend.catalog_name = "c"
+    backend.schema_name = "s"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        backend.convert(_rules(_rule()), "lakewatch")
+    assert backend.last_report is not None
+    backend.parsers = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        backend.convert(_rules(_rule()), "lakewatch")
+    assert backend.last_report is None

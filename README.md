@@ -344,10 +344,10 @@ rules:
     approximate: false
     fields:
       Image:
-        targets: [EventData[NewProcessName]]
+        targets: ["EventData[NewProcessName]"]
         resolution: mapped
       CommandLine:
-        targets: [EventData[CommandLine]]
+        targets: ["EventData[CommandLine]"]
         resolution: event_data
     warnings: []
     lint: []
@@ -355,7 +355,7 @@ rules:
   title: Old Rule
   status: skipped
   reason: status deprecated
-  ...
+  # ...
 ```
 
 * **`summary`**: input rule counts (correlation rules included) and the same counts per logsource,
@@ -384,8 +384,8 @@ rules:
 * **`lint`**: hints that don't fail the rule. For a `lenient` field whose name matches a top-level
   column of the parser, ignoring case: `field <F> is read from <col>[<F>] by event_data any, but <Column> is a top-level column of parser <parser>; map it explicitly`.
 
-In Python, `backend.last_report` has the same structure as the file after every `lakewatch`
-`convert()` (`None` before the first one). `write_report` in
+In Python, `backend.last_report` holds the report of the last `lakewatch` conversion, in the same
+structure as the file (`None` before the first one, and after a discovery run). `write_report` in
 `sigma.backends.databricks.lakewatch_report` writes it.
 
 #### Target modes

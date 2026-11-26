@@ -481,6 +481,7 @@ class DatabricksBackend(TextQueryBackend):
             warnings.warn(
                 "no rules were converted: -O parsers=... was not given, so parser discovery ran "
                 "instead (report on stdout)", UserWarning, stacklevel=2)
+            self.last_report = None
             return yaml.safe_dump(self.discover_parsers(rule_collection), sort_keys=False, allow_unicode=True)
         self._converted_ids = set()
         self._raw_warned = False
