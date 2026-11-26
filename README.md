@@ -671,6 +671,9 @@ Built-in profiles:
 | `azure_signin` | `product: azure`, `service: signinlogs` | `azure_signin` |
 | `azure_monitor_activity` | `product: azure`, `service: activitylogs` | `azure_monitor_activity` |
 | `azure_identity_protection` | `product: azure`, `service: riskdetection` | `azure_identity_protection` |
+| `microsoft365_audit_general` | `product: m365`, `service: audit` | `microsoft365_audit_general` |
+| `microsoft365_audit_azure_active_directory` | `product: m365`, `service: audit` | `microsoft365_audit_azure_active_directory` |
+| `microsoft365_audit_exchange` | `product: m365`, `service: audit` or `exchange` | `microsoft365_audit_exchange` |
 | `crowdstrike_fdr_event` | `product: windows`, `linux` or `macos` with `category: process_creation`; `product: windows` with `category: network_connection`, `dns_query`, `file_event` or `registry_set` | `crowdstrike_fdr_event` |
 | `sentinelone_deep_visibility` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event`, `file_change`, `file_rename`, `file_delete`, `image_load`, `registry_set`, `dns_query`, `dns`, `network_connection` or `firewall` | `sentinelone_deep_visibility` |
 | `carbonblack_endpoint_event` | `product: windows`, `linux` or `macos` with `category: process_creation`, `file_event` or `network_connection` | `carbonblack_endpoint_event` |
@@ -701,6 +704,16 @@ is `{errorCode, additionalDetails}`), `ActivityDetails` doesn't exist, and sign-
 column and support only `|contains`, matched approximately against the JSON text. Rules that use
 them with any other comparison fail. `contains` searches the whole `properties` JSON, so it can
 also match text outside the named array.
+
+The Microsoft 365 profiles split the unified audit log by `Workload`. A `service: audit` rule converts
+for each parser that has all of its fields, and fails with "not mapped" for the others (for example,
+`ApplicationId` and `RequestType` exist only on the Azure AD parser, `Directionality` only on the general
+parser, `Parameters` only on the Exchange parser). `service: exchange` rules go to the Exchange parser. In the
+Exchange profile, `status` maps to `ResultStatus` and only `status: success` is mapped (to `True`, `Succeeded` or
+`Success`, ORed), so a rule with any other `status` value, such as `failure`, fails to convert. `OperationProperties`
+isn't mapped, so rules that use it fail. The `threat_management` and `threat_detection` rules aren't supported yet,
+because they match Security & Compliance alert records, which these parsers don't cover. The mappings follow the
+Office 365 Management Activity API schema and haven't been checked against live data.
 
 The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
 (`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which

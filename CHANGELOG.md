@@ -13,6 +13,11 @@ All notable changes to this project are documented in this file. The format is b
   to 102/123 convertible. PIM rules have no Lakewatch parser, sign-in `Status`,
   `ActivityDetails` and `properties.message` aren't supported, and array fields support only `|contains`, matched
   approximately against the JSON text.
+- **Microsoft 365 Lakewatch profiles:** built-in `microsoft365_audit_general`,
+  `microsoft365_audit_azure_active_directory` and `microsoft365_audit_exchange` profiles for the
+  `product: m365` services `audit` and `exchange`, split by `Workload`. The SigmaHQ `cloud/m365` rules
+  go from 0/19 to 5/19 convertible. `threat_management` and `threat_detection` alert rules aren't
+  supported yet, `OperationProperties` isn't mapped, and only `status: success` is mapped.
 
 ## [0.2.0] - 2026-11-26
 
