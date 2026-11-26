@@ -1,0 +1,61 @@
+# Built-in Lakewatch profile for the microsoft365_audit_azure_active_directory parser (Office 365
+# audit records of the AzureActiveDirectory workload).
+# Field-name sources: the Office 365 Management Activity API schema and the SigmaHQ corpus for
+# aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - ExtendedProperties is an array of {Name, Value}. RequestType maps to ExtendedProperties.Value,
+#   so it matches any extended-property value (looser than "the RequestType entry", but values
+#   such as Cmsi:Cmsi only occur there).
+# - OperationProperties is unmapped on purpose: it is an Exchange mailbox field that is not in
+#   this schema.
+profile: microsoft365_audit_azure_active_directory
+version: 1
+parser: microsoft365_audit_azure_active_directory
+entity: UserId
+fields:
+  ActorContextId: ActorContextId
+  ActorIpAddress: ActorIpAddress
+  Actor.ID: Actor.ID
+  Actor.Type: Actor.Type
+  AppAccessContext.AADSessionId: AppAccessContext.AADSessionId
+  AppAccessContext.APIId: AppAccessContext.APIId
+  AppAccessContext.ClientAppId: AppAccessContext.ClientAppId
+  AppAccessContext.ClientAppName: AppAccessContext.ClientAppName
+  AppAccessContext.CorrelationId: AppAccessContext.CorrelationId
+  Application: Application
+  ApplicationId: ApplicationId
+  AzureActiveDirectoryEventType: AzureActiveDirectoryEventType
+  Client: Client
+  ClientIP: ClientIP
+  CreationTime: CreationTime
+  DeviceProperties.Name: DeviceProperties.Name
+  DeviceProperties.Value: DeviceProperties.Value
+  ErrorNumber: ErrorNumber
+  ExtendedProperties.Name: ExtendedProperties.Name
+  ExtendedProperties.Value: ExtendedProperties.Value
+  Id: Id
+  InterSystemsId: InterSystemsId
+  IntraSystemId: IntraSystemId
+  LoginStatus: LoginStatus
+  LogonError: LogonError
+  ObjectId: ObjectId
+  Operation: Operation
+  OrganizationId: OrganizationId
+  RecordType: RecordType
+  ResultStatus: ResultStatus
+  Scope: Scope
+  SupportTicketId: SupportTicketId
+  TargetContextId: TargetContextId
+  Target.ID: Target.ID
+  Target.Type: Target.Type
+  UserDomain: UserDomain
+  UserId: UserId
+  UserKey: UserKey
+  UserType: UserType
+  Version: Version
+  Workload: Workload
+  RequestType: ExtendedProperties.Value
+logsources:
+  - match: {product: m365, service: audit}

@@ -1,0 +1,41 @@
+# Built-in Lakewatch profile for the microsoft365_audit_general parser (Office 365 audit records of
+# every workload not routed to the Azure AD, Exchange or SharePoint parsers).
+# Field-name sources: the Office 365 Management Activity API schema and the SigmaHQ corpus for
+# aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - Event keys without a column live in the VARIANT payload column; payload.* passes them through.
+# - Directionality and DeliveryAction (Defender TIMailData records) are explicit payload aliases;
+#   they render the same path as the payload.* prefix.
+# - OperationProperties is unmapped on purpose: it is an Exchange mailbox field that is not in
+#   this schema.
+profile: microsoft365_audit_general
+version: 1
+parser: microsoft365_audit_general
+entity: UserId
+fields:
+  AppAccessContext.AADSessionId: AppAccessContext.AADSessionId
+  AppAccessContext.APIId: AppAccessContext.APIId
+  AppAccessContext.ClientAppId: AppAccessContext.ClientAppId
+  AppAccessContext.ClientAppName: AppAccessContext.ClientAppName
+  AppAccessContext.CorrelationId: AppAccessContext.CorrelationId
+  ClientIP: ClientIP
+  CreationTime: CreationTime
+  Id: Id
+  ObjectId: ObjectId
+  Operation: Operation
+  OrganizationId: OrganizationId
+  RecordType: RecordType
+  ResultStatus: ResultStatus
+  Scope: Scope
+  UserId: UserId
+  UserKey: UserKey
+  UserType: UserType
+  Version: Version
+  Workload: Workload
+  payload.*: payload.*
+  Directionality: payload.Directionality
+  DeliveryAction: payload.DeliveryAction
+logsources:
+  - match: {product: m365, service: audit}
