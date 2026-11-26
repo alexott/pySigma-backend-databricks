@@ -1,0 +1,54 @@
+# Built-in Lakewatch profile for the azure_identity_protection parser (Entra ID Protection).
+# Field-name sources: Microsoft Entra ID Protection riskDetection/riskyUser resources and the
+# SigmaHQ corpus for aliases. No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - The category column (RiskyUsers, UserRiskEvents) is mapped but not used to filter.
+profile: azure_identity_protection
+version: 1
+parser: azure_identity_protection
+entity: userPrincipalName
+fields:
+  activity: activity
+  additionalInfo: additionalInfo
+  callerIpAddress: callerIpAddress
+  category: category
+  correlationId: correlationId
+  detectionSource: detectionSource
+  detectionTimingType: detectionTimingType
+  durationMs: durationMs
+  identity: identity
+  ipAddress: ipAddress
+  level: level
+  location: location
+  locationCity: locationCity
+  locationCountryOrRegion: locationCountryOrRegion
+  locationLatitude: locationLatitude
+  locationLongitude: locationLongitude
+  mitreTechniqueId: mitreTechniqueId
+  operationName: operationName
+  operationVersion: operationVersion
+  properties: properties
+  resourceId: resourceId
+  resultSignature: resultSignature
+  riskDetail: riskDetail
+  riskEventType: riskEventType
+  riskLevel: riskLevel
+  riskState: riskState
+  riskType: riskType
+  tenantId: tenantId
+  userDisplayName: userDisplayName
+  userId: userId
+  userPrincipalName: userPrincipalName
+  RiskEventType: riskEventType
+  RiskLevel: riskLevel
+  RiskState: riskState
+  RiskDetail: riskDetail
+  UserPrincipalName: userPrincipalName
+  IpAddress: ipAddress
+  IPAddress: ipAddress
+  properties.*: properties.*
+logsources:
+  - match:
+      product: azure
+      service: riskdetection

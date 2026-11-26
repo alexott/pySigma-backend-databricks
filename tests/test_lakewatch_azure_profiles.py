@@ -215,3 +215,64 @@ def test_signin_network_location_details_equality_fails():
 def test_signin_entity():
     sql = _sql(SIGNIN, "signinlogs", _sel("ResultType", "50126"))
     assert "userPrincipalName AS sigma_entity" in sql
+
+
+# --- azure_monitor_activity ------------------------------------------------------------------
+
+ACTIVITY = "azure_monitor_activity"
+_ACTIVITY_ALIASES = {
+    "operationName": ["OperationName", "operationName"],
+    "resourceId": ["ResourceId", "resourceId"],
+    "category": ["Category", "category"],
+    "resultType": ["ResultType", "resultType"],
+    "callerIpAddress": ["CallerIpAddress", "callerIpAddress"],
+}
+_ACTIVITY_PARAMS = [(a, t) for t, aliases in _ACTIVITY_ALIASES.items() for a in aliases]
+
+
+@pytest.mark.parametrize("alias,target", _ACTIVITY_PARAMS)
+def test_activity_aliases(alias, target):
+    sql = _sql(ACTIVITY, "activitylogs", _sel(alias))
+    assert f"lower({target}) = lower('x')" in sql
+
+
+def test_activity_operation_name():
+    sql = _sql(ACTIVITY, "activitylogs", _sel("operationName", "MICROSOFT.KEYVAULT/VAULTS/WRITE"))
+    assert "lower(operationName) = lower('MICROSOFT.KEYVAULT/VAULTS/WRITE')" in sql
+
+
+def test_activity_entity():
+    sql = _sql(ACTIVITY, "activitylogs", _sel("OperationName"))
+    assert "resourceId AS sigma_entity" in sql
+
+
+# --- azure_identity_protection ---------------------------------------------------------------
+
+IDENTITY = "azure_identity_protection"
+_IDENTITY_ALIASES = {
+    "riskEventType": ["RiskEventType", "riskEventType"],
+    "riskLevel": ["RiskLevel", "riskLevel"],
+    "riskState": ["RiskState", "riskState"],
+    "riskDetail": ["RiskDetail", "riskDetail"],
+    "userPrincipalName": ["UserPrincipalName", "userPrincipalName"],
+    "ipAddress": ["IpAddress", "IPAddress", "ipAddress"],
+}
+_IDENTITY_PARAMS = [(a, t) for t, aliases in _IDENTITY_ALIASES.items() for a in aliases]
+
+
+@pytest.mark.parametrize("alias,target", _IDENTITY_PARAMS)
+def test_identity_protection_aliases(alias, target):
+    sql = _sql(IDENTITY, "riskdetection", _sel(alias))
+    assert f"lower({target}) = lower('x')" in sql
+
+
+def test_identity_protection_entity():
+    sql = _sql(IDENTITY, "riskdetection", _sel("RiskEventType"))
+    assert "userPrincipalName AS sigma_entity" in sql
+
+
+def test_pim_has_no_profile():
+    rule = _rule("pim", _sel("riskEventType"))
+    report = DatabricksBackend().discover_parsers(SigmaCollection([rule]))
+    (entry,) = report["rules"]
+    assert entry["note"] == "no profile matches the logsource"

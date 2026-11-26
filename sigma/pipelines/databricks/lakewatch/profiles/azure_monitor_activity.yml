@@ -1,0 +1,39 @@
+# Built-in Lakewatch profile for the azure_monitor_activity parser (Azure Monitor activity logs).
+# Field-name sources: Microsoft Azure Monitor activity-log schema and the SigmaHQ corpus for
+# aliases. No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - category is the real activity category (Administrative, Security, ...), unlike azure_audit.
+profile: azure_monitor_activity
+version: 1
+parser: azure_monitor_activity
+entity: resourceId
+fields:
+  callerIpAddress: callerIpAddress
+  category: category
+  correlationId: correlationId
+  durationMs: durationMs
+  identity: identity
+  level: level
+  location: location
+  operationName: operationName
+  operationVersion: operationVersion
+  properties: properties
+  providerGuid: providerGuid
+  providerName: providerName
+  resourceId: resourceId
+  resultDescription: resultDescription
+  resultSignature: resultSignature
+  resultType: resultType
+  roleLocation: roleLocation
+  tenantId: tenantId
+  OperationName: operationName
+  ResourceId: resourceId
+  Category: category
+  ResultType: resultType
+  CallerIpAddress: callerIpAddress
+  properties.*: properties.*
+logsources:
+  - match:
+      product: azure
+      service: activitylogs
