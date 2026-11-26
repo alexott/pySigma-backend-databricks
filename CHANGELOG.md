@@ -3,7 +3,9 @@
 All notable changes to this project are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (0.2.0)
+## [Unreleased]
+
+## [0.2.0] - 2026-11-26
 
 ### Breaking changes
 
@@ -55,8 +57,10 @@ All notable changes to this project are documented in this file. The format is b
 - Keyword search over a profile's raw event source.
 - The `-O output_dir` option, which writes one `<rule_name>.yaml` per rule.
 - `-O target=content_pack|workspace` for `-f lakewatch` (default `workspace`). `content_pack`
-  creates Lakewatch content-pack rule documents, with a `content_resource_id` per rule and a
-  parser uuid from the schema catalog. With `-O output_dir` pointed at a pack's `rules/` directory
+  creates Lakewatch content-pack rule documents, with a deterministic UUIDv4
+  `content_resource_id` per rule and a parser uuid from the schema catalog. Content-pack
+  documents have no `converter_version` annotation, so converter releases don't bump every
+  rule's version. With `-O output_dir` pointed at a pack's `rules/` directory
   it writes `<name>/<name>.yaml`, merges `revisions.yaml` (content hashes and versions, edited as
   text) and writes an `appIndex.rules.yaml` fragment.
 - Profile `entity` key. Each query selects it as `sigma_entity`, and the default alert summary is
@@ -128,7 +132,8 @@ The first release published to PyPI.
 
 - Rules without a `status` (#35).
 
-[Unreleased]: https://github.com/alexott/pySigma-backend-databricks/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/alexott/pySigma-backend-databricks/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/alexott/pySigma-backend-databricks/compare/v0.1.7...v0.2.0
 [0.1.7]: https://github.com/alexott/pySigma-backend-databricks/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/alexott/pySigma-backend-databricks/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/alexott/pySigma-backend-databricks/releases/tag/v0.1.5
