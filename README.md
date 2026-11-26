@@ -129,23 +129,27 @@ Generates: `raw rlike '.*evil(cmd|powershell).*'`
 
 ## Lakewatch Output
 
-Generate [Lakewatch](https://docs.databricks.com) detection rules from Sigma rules. Each rule is a
-Unity Catalog governed resource. With OCSF, the backend runs **after** the
-[OCSF pipeline](https://github.com/SigmaHQ/pySigma-pipeline-ocsf), which normalizes
-fields and injects the OCSF class, so the backend can pick the gold table.
+Generate [Lakewatch](https://www.databricks.com/product/lakewatch) detection rules from Sigma rules
+(see the [Lakewatch documentation](https://docs.databricks.com/aws/en/lakewatch/)). Each rule is a
+Unity Catalog governed resource. By default, rules are converted against the tables of Lakewatch
+parsers (see [Lakewatch parsed tables](#lakewatch-parsed-tables)). Converting against OCSF gold
+tables is optional (see [OCSF (optional)](#ocsf-optional)).
 
 ```bash
-sigma convert -t databricks -f lakewatch -p ocsf \
-  -O catalog_name=main -O schema_name=security -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
+sigma convert -s -t databricks -f lakewatch -O parsers=aws_cloudtrail \
+  -O table_name=main.sec.aws_cloudtrail -O catalog_name=main -O schema_name=sec \
+  -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
 ```
 
-Multiple rules are emitted as separate `---` documents in one file.
+Multiple rules are emitted as separate `---` documents in one file. To write one file per rule
+instead, pass `-O output_dir=<dir>` (see the `output_dir` option under
+[Lakewatch parsed tables](#lakewatch-parsed-tables)).
 
 ### Options (`-O key=value`)
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `table_name` | *(derived)* | FROM table. If unset, derived from the OCSF class the pipeline injected; error if neither is available. |
+| `table_name` | *(none)* | FROM table. For parsed tables see the `table_name` and `table_map` options under [Lakewatch parsed tables](#lakewatch-parsed-tables); in OCSF mode it's derived from the OCSF class if unset (see [OCSF (optional)](#ocsf-optional)). |
 | `schedule` | `24h` | Rule schedule (Lakewatch duration). |
 | `default_fidelity` | *(from status)* | Override the rule fidelity. Accepts both `Investigative` and `FIDELITY_INVESTIGATIVE`. |
 | `default_category` | `Static Signature` | Rule category. |
@@ -177,8 +181,8 @@ follows:
 ### Lakewatch parsed tables
 
 By default, `-f lakewatch` converts rules against the columns of a Lakewatch parser's table.
-`-O parsers=...` selects the parsers. To convert against OCSF gold tables instead, pass
-`-O ocsf=true` or `-p ocsf`.
+`-O parsers=...` selects the parsers. To convert against OCSF gold tables instead, see
+[OCSF (optional)](#ocsf-optional).
 
 ```bash
 sigma convert -s -t databricks -f lakewatch -O parsers=aws_cloudtrail \
@@ -822,7 +826,29 @@ fails with `no selected Lakewatch parser profile accepts <field> values [...] of
 `UserWarning`); a list of names is strict. `unmapped_hint:` text is appended to the error of a
 field the profile does not map.
 
-## OCSF field rendering
+## OCSF (optional)
+
+Instead of parser tables, Lakewatch rules can be converted against the OCSF gold tables. OCSF mode
+is selected with `-p ocsf` or `-O ocsf=true`. The backend then runs **after** the
+[OCSF pipeline](https://github.com/SigmaHQ/pySigma-pipeline-ocsf), which normalizes the fields and
+injects the OCSF class, so the backend can pick the gold table:
+
+```bash
+sigma convert -t databricks -f lakewatch -p ocsf \
+  -O catalog_name=main -O schema_name=security -O warehouse_id=1234567890abcdef rules/ -o detections.yaml
+```
+
+* The FROM table is the gold table of the OCSF class the pipeline injected (for example
+  `process_activity`). `-O table_name=...` overrides it. Conversion fails if neither is available.
+* The options of [Lakewatch Output](#lakewatch-output) apply. The parsed-table options (`parsers`,
+  `table_map`, `lakewatch_profiles_dir`, `lakewatch_schemas`) don't: `-O parsers` together with
+  OCSF mode is a configuration error.
+* Target modes, profile entities and summary overrides need parsed tables: `-O target=content_pack`
+  fails in OCSF mode, `-O overrides` is ignored with a warning, and the summary is the rule title.
+* With `-O output_dir`, one file per rule and `conversion_report.yaml` are written as in parsed
+  mode (`profile` is `null` in the report).
+
+### OCSF field rendering
 
 When the target schema is OCSF, the dotted field names produced by the OCSF pipeline are rendered
 according to the OCSF attribute types (tables bundled from OCSF 1.9.0, refresh them with
