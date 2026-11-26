@@ -115,9 +115,13 @@ fields:
   WorkerWallTimeUs: WorkerWallTimeUs
   ZoneID: ZoneID
   ZoneName: ZoneName
+  Cookies: Cookies
   Cookies.*: Cookies.*
+  JA4Signals: JA4Signals
   JA4Signals.*: JA4Signals.*
+  RequestHeaders: RequestHeaders
   RequestHeaders.*: RequestHeaders.*
+  ResponseHeaders: ResponseHeaders
   ResponseHeaders.*: ResponseHeaders.*
   cs-uri-query: ClientRequestURI
   cs-uri-stem: ClientRequestPath

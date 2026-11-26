@@ -193,3 +193,10 @@ def test_gcplb_snapshot():
         f"AND contains({LB_URL}, lower('/owa/auth/')) "
         "AND try_variant_get(httpRequest, '$.status', 'bigint') = 200)"
     )
+
+
+def test_cloudflare_variant_columns():
+    whole = _sql(CLOUDFLARE, "webserver", "    sel:\n        Cookies|contains: x\n    condition: sel")
+    member = _sql(CLOUDFLARE, "webserver", _sel("RequestHeaders.User-Agent"))
+    assert "AND (contains(lower(to_json(Cookies)), lower('x')))" in whole
+    assert "AND (lower(try_variant_get(RequestHeaders, '$[\\'User-Agent\\']', 'string')) = lower('x'))" in member
