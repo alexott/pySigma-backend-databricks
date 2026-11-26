@@ -1,0 +1,76 @@
+# Built-in Lakewatch profile for the azure_audit parser (Entra ID audit logs).
+# Field-name sources: Microsoft Azure Monitor diagnostic-log schemas, the Microsoft Graph
+# directoryAudit resource docs, and the SigmaHQ corpus for aliases.
+# No LGPL Sigma pipeline source was used.
+#
+# Alias notes:
+# - Category/category map to auditCategory (SigmaHQ means UserManagement and similar); the
+#   category column is always AuditLogs, so it is deliberately not identity-mapped.
+# - properties.message is not a real field; it means activityDisplayName. The explicit line wins
+#   over the properties.* prefix.
+# - Array fields (targetResources, additionalDetails) map to the whole properties column, so
+#   |contains matches the JSON text approximately and equality fails.
+# - ConsentContext.IsAdminConsent is unmapped on purpose (a value inside modifiedProperties).
+profile: azure_audit
+version: 1
+parser: azure_audit
+entity: coalesce(initiatedByUserPrincipalName, initiatedByAppDisplayName)
+fields:
+  activityDisplayName: activityDisplayName
+  auditCategory: auditCategory
+  callerIpAddress: callerIpAddress
+  correlationId: correlationId
+  durationMs: durationMs
+  identity: identity
+  initiatedByAppDisplayName: initiatedByAppDisplayName
+  initiatedByAppId: initiatedByAppId
+  initiatedByServicePrincipalId: initiatedByServicePrincipalId
+  initiatedByUserDisplayName: initiatedByUserDisplayName
+  initiatedByUserId: initiatedByUserId
+  initiatedByUserIp: initiatedByUserIp
+  initiatedByUserPrincipalName: initiatedByUserPrincipalName
+  level: level
+  loggedByService: loggedByService
+  operationName: operationName
+  operationType: operationType
+  operationVersion: operationVersion
+  resourceId: resourceId
+  result: result
+  resultDescription: resultDescription
+  resultReason: resultReason
+  resultSignature: resultSignature
+  tenantId: tenantId
+  userAgent: userAgent
+  properties.message: activityDisplayName
+  ActivityDisplayName: activityDisplayName
+  ActivityType: activityDisplayName
+  activityType: activityDisplayName
+  OperationName: operationName
+  Category: auditCategory
+  category: auditCategory
+  Status: result
+  properties.result: result
+  Result: result
+  LoggedByService: loggedByService
+  Initiatedby: initiatedByUserPrincipalName
+  Initiatied.By: initiatedByUserPrincipalName
+  properties.initiatedBy: initiatedByUserPrincipalName
+  InitiatedBy: initiatedByUserPrincipalName
+  Target: properties
+  TargetResources: properties
+  targetResources: properties
+  properties.targetResources: properties
+  TargetResources.modifiedProperties: properties
+  TargetResources.ModifiedProperties.NewValue: properties
+  TargetResources.ModifiedProperties.DisplayName: properties
+  TargetResources.modifiedProperties.newValue: properties
+  targetResources.type: properties
+  additionalDetails.additionalInfo: properties
+  AdditionalDetails: properties
+  ResultReason: resultReason
+  failure_status_reason: resultReason
+  properties.*: properties.*
+logsources:
+  - match:
+      product: azure
+      service: auditlogs
