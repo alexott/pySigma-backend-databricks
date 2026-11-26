@@ -9,6 +9,8 @@
 #   matches the JSON text approximately and equality fails.
 # - Status and ActivityDetails are unmapped on purpose: the diagnostic status is a struct
 #   ({errorCode, additionalDetails}) and ActivityDetails does not exist.
+# - properties.message is unsupported: the Graph signIn object has no message, so the
+#   properties.* passthrough would silently never match (SigmaHQ ROPC/device-code rules).
 profile: azure_signin
 version: 1
 parser: azure_signin
@@ -81,8 +83,11 @@ fields:
   UserAgent: userAgent
   Location: location
   IPAddress: ipAddress
+  properties: properties
   properties.*: properties.*
 logsources:
   - match:
       product: azure
       service: signinlogs
+    unsupported:
+      - properties.message

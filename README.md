@@ -695,10 +695,12 @@ Built-in profiles:
 
 The Azure profiles convert most SigmaHQ `cloud/azure` rules. PIM alerts (`service: pim`) have no
 Lakewatch parser, so they stay unmatched. Sign-in `Status` isn't mapped (the diagnostic `status`
-is `{errorCode, additionalDetails}`), and `ActivityDetails` doesn't exist. Array fields
+is `{errorCode, additionalDetails}`), `ActivityDetails` doesn't exist, and sign-in
+`properties.message` is unsupported (the Graph `signIn` object has no `message`, so it would never match). Array fields
 (`targetResources`, `additionalDetails`, `networkLocationDetails`) map to the whole `properties`
 column and support only `|contains`, matched approximately against the JSON text. Rules that use
-them with equality fail.
+them with any other comparison fail. `contains` searches the whole `properties` JSON, so it can
+also match text outside the named array.
 
 The six `windows_sysmon_*` profiles read the Sysmon fields from the `EventData` named entries
 (`EventData[Name]`) of the custom Windows parsers (lakewatch parser-generators/windows), which

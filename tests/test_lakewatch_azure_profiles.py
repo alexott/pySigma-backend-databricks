@@ -94,9 +94,13 @@ def test_audit_aliases(alias, target):
         sql = _sql(AUDIT, "auditlogs", _sel(f"{alias}|contains"))
     else:
         sql = _sql(AUDIT, "auditlogs", _sel(alias))
-    assert target in sql
     if target == _ARRAY:
+        assert "contains(lower(to_json(properties))" in sql
         assert "$." not in sql  # whole column, not a sub-path
+    elif target.startswith("properties."):
+        assert f"try_variant_get(properties, '$.{target[len('properties.'):]}', 'string')" in sql
+    else:
+        assert f"lower({target}) = lower('x')" in sql
 
 
 def test_audit_properties_message_is_activity_display_name():
@@ -122,6 +126,31 @@ def test_audit_target_resources_contains_approximate():
     approx = [w for w in caught if issubclass(w.category, LakewatchApproximateWarning)]
     assert len(approx) == 1
     assert "operationName" in sql
+    assert report_approximate(detection, "auditlogs", AUDIT)
+
+
+def report_approximate(detection, service, parser):
+    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        backend.convert(SigmaCollection([_rule(service, detection)]), "lakewatch")
+    return backend.last_report["rules"][0]["results"][0]["approximate"]
+
+
+def test_audit_properties_contains_approximate():
+    sql = _sql(AUDIT, "auditlogs", _sel("properties|contains"))
+    assert "contains(lower(to_json(properties)), lower('x'))" in sql
+    assert report_approximate(_sel("properties|contains"), "auditlogs", AUDIT) is True
+
+
+def test_audit_snapshot():
+    detection = "    sel:\n        Category: UserManagement\n        Status: Success\n    condition: sel"
+    assert _sql(AUDIT, "auditlogs", detection) == (
+        "SELECT *, coalesce(initiatedByUserPrincipalName, initiatedByAppDisplayName) AS sigma_entity\n"
+        "FROM t\n"
+        "WHERE IN_TIMERANGE(time)\n"
+        "  AND (lower(auditCategory) = lower('UserManagement') AND lower(result) = lower('Success'))"
+    )
 
 
 def test_audit_array_equality_fails():
@@ -168,12 +197,11 @@ _SIGNIN_PARAMS = [(a, t) for t, aliases in _SIGNIN_ALIASES.items() for a in alia
 @pytest.mark.parametrize("alias,target", _SIGNIN_PARAMS)
 def test_signin_aliases(alias, target):
     sql = _sql(SIGNIN, "signinlogs", _sel(alias))
-    expected = target
     if target.startswith("properties."):
-        expected = f"try_variant_get(properties, '$.{target[len('properties.'):]}'"
-        assert expected in sql
+        expected = f"try_variant_get(properties, '$.{target[len('properties.'):]}', 'string')"
     else:
-        assert target in sql
+        expected = f"lower({target}) = lower('x')"
+    assert expected in sql
     if alias != target:
         # the alias text itself must not leak into the SQL as a column reference
         # (it may legitimately occur inside the expected target text, e.g. a JSON path)
@@ -188,6 +216,11 @@ def test_signin_numeric_result_type():
 
 def test_signin_status_unmapped():
     assert "not mapped" in _convert_error(SIGNIN, "signinlogs", _sel("Status", "Success"))
+
+
+def test_signin_properties_message_unsupported():
+    msg = _convert_error(SIGNIN, "signinlogs", _sel("properties.message", "ROPC"))
+    assert "not supported by profile azure_signin" in msg
 
 
 def test_signin_activity_details_unmapped():

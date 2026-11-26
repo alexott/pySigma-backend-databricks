@@ -41,6 +41,7 @@ fields:
   resultSignature: resultSignature
   tenantId: tenantId
   userAgent: userAgent
+  properties: properties
   properties.message: activityDisplayName
   ActivityDisplayName: activityDisplayName
   ActivityType: activityDisplayName
