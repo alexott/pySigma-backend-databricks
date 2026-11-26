@@ -3,9 +3,22 @@ import json
 import re
 import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import List, Mapping, Optional, Sequence, Tuple, Union
 
 from .schema_catalog import ParserSchema
+
+
+@dataclass(frozen=True)
+class EntrySpec:
+    """The members of a named-entry list, declared by the ``entries`` profile key.
+
+    ``name`` is the member holding the entry name, ``value`` the member(s) holding the value (a
+    list is coalesced as strings), and ``ignore_case`` compares the name case-insensitively.
+    """
+
+    name: str
+    value: Tuple[str, ...]
+    ignore_case: bool = False
 
 
 @dataclass(frozen=True)
@@ -21,6 +34,10 @@ class FieldPath:
     ``entry`` is set for a named entry ``Field[Name]``: the ``_VALUE`` of the element whose
     ``_Name`` is ``Name`` in a list of ``{_Name, _VALUE}`` (Windows ``EventData``). ``leaf`` is
     then the list itself, a VARIANT (``entry_variant``) or an ``ARRAY<STRUCT>``.
+
+    ``entry_spec`` is set when an ``entries`` declaration covers the entry's column: the entries
+    are then read member by member. ``entry_keys`` holds the keys from the VARIANT ``leaf`` to
+    a declared array inside it (empty when ``leaf`` itself is the list).
 
     ``allowed`` is the declared set of values of a column, STRUCT or declared VARIANT leaf.
     ``join`` holds the two resolved parts of a join field (see ``join_field_name``), which
@@ -50,6 +67,8 @@ class FieldPath:
     first: Tuple["FieldPath", ...] = ()
     first_unset: Tuple[str, ...] = ()
     variant_arrays: Tuple[Tuple[Tuple[str, ...], str], ...] = ()
+    entry_spec: Optional[EntrySpec] = None
+    entry_keys: Tuple[str, ...] = ()
 
     @property
     def whole_variant(self) -> bool:
@@ -221,11 +240,58 @@ def _resolve_variant(
 _NAMED_ENTRY = re.compile(r"(?P<base>.+)\[(?P<name>[^\[\]]+)\]")
 
 
-def _resolve_named_entry(schema: ParserSchema, path: str, base: str, name: str) -> FieldPath:
+def _resolve_declared_entry(
+    schema: ParserSchema, path: str, base: str, name: str, spec: EntrySpec,
+    entries: Mapping[str, EntrySpec],
+) -> FieldPath:
+    """Resolve ``base[name]`` of a column declared in ``entries``, member by member."""
+    target = resolve_schema_path(schema, base, entries=entries)
+    kinds = (
+        f"'{base}' declared in entries must be a top-level VARIANT, a top-level ARRAY<STRUCT> "
+        "or a declared ARRAY<VARIANT> inside a VARIANT"
+    )
+    if target.variant_arrays:
+        keys, element = target.variant_arrays[-1]
+        if (
+            target.arrays or len(target.variant_arrays) != 1 or element != "VARIANT"
+            or target.json_path or not target.leaf
+        ):
+            raise UnknownFieldError(path, schema.name, kinds)
+        return FieldPath(
+            (), target.leaf, (), None, "STRING", entry=name, entry_variant=True,
+            entry_spec=spec, entry_keys=keys,
+        )
+    if not target.arrays and target.whole_variant:
+        return FieldPath(
+            (), target.leaf, (), None, "STRING", entry=name, entry_variant=True, entry_spec=spec,
+        )
+    if (
+        len(target.arrays) == 1 and not target.leaf and target.leaf_type == "STRUCT"
+        and not target.arrays[0][:-1]
+    ):
+        column = target.arrays[0]
+        key = _find(schema, "", column[0])
+        for member in (spec.name, *spec.value):
+            if not key or not _find(schema, key + "[]", member):
+                raise UnknownFieldError(
+                    path, schema.name, f"'{base}': entries member '{member}' is not declared in the ARRAY<STRUCT>"
+                )
+        return FieldPath((), column, (), None, "STRING", entry=name, entry_variant=False, entry_spec=spec)
+    raise UnknownFieldError(path, schema.name, kinds)
+
+
+def _resolve_named_entry(
+    schema: ParserSchema, path: str, base: str, name: str,
+    entries: Optional[Mapping[str, EntrySpec]] = None,
+) -> FieldPath:
     """Resolve ``base[name]``: a named entry of a VARIANT or ``ARRAY<STRUCT<_Name, _VALUE>>``.
 
-    ``base[*]`` is the unnamed ``Data`` of a whole VARIANT (all plain strings, joined).
+    ``base[*]`` is the unnamed ``Data`` of a whole VARIANT (all plain strings, joined). A
+    ``base`` declared in ``entries`` is read with its declared members instead of
+    ``_Name``/``_VALUE``.
     """
+    if name != "*" and entries and base in entries:
+        return _resolve_declared_entry(schema, path, base, name, entries[base], entries)
     if name == "*":
         target = resolve_schema_path(schema, base)
         if target.arrays or target.variant_arrays or not target.whole_variant:
@@ -248,7 +314,9 @@ def _resolve_named_entry(schema: ParserSchema, path: str, base: str, name: str) 
     )
 
 
-def _resolve_join(schema: ParserSchema, path: str, allow_undeclared: bool) -> FieldPath:
+def _resolve_join(
+    schema: ParserSchema, path: str, allow_undeclared: bool, entries: Optional[Mapping[str, EntrySpec]] = None
+) -> FieldPath:
     """Resolve a name built by ``join_field_name`` into a FieldPath with two scalar parts."""
     not_scalar = "join parts must be scalar fields"
     split = split_join_field_name(path)
@@ -257,7 +325,7 @@ def _resolve_join(schema: ParserSchema, path: str, allow_undeclared: bool) -> Fi
     sep, names = split
     parts = []
     for name in names:
-        part = resolve_schema_path(schema, name, allow_undeclared)
+        part = resolve_schema_path(schema, name, allow_undeclared, entries)
         if not _is_scalar(part):
             raise UnknownFieldError(path, schema.name, f"{not_scalar} ('{name}' is not)")
         parts.append(part)
@@ -274,7 +342,9 @@ def _is_scalar(part: FieldPath) -> bool:
     )
 
 
-def _resolve_first_set(schema: ParserSchema, path: str) -> FieldPath:
+def _resolve_first_set(
+    schema: ParserSchema, path: str, entries: Optional[Mapping[str, EntrySpec]] = None
+) -> FieldPath:
     """Resolve a name built by ``first_set_field_name``: the first set of scalar candidates."""
     split = split_first_set_field_name(path)
     if split is None or len(split[0]) < 2:
@@ -283,7 +353,7 @@ def _resolve_first_set(schema: ParserSchema, path: str) -> FieldPath:
     resolved = []
     for candidate in candidates:
         name = candidate if isinstance(candidate, str) else join_field_name("\\", list(candidate))
-        part = resolve_schema_path(schema, name)
+        part = resolve_schema_path(schema, name, entries=entries)
         if not part.join and not _is_scalar(part):
             raise UnknownFieldError(path, schema.name, f"first-set candidates must be scalar fields ('{name}' is not)")
         resolved.append(part)
@@ -291,21 +361,23 @@ def _resolve_first_set(schema: ParserSchema, path: str) -> FieldPath:
 
 
 def resolve_schema_path(
-    schema: ParserSchema, path: str, allow_undeclared: bool = False
+    schema: ParserSchema, path: str, allow_undeclared: bool = False,
+    entries: Optional[Mapping[str, EntrySpec]] = None,
 ) -> FieldPath:
     """Resolve a dotted field name against ``schema``, or raise UnknownFieldError.
 
     ``Field[Name]`` resolves to a named entry of a ``{_Name, _VALUE}`` list (see FieldPath).
     A name built by ``join_field_name`` resolves to a join of two scalar fields. With
     ``allow_undeclared``, keys not declared under a VARIANT that declares children are accepted.
+    ``entries`` declares the members of named-entry columns (see EntrySpec).
     """
     if path.startswith(JOIN_PREFIX):  # before the named-entry pattern: a join name ends in ']'
-        return _resolve_join(schema, path, allow_undeclared)
+        return _resolve_join(schema, path, allow_undeclared, entries)
     if path.startswith(FIRST_PREFIX):
-        return _resolve_first_set(schema, path)
+        return _resolve_first_set(schema, path, entries)
     named = _NAMED_ENTRY.fullmatch(path)
     if named:
-        return _resolve_named_entry(schema, path, named["base"], named["name"])
+        return _resolve_named_entry(schema, path, named["base"], named["name"], entries)
     segments = path.split(".")
     arrays: List[Tuple[str, ...]] = []
     since: List[str] = []

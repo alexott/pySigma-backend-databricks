@@ -23,7 +23,7 @@ from sigma.exceptions import SigmaConfigurationError
 from sigma.modifiers import modifier_mapping
 from sigma.rule import SigmaLogSource
 
-from sigma.backends.databricks.field_paths import UnknownFieldError, join_field_name, resolve_schema_path
+from sigma.backends.databricks.field_paths import EntrySpec, UnknownFieldError, join_field_name, resolve_schema_path
 from sigma.backends.databricks.schema_catalog import ParserSchema
 from sigma.pipelines.databricks.lakewatch.transforms import JoinTransform, Transform, parse_transform
 
@@ -40,11 +40,13 @@ _TOP_KEYS = {
     "raw",
     "entity",
     "unmapped_hint",
+    "entries",
 }
 _BLOCK_KEYS = {"match", "conditions", "fields", "unsupported", "event_data", "route"}
 _RAW_KEYS = ("column", "entries", "expr")
 _ROUTE_KEYS = {"field", "in", "not_in"}
 _MATCH_KEYS = ("product", "category", "service")
+_ENTRY_KEYS = {"name", "value", "ignore_case"}
 _MAPPING_KEYS = {"field", "transform", "undeclared", "modifiers", "select_condition"}
 # Profile ids become part of Unity Catalog rule names: keep them short and UC-safe.
 _PROFILE_ID = re.compile(r"[a-z0-9_]+")
@@ -132,6 +134,7 @@ class Profile:
     raw: Optional[RawSource] = None
     entity: Optional[str] = None
     unmapped_hint: Optional[str] = None
+    entries: Mapping[str, EntrySpec] = field(default_factory=dict)
 
     def block_for(self, logsource: SigmaLogSource) -> Optional[LogsourceBlock]:
         """Return the most specific block matching ``logsource`` (first on ties), or None.
@@ -389,6 +392,34 @@ def _parse_products(value: Any, source: str) -> Dict[str, Dict[str, ConditionVal
     return {str(k).lower(): _parse_conditions(v, source, f"product '{k}': ") for k, v in value.items()}
 
 
+def _parse_entries(value: Any, source: str) -> Dict[str, EntrySpec]:
+    """Parse the ``entries`` key: a mapping of column path to its ``{name, value, ignore_case}``."""
+    if not isinstance(value, dict):
+        raise ProfileError(source, "'entries' must be a mapping of column path to its members")
+    entries: Dict[str, EntrySpec] = {}
+    for column, spec in value.items():
+        where = f"entries '{column}': "
+        if not isinstance(column, str) or not column:
+            raise ProfileError(source, f"entries keys must be non-empty column paths, got '{column}'")
+        if not isinstance(spec, dict):
+            raise ProfileError(source, f"{where}must be a mapping")
+        _check_keys(spec, sorted(_ENTRY_KEYS), source, where)
+        for key in ("name", "value"):
+            if key not in spec:
+                raise ProfileError(source, f"{where}missing required key '{key}'")
+        name = spec["name"]
+        if not isinstance(name, str) or not name:
+            raise ProfileError(source, f"{where}'name' must be a non-empty string")
+        members = spec["value"] if isinstance(spec["value"], list) else [spec["value"]]
+        if not members or not all(isinstance(m, str) and m for m in members):
+            raise ProfileError(source, f"{where}'value' must be a non-empty string or a list of non-empty strings")
+        ignore_case = spec.get("ignore_case", False)
+        if not isinstance(ignore_case, bool):
+            raise ProfileError(source, f"{where}'ignore_case' must be a boolean")
+        entries[column] = EntrySpec(name, tuple(members), ignore_case)
+    return entries
+
+
 def parse_profile(data: Any, source: str = "<dict>") -> Profile:
     if not isinstance(data, dict):
         raise ProfileError(source, "profile must be a mapping")
@@ -442,6 +473,7 @@ def parse_profile(data: Any, source: str = "<dict>") -> Profile:
         raw=_parse_raw(data["raw"], source) if "raw" in data else None,
         entity=entity,
         unmapped_hint=hint,
+        entries=_parse_entries(data["entries"], source) if "entries" in data else {},
     )
 
 
@@ -494,11 +526,14 @@ def _resolve(
     path: str,
     what: str,
     allow_undeclared: bool = False,
+    entries: Optional[Mapping[str, EntrySpec]] = None,
 ):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            return resolve_schema_path(schema, path, allow_undeclared)
+            return resolve_schema_path(
+                schema, path, allow_undeclared, profile.entries if entries is None else entries
+            )
     except UnknownFieldError as e:
         raise ProfileError(profile.source, f"profile '{profile.profile}': {what} '{path}': {e}") from None
 
@@ -569,7 +604,7 @@ def _validate_raw(profile: Profile, schema: ParserSchema, raw: RawSource) -> Non
                 f"profile '{profile.profile}': raw column '{raw.value}' must be a scalar STRING",
             )
     elif raw.kind == "entries":
-        _resolve(profile, schema, f"{raw.value}[x]", "raw entries")
+        _resolve(profile, schema, f"{raw.value}[x]", "raw entries", entries={})
 
 
 def _validate_route(profile: Profile, schema: ParserSchema, block: LogsourceBlock, mapped) -> None:
@@ -595,7 +630,9 @@ def _validate_route(profile: Profile, schema: ParserSchema, block: LogsourceBloc
 def validate_profile(profile: Profile, schema: ParserSchema) -> None:
     uses_event_data = bool(profile.event_data) or any(b.event_data for b in profile.logsources)
     if uses_event_data:
-        _resolve(profile, schema, f"{profile.event_data_column}[x]", "event_data column")
+        _resolve(profile, schema, f"{profile.event_data_column}[x]", "event_data column", entries={})
+    for column in profile.entries:
+        _resolve(profile, schema, f"{column}[x]", "entries")
     if profile.raw is not None:
         _validate_raw(profile, schema, profile.raw)
     if profile.entity is not None and OUTPUT_IDENTIFIER.fullmatch(profile.entity):

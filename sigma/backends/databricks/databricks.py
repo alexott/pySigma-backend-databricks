@@ -779,7 +779,45 @@ class DatabricksBackend(TextQueryBackend):
         if path.entry == "*":
             return f"array_join({self._plain_strings(path)}, '\\n')"
         name = self.sql_quote_regex(path.entry or "")
+        if path.entry_spec is not None:
+            return self._declared_entry(path, name)
         return f"try_element_at(filter({self._named_entries(path)}, e -> e._Name = '{name}'), 1)._VALUE"
+
+    def _declared_entry(self, path: FieldPath, name: str) -> str:
+        """Value of a named entry whose members are declared by ``entries`` (``name`` is quoted).
+
+        A VARIANT list is read as ``ARRAY<VARIANT>`` with per-element ``try_variant_get``, so
+        elements may have other members of any type; an ARRAY<STRUCT> by member access.
+        """
+        spec = path.entry_spec
+        assert spec is not None
+        quoted = f"lower('{name}')" if spec.ignore_case else f"'{name}'"
+        if path.entry_variant:
+            source = self._struct_ref(None, path.leaf)
+            if path.entry_keys:
+                entries = self._variant_array(source, path.entry_keys, "VARIANT")
+            else:
+                entries = f"try_variant_get({source}, '$', 'ARRAY<VARIANT>')"
+
+            def member(element: str, key: str) -> str:
+                json_path = self._json_path((key,))
+                json_path = ("$" if json_path.startswith("[") else "$.") + json_path
+                return f"try_variant_get({element}, '{self.sql_quote_regex(json_path)}', 'STRING')"
+
+            entry_name = member("e", spec.name)
+            values = [lambda element, key=key: member(element, key) for key in spec.value]
+        else:
+            entries = self._struct_ref(None, path.leaf)
+            entry_name = self._struct_ref("e", (spec.name,))
+            cast = "::string" if len(spec.value) > 1 else ""
+            values = [
+                lambda element, key=key: f"{self._struct_ref(element, (key,))}{cast}" for key in spec.value
+            ]
+        if spec.ignore_case:
+            entry_name = f"lower({entry_name})"
+        element = f"try_element_at(filter({entries}, e -> {entry_name} = {quoted}), 1)"
+        rendered = [value(element) for value in values]
+        return rendered[0] if len(rendered) == 1 else f"coalesce({', '.join(rendered)})"
 
     @staticmethod
     def _wrap_exists(levels: List[Tuple[str, str]], expr: Any) -> Any:
@@ -1618,7 +1656,7 @@ class DatabricksBackend(TextQueryBackend):
         path: Optional[FieldPath] = None
         for name in candidates:
             try:
-                path = resolve_schema_path(schema, name, name in self._current_undeclared)
+                path = resolve_schema_path(schema, name, name in self._current_undeclared, profile.entries)
                 break
             except UnknownFieldError:
                 continue
@@ -1645,12 +1683,12 @@ class DatabricksBackend(TextQueryBackend):
                     try:
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
-                            resolve_schema_path(schema, part)
+                            resolve_schema_path(schema, part, entries=profile.entries)
                     except UnknownFieldError:
                         if part not in self._current_undeclared:
                             raise
                         allow_undeclared = True
-            path = resolve_schema_path(schema, field, allow_undeclared)
+            path = resolve_schema_path(schema, field, allow_undeclared, profile.entries)
         except UnknownFieldError as e:
             raise self._parsed_error(f"{e} (profile {profile.profile})") from None
         return path
