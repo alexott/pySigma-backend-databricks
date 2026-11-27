@@ -149,7 +149,11 @@ def test_cs_registry_join():
 
 
 def test_cs_unsupported_user():
-    with pytest.raises(SigmaError, match=f"field User is not supported by profile {CS}.*nothing is left once it's dropped"):
+    msg = (
+        "field User"
+        f" is not supported by profile {CS}.*nothing is left once it's dropped"
+    )
+    with pytest.raises(SigmaError, match=msg):
         _sql(
             CS,
             "windows",
@@ -457,7 +461,11 @@ def test_s1_hashes():
 
 
 def test_s1_unsupported_current_directory():
-    with pytest.raises(SigmaError, match=f"field CurrentDirectory is not supported by profile {S1}.*nothing is left once it's dropped"):
+    msg = (
+        "field CurrentDirectory"
+        f" is not supported by profile {S1}.*nothing is left once it's dropped"
+    )
+    with pytest.raises(SigmaError, match=msg):
         _sql(
             S1,
             "windows",
@@ -621,7 +629,11 @@ def test_cb_file_event_and_products():
 
 
 def test_cb_unsupported_original_file_name():
-    with pytest.raises(SigmaError, match=f"field OriginalFileName is not supported by profile {CB}.*nothing is left once it's dropped"):
+    msg = (
+        "field OriginalFileName"
+        f" is not supported by profile {CB}.*nothing is left once it's dropped"
+    )
+    with pytest.raises(SigmaError, match=msg):
         _sql(
             CB,
             "windows",
