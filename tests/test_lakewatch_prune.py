@@ -76,8 +76,8 @@ def test_certutil_pruned_cb():
     assert "originalfilename" not in sql.lower()
     assert "certutil.exe" in sql
     assert "urlcache" in sql and "verifyctl" in sql
-    image_pred = _sql(CB, "\n    sel:\n        Image|endswith: '\\certutil.exe'\n    condition: sel")
-    assert image_pred.split("WHERE", 1)[-1].strip().strip("()") in sql
+    assert "endswith(lower(childproc_name), '\\\\certutil.exe')" in sql
+    assert "(contains(lower(target_cmdline), 'urlcache') OR contains(lower(target_cmdline), 'verifyctl'))" in sql
 
 
 def test_renamed_adfind_pruned_cb():
