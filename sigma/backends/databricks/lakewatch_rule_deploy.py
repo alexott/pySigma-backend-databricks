@@ -45,12 +45,19 @@ class RuleDoc:
         return ".".join(self.key)
 
 
-def apply_location(doc: Dict[str, Any], catalog: Optional[str], schema: Optional[str]) -> Dict[str, Any]:
-    """Return a deep copy of ``doc`` retargeted to ``catalog`` and ``schema``.
+def apply_location(
+    doc: Dict[str, Any], catalog: Optional[str], schema: Optional[str], warehouse: Optional[str] = None
+) -> Dict[str, Any]:
+    """Return a deep copy of ``doc`` retargeted to ``catalog``, ``schema`` and ``warehouse``.
 
     The ``batch.sql`` default catalog and schema change only when they equal the value being replaced.
+    ``warehouse`` replaces ``batch.warehouse_id``, creating ``batch`` when it is missing.
     """
     out = copy.deepcopy(doc)
+    if warehouse is not None:
+        if not isinstance(out.get("batch"), dict):
+            out["batch"] = {}
+        out["batch"]["warehouse_id"] = warehouse
     sql = (out.get("batch") or {}).get("sql")
     for value, key, default_key in (
         (catalog, "catalog_name", "default_catalog_name"),
@@ -76,7 +83,9 @@ def _is_content_pack(doc: Dict[str, Any]) -> bool:
     return "rule" in doc or (isinstance(metadata, dict) and "rule_kind" in metadata)
 
 
-def _read_file(path: Path, catalog: Optional[str], schema: Optional[str], errors: List[str]) -> List[RuleDoc]:
+def _read_file(
+    path: Path, catalog: Optional[str], schema: Optional[str], warehouse: Optional[str], errors: List[str]
+) -> List[RuleDoc]:
     try:
         raw_docs = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
@@ -95,12 +104,15 @@ def _read_file(path: Path, catalog: Optional[str], schema: Optional[str], errors
             if missing:
                 errors.append(f"{path}: document {number} lacks {', '.join(missing)}")
             else:
-                found.append(RuleDoc(str(path), apply_location(raw, catalog, schema)))
+                found.append(RuleDoc(str(path), apply_location(raw, catalog, schema, warehouse)))
     return found
 
 
 def load_documents(
-    paths: Sequence[str], catalog: Optional[str] = None, schema: Optional[str] = None
+    paths: Sequence[str],
+    catalog: Optional[str] = None,
+    schema: Optional[str] = None,
+    warehouse: Optional[str] = None,
 ) -> Tuple[List[RuleDoc], List[str]]:
     """Load workspace rule documents from files and directories.
 
@@ -117,7 +129,7 @@ def load_documents(
             errors.append(f"{path}: {exc}")
             continue
         for file in files:
-            for rule in _read_file(file, catalog, schema, errors):
+            for rule in _read_file(file, catalog, schema, warehouse, errors):
                 if rule.key in first_seen:
                     errors.append(f"{rule.path}: duplicate rule {rule.label} (first seen in {first_seen[rule.key]})")
                 else:
@@ -328,7 +340,6 @@ def _deploy_one(
     client: RuleClient,
     mode: str,
     force: bool,
-    warehouse_id: Optional[str],
 ) -> Outcome:
     label = doc.label
     try:
@@ -346,7 +357,7 @@ def _deploy_one(
         return Outcome(label, plan.action, "unchanged", details)
 
     try:
-        warehouse = warehouse_id or (plan.want.get("batch") or {}).get("warehouse_id")
+        warehouse = (plan.want.get("batch") or {}).get("warehouse_id")
         if plan.action == "create":
             errors = client.validate(plan.want, None, warehouse)
         else:
@@ -366,9 +377,15 @@ def _deploy_one(
 
 
 def deploy(
-    docs: Sequence[RuleDoc], client: RuleClient, *, mode: str, force: bool, warehouse_id: Optional[str]
+    docs: Sequence[RuleDoc], client: RuleClient, *, mode: str, force: bool, warehouse_id: Optional[str] = None
 ) -> List[Outcome]:
-    """Plan, validate and (in ``deploy`` mode) write each rule, in input order."""
+    """Plan, validate and (in ``deploy`` mode) write each rule, in input order.
+
+    ``warehouse_id``, when given, replaces ``batch.warehouse_id`` in every rule, so the validation dry run
+    always uses the warehouse the rule is deployed with.
+    """
+    if warehouse_id is not None:
+        docs = [RuleDoc(d.path, apply_location(d.doc, None, None, warehouse_id)) for d in docs]
     listed: Dict[Tuple[str, str], Any] = {}
     for doc in docs:
         pair = doc.key[:2]
@@ -384,7 +401,7 @@ def deploy(
         if isinstance(existing, Exception):
             outcomes.append(Outcome(doc.label, "unplanned", "error", [f"API error: {existing}"]))
         else:
-            outcomes.append(_deploy_one(doc, existing.get(doc.key[2]), client, mode, force, warehouse_id))
+            outcomes.append(_deploy_one(doc, existing.get(doc.key[2]), client, mode, force))
     return outcomes
 
 
@@ -466,7 +483,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--force", action="store_true", help="overwrite rules that were not made from this Sigma rule")
-    parser.add_argument("--warehouse-id", help="warehouse for the validateRule SQL dry-run")
+    parser.add_argument(
+        "--warehouse-id",
+        help="replace batch.warehouse_id in every rule; also used for the validateRule SQL dry run",
+    )
     parser.add_argument("--catalog", help="replace catalog_name in every rule")
     parser.add_argument("--schema", help="replace schema_name in every rule")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
@@ -479,7 +499,7 @@ def main(
 ) -> int:
     """Run the command and return its exit code."""
     args = build_parser().parse_args(argv)
-    docs, errors = load_documents(args.paths, args.catalog, args.schema)
+    docs, errors = load_documents(args.paths, args.catalog, args.schema, args.warehouse_id)
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
@@ -490,7 +510,7 @@ def main(
         print(str(exc), file=sys.stderr)
         return EXIT_LOCAL
     mode = "dry_run" if args.dry_run else "validate_only" if args.validate_only else "deploy"
-    outcomes = deploy(docs, client, mode=mode, force=args.force, warehouse_id=args.warehouse_id)
+    outcomes = deploy(docs, client, mode=mode, force=args.force)
     print(format_json(outcomes, mode) if args.json else format_text(outcomes, mode))
     return exit_code(outcomes, args.force)
 

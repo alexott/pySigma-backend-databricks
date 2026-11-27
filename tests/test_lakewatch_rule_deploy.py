@@ -547,12 +547,12 @@ def test_deploy_creates_updates_skips():
 def test_validate_before_write():
     rules, listed = _three()
     client = FakeClient(listed)
-    _run(_docs(*rules), client, warehouse_id="wh")
+    _run(_docs(*rules), client)
     kinds = [c[0] for c in client.calls]
     assert kinds == ["list", "validate", "create", "validate", "update"]
     upd_validate = client.of("validate")[1]
     assert upd_validate[1]["name"] == "rules/id-changed"
-    assert upd_validate[2] == ["batch"] and upd_validate[3] == "wh"
+    assert upd_validate[2] == ["batch"] and upd_validate[3] is None
     assert "name" not in client.of("validate")[0][1] and client.of("validate")[0][2] is None
 
 
@@ -781,3 +781,42 @@ def test_planning_exception_becomes_error_outcome(monkeypatch):
     ]
     assert outcomes[1].details == ["error: kaboom"]
     assert exit_code(outcomes, False) == EXIT_API
+
+
+def test_apply_location_sets_warehouse():
+    doc = _rule("r")
+    doc["batch"]["warehouse_id"] = "old"
+    assert apply_location(doc, None, None, "new")["batch"]["warehouse_id"] == "new"
+    assert doc["batch"]["warehouse_id"] == "old"
+    bare = {"rule_name": "r"}
+    assert apply_location(bare, None, None, "new")["batch"] == {"warehouse_id": "new"}
+    assert apply_location(doc, None, None)["batch"]["warehouse_id"] == "old"
+
+
+def test_cli_warehouse_id_overrides_rule(tmp_path):
+    rule = _rule("r")
+    rule["batch"]["warehouse_id"] = "old"
+    path = _write(tmp_path / "r.yaml", rule)
+    client = FakeClient()
+    assert main([path, "--warehouse-id", "new"], client_factory=lambda p: client) == EXIT_OK
+    assert client.of("create")[0][1]["batch"]["warehouse_id"] == "new"
+    assert client.of("validate")[0][3] == "new"
+
+
+def test_deploy_warehouse_keyword_overrides_rule():
+    rule = _rule("r")
+    rule["batch"]["warehouse_id"] = "old"
+    client = FakeClient()
+    _run(_docs(rule), client, warehouse_id="new")
+    assert client.of("create")[0][1]["batch"]["warehouse_id"] == "new"
+    assert client.of("validate")[0][3] == "new"
+
+
+def test_warehouse_change_in_update_mask(tmp_path):
+    rule = _rule("r")
+    rule["batch"]["warehouse_id"] = "old"
+    path = _write(tmp_path / "r.yaml", rule)
+    client = FakeClient({("c", "s"): [_server(rule, "rid")]})
+    assert main([path, "--warehouse-id", "new"], client_factory=lambda p: client) == EXIT_OK
+    _, rule_id, fields, mask, _etag = client.of("update")[0]
+    assert rule_id == "rid" and "batch" in mask and fields["batch"]["warehouse_id"] == "new"

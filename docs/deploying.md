@@ -19,7 +19,7 @@ output.
 | `--dry-run` | Validate and print the planned changes with their bodies; write nothing. |
 | `--validate-only` | Validate the rules that would be created, updated or overwritten; write nothing. Unchanged and conflicting rules aren't validated. |
 | `--force` | Overwrite rules that were not made from this Sigma rule. |
-| `--warehouse-id ID` | Warehouse for the validateRule SQL dry run. Without it, the rule's `batch.warehouse_id` is used; with neither, validation is static only. |
+| `--warehouse-id ID` | Deploy with another SQL warehouse than the one in the files: replaces `batch.warehouse_id` in every rule. Also used for the validateRule SQL dry run, which otherwise uses each rule's own warehouse. |
 | `--catalog C` | Replace `catalog_name` in every rule. `batch.sql.default_catalog_name` follows if it equals the original catalog. |
 | `--schema S` | Replace `schema_name` in every rule. `batch.sql.default_schema_name` follows if it equals the original schema. |
 | `--json` | Print the result as JSON. |
@@ -38,8 +38,8 @@ output.
 * `schedule.enabled` is kept on update. A rule you enabled in the UI stays enabled, and redeploying
   never enables or disables a rule.
 * Nothing is ever deleted.
-* Every rule is checked with the server's validateRule before it's written. Pass `--warehouse-id`
-  to include the SQL dry run. Rules with errors are reported as `invalid` and skipped.
+* Every rule is checked with the server's validateRule before it's written. The SQL dry run runs on
+  the rule's `batch.warehouse_id`. Rules with errors are reported as `invalid` and skipped.
 * Creating or updating a rule starts a one-time run of it on the server. The output ends with a note
   when anything was written.
 * Content-pack documents are rejected: `content-pack documents can't be deployed with

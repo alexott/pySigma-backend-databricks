@@ -185,7 +185,7 @@ Common flags:
 | `--profile PROFILE` | Databricks CLI profile. Default: the SDK's standard auth chain. |
 | `--dry-run` | Validate and print the planned changes; write nothing. |
 | `--validate-only` | Validate the rules that would be written; write nothing. |
-| `--warehouse-id ID` | Warehouse for the SQL dry run of the server-side validation. |
+| `--warehouse-id ID` | Deploy with another SQL warehouse than the one in the files; also used for the validation dry run. |
 | `--catalog C`, `--schema S` | Deploy into another catalog or schema than the one in the files. |
 | `--force` | Overwrite rules that were not made from this Sigma rule. |
 | `--json` | Print the result as JSON. |
