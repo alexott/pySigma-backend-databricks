@@ -176,6 +176,8 @@ V2_REFERENCE_MAX_LEN = 512
 V2_DESCRIPTION_MAX_LEN = 4096
 V2_OBJECTIVE_MAX_LEN = 65536
 V2_RUNBOOK_MAX_LEN = 4096
+# The server rejects batch.sql.query over this many bytes (RULE_SQL_TOO_LARGE).
+V2_SQL_MAX_BYTES = 65536
 V2_ANNOTATION_VALUE_MAX_LEN = 256
 
 # Sigma status name (lower-case) -> Lakewatch v2 fidelity. Converted rules are untested against the

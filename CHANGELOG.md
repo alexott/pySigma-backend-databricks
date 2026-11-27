@@ -26,6 +26,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- A Lakewatch rule whose SQL is over the server's 65,536-byte limit fails at conversion
+  (`query is N bytes, ...`) and shows up in the conversion report.
 - Equality lists on one field render as `IN (...)`, and `|cidr` lists as one
   `exists(array(...), ...)`, so a long list repeats the field expression once.
 - **Implied `eq` in the `modifiers` allowlist:** a field with no comparison modifier

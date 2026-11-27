@@ -16,6 +16,7 @@ follows:
 * `rule_name` is derived from the title in snake_case (e.g. `Encoded PowerShell` →
   `encoded_powershell`). Duplicate names within one output get `_2`, `_3`, … suffixes.
 * Up to three Sigma `references` (each up to 512 characters) are emitted as `references`.
+* A query over 65,536 bytes (the server's limit) fails the rule with `query is N bytes, ...`.
 * Fidelity values use the enum names. Converted rules haven't been tested against your data, so
   Sigma `stable` maps to `FIDELITY_INVESTIGATIVE` and every other status to `FIDELITY_DEVELOPMENT`.
   `default_fidelity` overrides this.

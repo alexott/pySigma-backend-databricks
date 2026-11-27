@@ -59,6 +59,7 @@ from .lakewatch_maps import (
     V2_FIDELITY_MAP,
     V2_OBJECTIVE_MAX_LEN,
     V2_RULE_NAME_MAX_LEN,
+    V2_SQL_MAX_BYTES,
     build_mitre_mapping,
     build_v2_annotations,
     build_v2_runbook,
@@ -1998,6 +1999,10 @@ class DatabricksBackend(TextQueryBackend):
         status, sql, core = self._lakewatch_body(rule, query)
         if self._discovering:
             return json.dumps({"status": status, "sql": sql})
+        size = len(sql.encode("utf-8"))
+        if size > V2_SQL_MAX_BYTES:
+            raise self._parsed_error(
+                f"query is {size} bytes, over the Lakewatch limit of {V2_SQL_MAX_BYTES} bytes")
         if self.target == "content_pack":
             doc = self._content_pack_document(rule, core, index)
         else:

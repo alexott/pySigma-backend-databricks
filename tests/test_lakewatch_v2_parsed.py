@@ -1391,3 +1391,45 @@ def test_raw_log_field_override(renv):
 def test_keyword_without_raw_fails(renv):
     with pytest.raises(SigmaTransformationError, match="no raw event for keyword search in profile pa"):
         _kw(renv, None)
+
+
+# --- SQL size limit ------------------------------------------------------------------------
+
+
+def _big_detection(count, value_len=100):
+    values = "\n".join(f"            - '{i:05d}{'x' * value_len}'" for i in range(count))
+    return f"""    sel:
+        eventName|contains|all:
+{values}
+    condition: sel"""
+
+
+def test_query_over_size_limit_fails(env):
+    backend = env(parsers="p_ct", table_name="t")
+    with pytest.raises(SigmaConversionError) as exc:
+        _sqls(backend, _rule(_big_detection(700)))
+    msg = str(exc.value)
+    assert msg.startswith("query is ")
+    assert "over the Lakewatch limit of 65536 bytes" in msg
+
+
+def test_query_over_size_limit_fails_content_pack(env):
+    backend = env(parsers="p_ct", target="content_pack")
+    with pytest.raises(SigmaConversionError, match="over the Lakewatch limit of 65536 bytes"):
+        _sqls(backend, _rule(_big_detection(700)))
+
+
+def test_query_size_boundary_bytes(env, monkeypatch):
+    detection = """    sel:
+        eventName|contains: 'caf\u00fc'
+    condition: sel"""
+    sql = _sql(env(parsers="p_ct", table_name="t"), detection)
+    size = len(sql.encode("utf-8"))
+    assert size > len(sql)
+    target = "sigma.backends.databricks.databricks.V2_SQL_MAX_BYTES"
+    monkeypatch.setattr(target, size)
+    assert _sql(env(parsers="p_ct", table_name="t"), detection) == sql
+    monkeypatch.setattr(target, size - 1)
+    expected = f"query is {size} bytes, over the Lakewatch limit of {size - 1} bytes"
+    with pytest.raises(SigmaConversionError, match=expected):
+        _sql(env(parsers="p_ct", table_name="t"), detection)

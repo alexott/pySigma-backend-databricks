@@ -412,3 +412,14 @@ def test_direct_convert_rule_does_not_grow_report():
     backend.convert_rule(rules[0], "lakewatch")
     backend.convert_rule(rules[1], "lakewatch")
     assert [r["title"] for r in backend._report._rules] == ["Two"]
+
+
+def test_size_failure_in_report():
+    values = "\n".join(f"  - '{i:05d}{'x' * 100}'" for i in range(700))
+    rule = _rule_yaml(SYSMON_LS, f"sel:\n  Image|contains|all:\n{values}")
+    backend = _backend(SYSMON, collect_errors=True)
+    _convert_lw(backend, rule)
+    record = backend.last_report["rules"][0]
+    assert record["status"] == "failed"
+    assert record["reason"].startswith("query is ")
+    assert "over the Lakewatch limit of 65536 bytes" in record["reason"]
