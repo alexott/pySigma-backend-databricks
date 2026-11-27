@@ -94,6 +94,7 @@ rules:
     rule_names: [encoded_powershell__windows_security_process]
     reason: null
     approximate: false
+    pruned: []
     fields:
       Image:
         targets: ["EventData[NewProcessName]"]
@@ -136,6 +137,10 @@ rules:
   still printed on stderr as usual.
 * **`approximate`**: `true` if the match is approximate: the raw keyword search, or a text match
   on the JSON of a VARIANT. It is set even when the warning itself is filtered out. Review such rules before enabling them.
+* **`pruned`**: the unsupported fields that were dropped from the rule, in rule order, or `[]`.
+  Every result has the key. A pruned rule is narrower than written, and the result carries the
+  `LakewatchPrunedWarning` text in `warnings`. It isn't `approximate`. See
+  [Pruning unsupported fields](writing-profiles.md#pruning-unsupported-fields).
 * **`lint`**: hints that don't fail the rule. For a `lenient` field whose name matches a top-level
   column of the parser, ignoring case: `field <F> is read from <col>[<F>] by event_data any, but <Column> is a top-level column of parser <parser>; map it explicitly`.
 

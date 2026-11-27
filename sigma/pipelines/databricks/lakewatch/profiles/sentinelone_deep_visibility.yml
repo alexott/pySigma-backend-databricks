@@ -8,7 +8,10 @@
 #   * Panther's `pipe_creation` block is removed (see below).
 #   * CurrentDirectory, Product, record_type and Protocol are `unsupported` (Panther mapped
 #     CurrentDirectory onto the image path and Product onto the display name, which changes the
-#     meaning of the rule).
+#     meaning of the rule). The converter drops an unsupported field where that only narrows the
+#     rule, and fails the rule otherwise (under a negation, or nothing left). Every dropped field
+#     is reported (warning, `pruned` in the report, `sigma_pruned_fields` annotation), and
+#     `-O prune_unsupported=false` fails the rule instead.
 #   * User and ParentUser are added: in process_creation User is tgt_process_user (the new
 #     process) and ParentUser is src_process_user; in the other blocks User is src_process_user
 #     (the acting process). Panther did not map ParentUser, and mapped User only in some groups.

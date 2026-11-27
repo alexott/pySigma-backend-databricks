@@ -25,7 +25,7 @@ logsources:
   - match: {product: aws, service: cloudtrail}   # product, category and service
     conditions:
       eventType: AwsApiCall                 # added to every rule with this logsource
-    unsupported: [Destination]              # fail with a clear message
+    unsupported: [Destination]              # dropped where that only narrows the rule, else fails
 ```
 
 `entity` is a schema path (a column or a nested path, no arrays) or an SQL expression, for example
@@ -85,6 +85,89 @@ rule with `field <name> is not mapped by profile <id>`, unless the profile accep
 `event_data` or a prefix mapping. Keyword (unbound) searches fail unless the profile sets `raw` (see
 [Keyword search and routing](#keyword-search-and-routing)). Use `-s` to skip failed rules when
 converting a directory.
+
+A field that the profile lists under `unsupported` is a known gap: the parser has no data for it.
+By default the converter drops it where that only narrows the rule, and fails the rule otherwise
+(see [Pruning unsupported fields](#pruning-unsupported-fields)).
+
+## Pruning unsupported fields
+
+A block's `unsupported:` list names the Sigma fields whose data the parser doesn't have. A rule
+that uses one of them used to fail. Many SigmaHQ rules use such a field as only one alternative of
+an OR, for example `- Image|endswith: '\certutil.exe'` next to `- OriginalFileName: 'CertUtil.exe'`.
+Such a rule still makes sense without that alternative.
+
+So by default the converter drops the unsupported field when that can't make the rule match more
+than it was written to, and fails the rule otherwise. Silently dropping a field in any context
+changes the meaning of a rule, which is why the rule below is strict, and why every pruned rule is
+reported (see [Seeing which rules were pruned](#seeing-which-rules-were-pruned)).
+
+Pruning covers a detection item whose field is unsupported, and a detection item whose `fieldref`
+value names an unsupported field. A field that the profile doesn't map at all still fails with
+`field <name> is not mapped by profile <id>`: that field is unknown, not a declared gap. Keyword
+items are not affected. The match is case-insensitive in profiles with `event_data: any`.
+
+The converter simplifies the parsed condition of the rule before it renders it:
+
+1. A detection item on an unsupported field becomes FALSE. Its values don't matter: a value list,
+   `null`, `|exists` and modifiers are all treated the same.
+2. **OR:** FALSE arguments are removed. If every argument is FALSE, the OR is FALSE. If one
+   argument is left, it replaces the OR.
+3. **AND:** if any argument is FALSE, the AND is FALSE.
+4. **NOT:** if the subtree below a NOT contains an unsupported field, conversion fails, even under
+   double negation. Replacing a term with FALSE below a NOT can make the rule match more.
+5. **The whole condition is FALSE:** conversion fails, because the rule could never match.
+
+Steps 1 to 3 can only make the rule narrower: they replace a term with FALSE in a context where
+FALSE means fewer matches. `1 of selection*` and `all of selection*` are an OR and an AND in the
+parsed condition, so they follow the same steps. The conditions that the profile adds (`conditions`
+of the block) are ANDed in and never contain unsupported fields.
+
+A rule that fails keeps the usual prefix and says why:
+
+* `field X is not supported by profile P (it is under a negation, so it can't be dropped)`
+* `field X is not supported by profile P (nothing is left once it's dropped)`
+
+If several unsupported fields block a rule, the message names the first one in rule order.
+
+Examples from SigmaHQ, with `OriginalFileName` unsupported:
+
+| Rule | Condition shape | Result |
+|---|---|---|
+| `proc_creation_win_certutil_download` | `(Image OR OriginalFileName) AND flags AND http` | converts as `Image AND flags AND http` |
+| `proc_creation_win_renamed_adfind` | `1 of selection* AND NOT filter`, where `selection_3` is only `OriginalFileName` | converts with `selection_1 OR selection_2` |
+| `proc_creation_win_renamed_boinc` | `OriginalFileName AND NOT filter` | fails: nothing is left |
+| a rule with `OriginalFileName` inside `not filter` | `selection AND NOT (... OriginalFileName ...)` | fails: under a negation |
+
+The cost: a pruned rule misses whatever only the dropped field would catch. For `OriginalFileName`,
+that's renamed binaries: the `Image` alternative matches the file name on disk, and
+`OriginalFileName` is what catches a copy under another name.
+
+### Seeing which rules were pruned
+
+A pruned conversion is visible in three places:
+
+* **A warning**, `LakewatchPrunedWarning` (a `UserWarning`), once per rule and profile:
+  `rule 'Certutil Download' (profile windows_security_process): unsupported field(s) OriginalFileName dropped; the rule is narrower than written (-O prune_unsupported=false to fail instead)`.
+  The fields are listed comma-separated, without duplicates, in rule order. It's issued only when
+  the conversion succeeds.
+* **The `pruned` key** of each result in `conversion_report.yaml`: the list of dropped fields, or
+  `[]` when nothing was dropped (see
+  [Conversion report](discovery-and-reports.md#conversion-report)). A pruned result isn't
+  `approximate`: the SQL is exact for what's left, only narrower.
+* **The `sigma_pruned_fields` annotation** of the rule document, for example
+  `sigma_pruned_fields: "OriginalFileName"` (see
+  [Rule metadata](lakewatch-output.md#rule-metadata)).
+
+Parser discovery uses the same conversion, so with pruning on, a rule that converts only after
+pruning counts as convertible.
+
+### Turning pruning off
+
+Pass `-O prune_unsupported=false`, or `DatabricksBackend(prune_unsupported=False)` in Python. The
+default is `true`. Then a rule with an unsupported field fails as before, with
+`field X is not supported by profile P`. The option applies only to parsed-table mode: OCSF mode
+and the other formats have no `unsupported` lists.
 
 ## Value transforms
 

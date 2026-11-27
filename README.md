@@ -120,6 +120,7 @@ Options are passed as `-O key=value`.
 | `lakewatch_profiles_dir` | *(none)* | Directory with your own `*.yml` profiles. They are added to the built-in ones, and an id replaces a built-in id (see [Writing profiles](https://github.com/alexott/pySigma-backend-databricks/blob/main/docs/writing-profiles.md)). |
 | `lakewatch_schemas` | *(none)* | JSON file with additional parser schemas, in the format of the bundled catalog. |
 | `raw_log_field` | *(none)* | STRING column searched by keyword (unbound) searches, for every selected profile. |
+| `prune_unsupported` | `true` | Drop fields that a profile lists as `unsupported` where that only narrows the rule, and fail the rule otherwise. `false` fails every rule that uses one. |
 
 Sigma metadata maps to the rule: `title` becomes the alert summary, `description` the description
 and objective, `level` the severity, `attack.*` tags the MITRE entries, and `falsepositives` the
@@ -127,6 +128,14 @@ runbook. Sigma `stable` rules get `FIDELITY_INVESTIGATIVE`, and all others `FIDE
 The full mapping is in
 [Lakewatch rule output](https://github.com/alexott/pySigma-backend-databricks/blob/main/docs/lakewatch-output.md#rule-metadata).
 Only batch rules are generated (streaming is future work).
+
+A profile lists the Sigma fields its parser has no data for as `unsupported`, for example
+`OriginalFileName`. By default, a rule that uses one converts in a narrower form when dropping the
+field can't make the rule match more than it was written to (for example one alternative of an
+OR), and fails otherwise. This is visible: a `LakewatchPrunedWarning`, a `pruned` list in
+`conversion_report.yaml` and a `sigma_pruned_fields` annotation. Pass `-O prune_unsupported=false`
+to fail instead. See
+[Pruning unsupported fields](https://github.com/alexott/pySigma-backend-databricks/blob/main/docs/writing-profiles.md#pruning-unsupported-fields).
 
 ### Supported parsers
 

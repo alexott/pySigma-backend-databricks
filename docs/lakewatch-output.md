@@ -28,6 +28,11 @@ follows:
   `sigma_tags` (tags other than ATT&CK) and `converter_version`. Values are cut to 256 characters,
   and empty values are left out. Content-pack documents have no `converter_version`, so a new
   converter release doesn't change the content hash of every rule in a pack.
+* `sigma_pruned_fields` is the last annotation, after `converter_version`. It lists the unsupported
+  fields that were dropped from the rule, comma-separated, for example `"OriginalFileName"`, and it's
+  only present when a field was dropped. Both targets have it. It depends only on the rule, so
+  content hashes stay stable between runs. See
+  [Pruning unsupported fields](writing-profiles.md#pruning-unsupported-fields).
 
 ## Output files
 

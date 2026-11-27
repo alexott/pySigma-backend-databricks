@@ -11,7 +11,11 @@
 #   * User, ParentUser, SourceIp, SourcePort and the file_event/network_connection process
 #     fields (Image, CommandLine, User) are added; Panther mapped Image/CommandLine globally.
 #   * OriginalFileName, IntegrityLevel and CurrentDirectory are `unsupported` (the schema has no
-#     such fields); Panther silently dropped OriginalFileName, which changes the rule's meaning.
+#     such fields). The converter drops such a field where that only narrows the rule, and fails
+#     the rule otherwise (under a negation, or nothing left). Panther dropped OriginalFileName
+#     silently, which changes the rule's meaning; here every dropped field is reported (warning,
+#     `pruned` in the report, `sigma_pruned_fields` annotation) and `-O prune_unsupported=false`
+#     fails the rule instead.
 #   * Protocol uses a value map, so an unknown protocol fails the rule instead of being dropped.
 #   * network_connection is outbound-only, see below. Panther dropped Initiated entirely.
 #   * Unsupported logsources fail with the no-profile reason, as in every profile.

@@ -155,8 +155,9 @@ entries; field names come from the Microsoft Learn page of each event. A rule wi
 account when 4688 records one and the creator otherwise, and `IntegrityLevel` maps to the
 `MandatoryLabel` SID. A `User` value that matches `AUTHORI`/`AUTORI` fails, because 4688 logs
 LocalSystem as the computer account. `Hashes`, `OriginalFileName`, `CurrentDirectory`,
-`ParentCommandLine`, `ParentUser`, `Company`, `Description`, `Product` and `FileVersion` fail
-the rule as unsupported.
+`ParentCommandLine`, `ParentUser`, `Company`, `Description`, `Product` and `FileVersion` are
+unsupported: the converter drops them where that only narrows the rule, and fails the rule
+otherwise (see [Pruning unsupported fields](writing-profiles.md#pruning-unsupported-fields)).
 
 The PowerShell and channel profiles (`windows_powershell_*`, `windows_system` and the other
 channel parsers, and `windows_event_other`) have no first-party EventData field list, so they use

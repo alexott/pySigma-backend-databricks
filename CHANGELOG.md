@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **`-O prune_unsupported=true|false`** (default `true`; `DatabricksBackend(prune_unsupported=...)`
+  in Python). Fields that a profile lists as `unsupported` are dropped where that only narrows the
+  rule (an OR alternative, an AND branch inside an OR). The rule still fails if the field is under
+  a negation, or if nothing is left. This applies to Lakewatch parsed-table mode.
+- A pruned rule is visible: it issues a `LakewatchPrunedWarning`, its result in
+  `conversion_report.yaml` has a `pruned` list (every result has the key, `[]` when nothing was
+  dropped), and the rule document gets a `sigma_pruned_fields` annotation, in workspace and
+  content-pack output.
+- The failure message says why a rule with an unsupported field fails: `(it is under a negation, so it can't be dropped)` or
+  `(nothing is left once it's dropped)`.
+
+### Changed
+
+- Rules that used to fail on an unsupported field, mostly `OriginalFileName`, now convert in a
+  narrower form by default. They miss what only the dropped field would catch (renamed binaries,
+  for `OriginalFileName`). Parser discovery counts such rules as convertible. Pass
+  `-O prune_unsupported=false` for the old behavior.
+
 ## [0.2.0] - 2026-11-27
 
 ### Breaking changes

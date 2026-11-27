@@ -10,7 +10,9 @@
 # - Status and ActivityDetails are unmapped on purpose: the diagnostic status is a struct
 #   ({errorCode, additionalDetails}) and ActivityDetails does not exist.
 # - properties.message is unsupported: the Graph signIn object has no message, so the
-#   properties.* passthrough would silently never match (SigmaHQ ROPC/device-code rules).
+#   properties.* passthrough would silently never match (SigmaHQ ROPC/device-code rules). The
+#   converter drops it where that only narrows the rule and fails the rule otherwise; the drop is
+#   reported, and `-O prune_unsupported=false` fails the rule instead.
 profile: azure_signin
 version: 1
 parser: azure_signin
