@@ -1046,9 +1046,9 @@ def test_or_eq_strings_become_in(databricks_sigma_backend: DatabricksBackend):
     assert out == "lower(Image) IN ('a.exe', 'b.exe')"
 
 
-def test_or_eq_numbers_become_in(databricks_sigma_backend: DatabricksBackend):
+def test_or_eq_numbers_stay_or_chain_in_plain_format(databricks_sigma_backend: DatabricksBackend):
     out = _convert_sel(databricks_sigma_backend, "                    EventID: [1, 5]")
-    assert out == "EventID IN (1, 5)"
+    assert out == "EventID = 1 OR EventID = 5"
 
 
 def test_or_single_value_no_in(databricks_sigma_backend: DatabricksBackend):

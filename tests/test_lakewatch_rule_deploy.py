@@ -685,6 +685,18 @@ def test_main_local_errors_before_client(tmp_path, capsys):
     assert CONTENT_PACK_MSG in captured.err and captured.out == ""
 
 
+@pytest.mark.parametrize("value", ["", "  "])
+def test_main_blank_warehouse_id(tmp_path, capsys, value):
+    path = _write(tmp_path / "r.yaml", _rule("r"))
+
+    def factory(profile):
+        raise AssertionError("client must not be built")
+
+    assert main([path, "--warehouse-id", value], client_factory=factory) == EXIT_LOCAL
+    captured = capsys.readouterr()
+    assert "--warehouse-id must not be empty" in captured.err and captured.out == ""
+
+
 def test_main_missing_sdk(tmp_path, capsys):
     path = _write(tmp_path / "r.yaml", _rule("r"))
 

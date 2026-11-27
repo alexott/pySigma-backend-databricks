@@ -1443,3 +1443,8 @@ def test_query_size_boundary_bytes(env, monkeypatch):
     expected = f"query is {size} bytes, over the Lakewatch limit of {size - 1} bytes"
     with pytest.raises(SigmaConversionError, match=expected):
         _sql(env(parsers="p_ct", table_name="t"), detection)
+
+
+def test_number_list_merges_into_in_on_numeric_column(env):
+    sql = _one(env, "    sel:\n        Num: [1, 2]\n    condition: sel", extra_fields={"Num": "RegNum"})
+    assert "RegNum IN (1, 2)" in sql

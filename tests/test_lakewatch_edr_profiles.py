@@ -285,10 +285,13 @@ def test_registry_regex_details_inline_flag_fails(parser):
         _sql(parser, "windows", "registry_set", detection)
 
 
-@pytest.mark.parametrize("parser", [CS, "sentinelone_deep_visibility"])
-def test_registry_string_details_ok(parser):
+@pytest.mark.parametrize("parser,expr", [
+    (CS, "try_variant_get(event, '$.RegStringValue', 'string')"),
+    ("sentinelone_deep_visibility", "registry_value"),
+])
+def test_registry_string_details_ok(parser, expr):
     sql = _sql(parser, "windows", "registry_set", _sel("Details|contains", "powershell"))
-    assert "'powershell'" in sql
+    assert f"contains(lower({expr}), 'powershell')" in sql
 
 
 def test_cs_registry_hive_inside_pattern_fails():

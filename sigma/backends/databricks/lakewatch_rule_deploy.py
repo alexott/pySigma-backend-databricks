@@ -499,6 +499,9 @@ def main(
 ) -> int:
     """Run the command and return its exit code."""
     args = build_parser().parse_args(argv)
+    if args.warehouse_id is not None and not args.warehouse_id.strip():
+        print("--warehouse-id must not be empty", file=sys.stderr)
+        return EXIT_LOCAL
     docs, errors = load_documents(args.paths, args.catalog, args.schema, args.warehouse_id)
     if errors:
         for error in errors:

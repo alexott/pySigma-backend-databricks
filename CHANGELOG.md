@@ -21,7 +21,7 @@ All notable changes to this project are documented in this file. The format is b
   error. To widen the time window, use `-O extend_lookback=...`.
 - The failure message for unbound keywords changed.
 - `warehouse_id` is required for workspace rules; conversion fails without it.
-- `lakewatch-rule-deploy --warehouse-id` replaces `batch.warehouse_id` in every rule (it was the
+- `lakewatch-rule-deploy --warehouse-id` (and `deploy(warehouse_id=...)` in Python) replaces `batch.warehouse_id` in every rule (it was the
   validation warehouse only).
 - `fieldref|startswith`, `fieldref|endswith` and `fieldref|contains` now convert in every output
   format.
@@ -32,7 +32,8 @@ All notable changes to this project are documented in this file. The format is b
 - A Lakewatch rule whose SQL is over the server's 65,536-byte limit fails at conversion
   (`query is N bytes, ...`) and shows up in the conversion report.
 - Equality lists on one field render as `IN (...)`, and `|cidr` lists as one
-  `exists(array(...), ...)`, so a long list repeats the field expression once.
+  `exists(array(...), ...)`, so a long list repeats the field expression once. Number lists merge
+  into `IN` only for Lakewatch parsed tables (typed columns).
 - **Implied `eq` in the `modifiers` allowlist:** a field with no comparison modifier
   (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `neq`, `exists`, `fieldref`)
   is now checked as `eq`, so `field|all` alone fails unless the profile lists `eq`.
@@ -118,7 +119,9 @@ All notable changes to this project are documented in this file. The format is b
 ### Changed
 
 - ASCII string literals are lowercased by the converter (`lower(F) = 'v'` instead of `lower(F) = lower('V')`);
-  non-ASCII literals keep `lower()`.
+  non-ASCII literals keep `lower()`. Subclasses that override `contains_expression`,
+  `startswith_expression` or `endswith_expression` now receive the already case-folded value (`{value}`
+  is no longer wrapped in `lower()` by the templates).
 - **Documentation:** the README now covers installation, a Lakewatch quick start, the main options
   and deployment. The details moved to `docs/`: `lakewatch-output.md`, `discovery-and-reports.md`,
   `built-in-profiles.md`, `writing-profiles.md`, `deploying.md` and `ocsf.md`.

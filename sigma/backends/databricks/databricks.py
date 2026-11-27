@@ -906,9 +906,13 @@ class DatabricksBackend(TextQueryBackend):
 
     def convert_condition_field_eq_val_num(self, cond: ConditionFieldEqualsValueExpression,
                                            state: ConversionState) -> Union[str, DeferredQueryExpression]:
-        """Convert field = number, recording the atom so OR lists can merge into IN."""
+        """Convert field = number; in parsed mode, record the atom so OR lists merge into IN.
+
+        Plain formats and OCSF mode keep ``=``: on a STRING column (ANSI off) ``IN`` compares as
+        strings while ``=`` compares numerically.
+        """
         rendered = super().convert_condition_field_eq_val_num(cond, state)
-        if isinstance(rendered, str) and cond.field:
+        if isinstance(rendered, str) and cond.field and self._current_profile is not None:
             self._record_atom(rendered, "eq_num", self.escape_and_quote_field(cond.field), str(cond.value))
         return rendered
 
@@ -1290,7 +1294,7 @@ class DatabricksBackend(TextQueryBackend):
             if converted is not None and not isinstance(converted, DeferredQueryExpression)
         ]
         if not args:
-            return str(self.empty_or_expression)
+            return self.empty_or_expression  # type: ignore[return-value]
         return joiner.join(self._merge_or_atoms(args))
 
     # --- Lakewatch v2 parsed-table mode ---------------------------------------------------
