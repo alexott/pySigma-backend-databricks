@@ -23,6 +23,8 @@ from sigma.types import (
     SigmaType,
 )
 
+from sigma.backends.databricks.prune import mark, unmarked
+
 from .profile import FieldMapping, LogsourceBlock, Profile
 from .transforms import Alternative, TransformFailure, apply_chain
 
@@ -56,27 +58,35 @@ class StrictFieldsTransformation(DetectionItemTransformation):
     keywords: bool = False
     any_column: Optional[str] = None
     hint: Optional[str] = None
+    prune: bool = False
 
-    def _check(self, field: str) -> None:
+    def _check(self, field: str) -> bool:
+        """Validate ``field``; return True if it is unsupported and is to be marked for pruning."""
         if field in self.unsupported or (
             self.any_column is not None and field.lower() in {u.lower() for u in self.unsupported}
         ):
+            if self.prune:
+                return True
             raise SigmaTransformationError(
                 f"field {field} is not supported by profile {self.profile_id}"
             )
         if field in self.allowed or any(
             field.startswith(p) and len(field) > len(p) for p in self.prefixes
         ):
-            return
+            return False
         if self.any_column is not None and "[" not in field and "]" not in field:
-            return
+            return False
         message = f"field {field} is not mapped by profile {self.profile_id}"
         if self.hint:
             message += f"; {self.hint}"
         raise SigmaTransformationError(message)
 
     def apply_detection_item(self, detection_item):
-        """Check the item's field and field-reference values; the item is left unchanged."""
+        """Check the item's field and field-reference values.
+
+        The item is left unchanged, except when pruning: an unsupported field, or a reference to
+        one, marks the item's field and skips the remaining checks.
+        """
         field = detection_item.field
         if field is None:
             if self.keywords:
@@ -84,10 +94,13 @@ class StrictFieldsTransformation(DetectionItemTransformation):
             raise SigmaTransformationError(
                 f"no raw event for keyword search in profile {self.profile_id}"
             )
-        self._check(field)
+        if self._check(field):
+            detection_item.field = mark(field)
+            return None
         for value in detection_item.value:
-            if isinstance(value, SigmaFieldReference):
-                self._check(value.field)
+            if isinstance(value, SigmaFieldReference) and self._check(value.field):
+                detection_item.field = mark(field)
+                return None
         return None
 
 
@@ -112,6 +125,8 @@ class ProfileFieldMapping(FieldMappingTransformation):
 
     def _canonical(self, field: Optional[str]) -> Optional[str]:
         """Return the explicit mapping key equal to ``field`` when case is ignored, else ``field``."""
+        if unmarked(field) is not None:
+            return field
         if field is None or self.any_column is None or field in self.mapping or field in self.special:
             return field
         for key in (*self.mapping, *self.special):
@@ -138,6 +153,8 @@ class ProfileFieldMapping(FieldMappingTransformation):
         """Return the mapped name(s) of ``field``; several names are ORed by pySigma."""
         if field is None:
             return None
+        if unmarked(field) is not None:
+            return field
         field = self._canonical(field)
         if field in self.mapping:
             return self.mapping[field]
@@ -252,12 +269,15 @@ def build_profile_pipeline(
     block: LogsourceBlock,
     logsource: Optional[SigmaLogSource] = None,
     keywords: Optional[bool] = None,
+    prune_unsupported: bool = False,
 ) -> ProcessingPipeline:
     """Build the pipeline for one profile block: strict fields, mapping, conditions, state.
 
     With ``logsource`` (the rule's), the conditions of its product in ``profile.products``
     are added as well as the block conditions. Keywords are allowed when ``keywords`` is True,
-    or, if it is None, when the profile has a raw source.
+    or, if it is None, when the profile has a raw source. With ``prune_unsupported``, an item on
+    an unsupported field (or a field reference to one) is marked with ``prune.mark`` instead of
+    failing, for the backend to drop from the condition tree.
     """
     pid = profile.profile
     any_column = profile.event_data_column if profile.event_data_any(block) else None
@@ -277,6 +297,7 @@ def build_profile_pipeline(
                 keywords=keywords,
                 any_column=any_column,
                 hint=profile.unmapped_hint,
+                prune=prune_unsupported,
             ),
             identifier=f"lakewatch_{pid}_strict_fields",
         )

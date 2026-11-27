@@ -11,6 +11,7 @@ from sigma.exceptions import SigmaTransformationError
 from sigma.rule import SigmaDetection
 
 from sigma.backends.databricks import DatabricksBackend
+from sigma.backends.databricks.prune import mark
 from sigma.pipelines.databricks.lakewatch.pipeline import (
     STATE_PARSER,
     STATE_PROFILE,
@@ -43,8 +44,8 @@ detection:
     ).rules[0]
 
 
-def run(profile, block, detection_yaml):
-    pipeline = build_profile_pipeline(profile, block)
+def run(profile, block, detection_yaml, prune_unsupported=False):
+    pipeline = build_profile_pipeline(profile, block, prune_unsupported=prune_unsupported)
     r = rule(detection_yaml)
     pipeline.apply(r)
     return pipeline, r
@@ -600,3 +601,41 @@ def test_no_allowlist_unchanged():
     profile, block = make_win({"X": {"field": "x"}})
     r = run_win(profile, block, "    sel:\n        X|all:\n            - a\n            - b\n    condition: sel")
     assert leaves(r.detection.detections["sel"]) == [("x", "a"), ("x", "b")]
+
+
+# --- pruning: unsupported fields are marked instead of failing ----------------------------------
+
+
+def test_unsupported_marked_when_pruning():
+    profile, block = make({"Image": "eventName"}, {"unsupported": ["Bad"]})
+    _, r = run(profile, block, "    sel:\n        Bad: x\n    condition: sel", prune_unsupported=True)
+    assert r.detection.detections["sel"].detection_items[0].field == "\x00lakewatch_unsupported\x00Bad"
+
+
+def test_fieldref_unsupported_marked_when_pruning():
+    profile, block = make({"A": "a"}, {"unsupported": ["Bad"]})
+    _, r = run(
+        profile, block, "    sel:\n        A|fieldref: Bad\n    condition: sel", prune_unsupported=True
+    )
+    assert r.detection.detections["sel"].detection_items[0].field == mark("A")
+
+
+def test_unmapped_still_fails_when_pruning():
+    profile, block = make({"Image": "eventName"}, {"unsupported": ["Bad"]})
+    with pytest.raises(SigmaTransformationError, match="field Other is not mapped by profile p1"):
+        run(profile, block, "    sel:\n        Other: x\n    condition: sel", prune_unsupported=True)
+
+
+def test_marked_field_not_mapped_by_any_fallback():
+    import warnings
+
+    profile, block = make_top(
+        block_extra={"event_data": "any", "unsupported": ["OriginalFileName"]}
+    )
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _, r = run(
+            profile, block, "    sel:\n        originalfilename: x\n    condition: sel", prune_unsupported=True
+        )
+    assert r.detection.detections["sel"].detection_items[0].field == mark("originalfilename")
+    assert not [x for x in w if "not in a field list" in str(x.message)]
