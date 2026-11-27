@@ -206,6 +206,13 @@ sigma convert -t databricks rules/windows/process_creation/proc_creation_win_who
 sigma convert -t databricks -f dbsql -p snake_case rules/windows/
 ```
 
+Equality lists on one field render as a single `IN (...)`, and `|cidr` lists as one
+`exists(array(...), ...)`, so a long list repeats the field expression once:
+
+```sql
+lower(Image) IN ('a.exe', 'b.exe')
+```
+
 ### CIDR Matching
 
 The `|cidr` modifier is converted using the built-in Databricks IP functions

@@ -39,6 +39,7 @@ from sigma.rule import SigmaDetection, SigmaLevel, SigmaRule
 from sigma.types import (
     CompareOperators,
     SigmaBool,
+    SigmaCIDRExpression,
     SigmaCompareExpression,
     SigmaExists,
     SigmaFieldReference,
@@ -407,6 +408,8 @@ class DatabricksBackend(TextQueryBackend):
         self._current_rule: Optional[SigmaRule] = None
         self._current_format: Optional[str] = None
         self._field_overrides: Dict[str, str] = {}
+        # rendered equality atom -> (kind, field expression, value SQL); used to merge OR lists
+        self._atoms: Dict[str, Tuple[str, str, str]] = {}
         if cidr_expression:
             self.cidr_expression = cidr_expression
         self.table_name = table_name
@@ -517,6 +520,7 @@ class DatabricksBackend(TextQueryBackend):
         if not self._in_convert:
             self._report = ConversionReport()  # direct calls must not grow the report forever
         self._current_rule = rule
+        self._atoms = {}
         self._current_format = output_format or self.default_format
         if self._parsed_mode(self._current_format):
             return self._convert_rule_parsed(rule, self._current_format, args, kwargs)
@@ -889,7 +893,64 @@ class DatabricksBackend(TextQueryBackend):
         if override is not None:
             cond = copy.copy(cond)
             cond.field = override
-        return super().convert_condition_field_eq_val_cidr(cond, state)
+        rendered = super().convert_condition_field_eq_val_cidr(cond, state)
+        if (
+            isinstance(rendered, str)
+            and cond.field
+            and isinstance(cond.value, SigmaCIDRExpression)
+            and self.cidr_expression == DatabricksBackend.cidr_expression
+        ):
+            self._record_atom(rendered, "cidr", cond.field, str(cond.value.network))
+        return rendered
+
+    def convert_condition_field_eq_val_num(self, cond: ConditionFieldEqualsValueExpression,
+                                           state: ConversionState) -> Union[str, DeferredQueryExpression]:
+        """Convert field = number, recording the atom so OR lists can merge into IN."""
+        rendered = super().convert_condition_field_eq_val_num(cond, state)
+        if isinstance(rendered, str) and cond.field:
+            self._record_atom(rendered, "eq_num", self.escape_and_quote_field(cond.field), str(cond.value))
+        return rendered
+
+    def _record_atom(self, rendered: str, kind: str, field_expr: str, value_sql: str) -> str:
+        """Remember a mergeable equality rendering (see ``_merge_or_atoms``); returns ``rendered``."""
+        self._atoms[rendered] = (kind, field_expr, value_sql)
+        return rendered
+
+    def _merge_or_atoms(self, rendered: List[str]) -> List[str]:
+        """Merge OR-ed equality atoms on the same field expression into IN / exists(array(...)).
+
+        The merged expression takes the position of the first atom of its group; other
+        arguments keep their order. Groups with a single atom are left unchanged.
+        """
+        groups: Dict[Tuple[str, str], List[str]] = {}
+        for item in rendered:
+            atom = self._atoms.get(item)
+            if atom is not None:
+                groups.setdefault((atom[0], atom[1]), []).append(atom[2])
+        result: List[str] = []
+        done: set = set()
+        for item in rendered:
+            atom = self._atoms.get(item)
+            if atom is None:
+                result.append(item)
+                continue
+            key = (atom[0], atom[1])
+            values = groups[key]
+            if len(values) < 2:
+                result.append(item)
+            elif key not in done:
+                done.add(key)
+                joined = ", ".join(values)
+                if atom[0] == "eq_str":
+                    result.append(f"lower({atom[1]}) IN ({joined})")
+                elif atom[0] == "eq_num":
+                    result.append(f"{atom[1]} IN ({joined})")
+                else:
+                    quoted = ", ".join(f"'{v}'" for v in values)
+                    result.append(
+                        f"exists(array({quoted}), cidr0 -> ip_cidr_contains(cidr0, try_ip_as_binary({atom[1]})))"
+                    )
+        return result
 
     def make_sql_string(self, s: SigmaString):
         """Convert a SigmaString to a quoted SQL string literal."""
@@ -984,6 +1045,9 @@ class DatabricksBackend(TextQueryBackend):
             else:  # We have just plain string
                 expr = "lower({field}) = {value}"
                 value = self.lower_literal(sigma_value)
+                field_expr = self.escape_and_quote_field(cond.field)
+                return self._record_atom(expr.format(field=field_expr, value=value),
+                                         "eq_str", field_expr, value)
 
             return expr.format(field=self.escape_and_quote_field(cond.field),
                                value=value)
@@ -1210,8 +1274,23 @@ class DatabricksBackend(TextQueryBackend):
                 return self._wrap_exists(levels, self.re_expression.format(field=field, regex=regex_pattern))
             raise ValueError("re_expression is not defined")
 
-        # Fall back to default OR conversion
-        return super().convert_condition_or(cond, state)
+        # Merge equality lists on one field into IN / exists(array(...)); other args keep their order
+        or_token = str(self.or_token)
+        joiner = or_token if self.token_separator == or_token else \
+            self.token_separator + or_token + self.token_separator
+        args = [
+            converted
+            for converted in (
+                self.convert_condition(arg, state)
+                if self.compare_precedence(cond, arg)
+                else self.convert_condition_group(arg, state)
+                for arg in cond.args
+            )
+            if converted is not None and not isinstance(converted, DeferredQueryExpression)
+        ]
+        if not args:
+            return str(self.empty_or_expression)
+        return joiner.join(self._merge_or_atoms(args))
 
     # --- Lakewatch v2 parsed-table mode ---------------------------------------------------
     # Rules are converted against the output tables of Lakewatch parsers. Each selected mapping

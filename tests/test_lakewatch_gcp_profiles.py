@@ -153,8 +153,8 @@ def test_audit_snapshot():
         "AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(try_variant_get(protoPayload, '$.methodName', 'string')) = 'storage.buckets.list' "
-        "OR lower(try_variant_get(protoPayload, '$.methodName', 'string')) = 'storage.buckets.listchannels')"
+        "  AND (lower(try_variant_get(protoPayload, '$.methodName', 'string')) "
+        "IN ('storage.buckets.list', 'storage.buckets.listchannels'))"
     )
 
 # --- google_workspace_reports ---------------------------------------------------------------

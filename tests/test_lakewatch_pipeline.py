@@ -383,8 +383,8 @@ def test_transform_linking_end_to_end(tmp_path):
     sql = convert_sql(tmp_path, fields, "    sel:\n        T|all: [ab, c]\n    condition: not sel")
     where = sql.split("WHERE", 1)[1]
     assert (
-        "NOT ((lower(t) = 'a' OR lower(Image) = 'a' OR lower(t) = 'b' "
-        "OR lower(Image) = 'b') AND (lower(t) = 'c' OR lower(Image) = 'c'))"
+        "NOT ((lower(t) IN ('a', 'b') OR lower(Image) IN ('a', 'b')) "
+        "AND (lower(t) = 'c' OR lower(Image) = 'c'))"
     ) in where, where
 
 

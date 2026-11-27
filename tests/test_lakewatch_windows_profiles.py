@@ -431,3 +431,16 @@ def test_unnamed_data_msexchange():
     sql, _ = _warns("windows_event_other", _svc("msexchange-management"),
                     "    sel:\n        Data|contains: 'x'\n    condition: sel")
     assert "schema_of_variant(v) = 'STRING'" in sql and "e._Name = 'Data'" in sql
+
+
+def test_or_lists_merge_once_per_accessor():
+    sql = _sql("windows_sysmon_network", _cat("network_connection"), """
+    sel:
+        DestinationHostname: [a.com, b.com]
+        DestinationIp|cidr: [10.0.0.0/8, 192.168.0.0/16]
+    condition: sel""")
+    host = "e._Name = 'DestinationHostname'"
+    assert sql.count(host) == 1
+    assert re.search(r"\._VALUE\) IN \('a\.com', 'b\.com'\)", sql)
+    assert sql.count("e._Name = 'DestinationIp'") == 1
+    assert "exists(array('10.0.0.0/8', '192.168.0.0/16'), cidr0 -> ip_cidr_contains(cidr0, try_ip_as_binary(" in sql

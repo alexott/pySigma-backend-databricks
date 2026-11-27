@@ -149,8 +149,7 @@ def test_exchange_parameters_name_or_value():
 def test_exchange_status_value_map():
     sql = _sql(EXCHANGE, "exchange", _sel("status", "success"))
     assert (
-        "(lower(ResultStatus) = 'true' OR lower(ResultStatus) = 'succeeded' "
-        "OR lower(ResultStatus) = 'success')"
+        "(lower(ResultStatus) IN ('true', 'succeeded', 'success'))"
     ) in sql
 
 

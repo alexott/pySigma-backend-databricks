@@ -1,6 +1,7 @@
 """Tests for the built-in EDR Lakewatch profiles (CrowdStrike FDR, ...)."""
 
 import json
+import re
 import warnings
 
 import pytest
@@ -45,7 +46,12 @@ def _sql(parser, product, category, detection):
 def _names_selected(sql, names):
     """Check that every event name is matched against ``event_simpleName`` in ``sql``."""
     low = sql.lower()
-    return all(f"lower(event_simplename) = '{n.lower()}'" in low for n in names)
+    selected = {
+        v.strip()
+        for m in re.finditer(r"lower\(event_simplename\) (?:in \(([^)]*)\)|= ('[^']*'))", low)
+        for v in (m.group(1) or m.group(2)).split(",")
+    }
+    return all(f"'{n.lower()}'" in selected for n in names)
 
 
 # --- crowdstrike_fdr_event -----------------------------------------------------------------

@@ -1,6 +1,7 @@
 """Tests for any-element matching on schema-declared arrays inside a VARIANT (parsed-table mode)."""
 
 import json
+import re
 import warnings
 
 import pytest
@@ -161,3 +162,14 @@ def test_undeclared_array_unchanged(tmp_path):
 
 def test_variant_array_in_profile_validation(tmp_path):
     _backend(tmp_path, "gcp_audit_log", "svc", ["protoPayload.authorizationInfo.permission"])
+
+
+def test_or_list_merges_on_variant_scalar(tmp_path):
+    where = _gcp(tmp_path, "protoPayload.methodName", value="[x, y]")
+    assert re.search(r"^lower\(try_variant_get\(.*\)\) IN \('x', 'y'\)$", where), where
+
+
+def test_or_list_under_array_does_not_merge(tmp_path):
+    where = _gcp(tmp_path, "protoPayload.authorizationInfo.permission", value="[x, y]")
+    assert " IN (" not in where
+    assert where.count("exists(") == 2

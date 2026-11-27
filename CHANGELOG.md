@@ -26,6 +26,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Equality lists on one field render as `IN (...)`, and `|cidr` lists as one
+  `exists(array(...), ...)`, so a long list repeats the field expression once.
 - **Implied `eq` in the `modifiers` allowlist:** a field with no comparison modifier
   (`contains`, `startswith`, `endswith`, `re`, `cidr`, `gt`, `gte`, `lt`, `lte`, `neq`, `exists`, `fieldref`)
   is now checked as `eq`, so `field|all` alone fails unless the profile lists `eq`.

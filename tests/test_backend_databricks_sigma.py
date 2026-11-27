@@ -83,8 +83,8 @@ def test_databricks_sigma_and_or_expression(databricks_sigma_backend: Databricks
                         - valueB2
                 condition: sel
         """)
-    ) == ["(lower(fieldA) = 'valuea1' OR lower(fieldA) = 'valuea2') AND "
-          "(lower(fieldB) = 'valueb1' OR lower(fieldB) = 'valueb2')"]
+    ) == ["(lower(fieldA) IN ('valuea1', 'valuea2')) AND "
+          "(lower(fieldB) IN ('valueb1', 'valueb2'))"]
 
 
 def test_databricks_sigma_or_and_expression(databricks_sigma_backend: DatabricksBackend):
@@ -124,7 +124,7 @@ def test_databricks_sigma_in_expression(databricks_sigma_backend: DatabricksBack
                         - valueC*
                 condition: sel
         """)
-    ) == ["lower(fieldA) = 'valuea' OR lower(fieldA) = 'valueb' OR "
+    ) == ["lower(fieldA) IN ('valuea', 'valueb') OR "
           "startswith(lower(fieldA), 'valuec')"]
 
 
@@ -1039,3 +1039,62 @@ def test_keyword_ascii_and_non_ascii(databricks_sigma_backend: DatabricksBackend
         """)
     )[0]
     assert out == "contains(lower(raw), 'evil') OR contains(lower(raw), lower('Ünïcode'))"
+
+
+def test_or_eq_strings_become_in(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    Image: [a.exe, b.exe]")
+    assert out == "lower(Image) IN ('a.exe', 'b.exe')"
+
+
+def test_or_eq_numbers_become_in(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    EventID: [1, 5]")
+    assert out == "EventID IN (1, 5)"
+
+
+def test_or_single_value_no_in(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    Image: a.exe")
+    assert out == "lower(Image) = 'a.exe'"
+
+
+def test_or_mixed_atoms_and_wildcards(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    Image: [a.exe, b.exe, '*\\c.exe', d.exe]")
+    assert out == r"lower(Image) IN ('a.exe', 'b.exe', 'd.exe') OR endswith(lower(Image), '\\c.exe')"
+
+
+def test_or_duplicates_kept(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    Image: [a, a]")
+    assert out == "lower(Image) IN ('a', 'a')"
+
+
+def test_or_non_ascii_element(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    Image: [a, 'İ']")
+    assert out == "lower(Image) IN ('a', lower('İ'))"
+
+
+def test_not_over_in(databricks_sigma_backend: DatabricksBackend):
+    out = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+                    Image: [a.exe, b.exe]
+                condition: not sel
+        """)
+    )[0]
+    assert out == "NOT (lower(Image) IN ('a.exe', 'b.exe'))"
+
+
+def test_or_cidr_list_exists(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    src_ip|cidr: [10.0.0.0/8, 192.168.0.0/16]")
+    assert out == ("exists(array('10.0.0.0/8', '192.168.0.0/16'), "
+                   "cidr0 -> ip_cidr_contains(cidr0, try_ip_as_binary(src_ip)))")
+
+
+def test_or_cidr_custom_expression_no_merge():
+    backend = DatabricksBackend(cidr_expression="cidrmatch({field}, '{value}')")
+    out = _convert_sel(backend, "                    src_ip|cidr: [10.0.0.0/8, 192.168.0.0/16]")
+    assert out == "cidrmatch(src_ip, '10.0.0.0/8') OR cidrmatch(src_ip, '192.168.0.0/16')"
