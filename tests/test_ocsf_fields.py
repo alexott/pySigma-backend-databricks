@@ -58,9 +58,9 @@ def test_array_fields_use_exists(ocsf_backend):
                 evidences.file.hashes.value|startswith: de
                 x_forwarded_for: 1.2.3.4
     """)) == [
-        "exists(process.file.hashes, x0 -> lower(x0.value) = lower('abc')) AND "
-        "exists(evidences, x0 -> exists(x0.file.hashes, x1 -> startswith(lower(x1.value), lower('de')))) AND "
-        "exists(x_forwarded_for, x0 -> lower(x0) = lower('1.2.3.4'))"
+        "exists(process.file.hashes, x0 -> lower(x0.value) = 'abc') AND "
+        "exists(evidences, x0 -> exists(x0.file.hashes, x1 -> startswith(lower(x1.value), 'de'))) AND "
+        "exists(x_forwarded_for, x0 -> lower(x0) = '1.2.3.4')"
     ]
 
 
@@ -68,7 +68,7 @@ def test_array_field_not_matches_no_element(ocsf_backend):
     assert ocsf_backend.convert(_rule("""
             sel:
                 process.file.hashes.value: abc
-    """, "not sel")) == ["NOT exists(process.file.hashes, x0 -> lower(x0.value) = lower('abc'))"]
+    """, "not sel")) == ["NOT exists(process.file.hashes, x0 -> lower(x0.value) = 'abc')"]
 
 
 def test_free_form_fields_use_json_paths(ocsf_backend):
@@ -83,14 +83,14 @@ def test_free_form_fields_use_json_paths(ocsf_backend):
                 api.request.data.userName|exists: true
                 resources.data.tag: prod
     """)) == [
-        "lower(unmapped:Initiated::string) = lower('true') AND "
-        "contains(lower(unmapped:objectRef.namespace::string), lower('kube')) AND "
+        "lower(unmapped:Initiated::string) = 'true' AND "
+        "contains(lower(unmapped:objectRef.namespace::string), 'kube') AND "
         "try_cast(unmapped:SourcePort AS DOUBLE) = 445 AND "
         "try_cast(unmapped:Port AS DOUBLE) > 1024 AND "
         "try_cast(unmapped:Flag AS BOOLEAN) = true AND "
-        "lower(unmapped:['weird key']::string) = lower('x') AND "
+        "lower(unmapped:['weird key']::string) = 'x' AND "
         "api.request.data:userName is not null AND "
-        "exists(resources, x0 -> lower(x0.data:tag::string) = lower('prod'))"
+        "exists(resources, x0 -> lower(x0.data:tag::string) = 'prod')"
     ]
 
 
@@ -105,7 +105,7 @@ def test_keywords_use_raw_data(ocsf_backend):
     assert ocsf_backend.convert(_rule("""
             sel:
                 - mimikatz
-    """)) == ["contains(lower(raw_data), lower('mimikatz'))"]
+    """)) == ["contains(lower(raw_data), 'mimikatz')"]
 
 
 def test_explicit_raw_log_field_wins(ocsf_backend):
@@ -113,7 +113,7 @@ def test_explicit_raw_log_field_wins(ocsf_backend):
     assert backend.convert(_rule("""
             sel:
                 - mimikatz
-    """)) == ["contains(lower(message), lower('mimikatz'))"]
+    """)) == ["contains(lower(message), 'mimikatz')"]
 
 
 def test_disabled_by_default_without_ocsf_pipeline():
@@ -124,8 +124,8 @@ def test_disabled_by_default_without_ocsf_pipeline():
             kw:
                 - evil
     """, "sel and kw")) == [
-        "lower(process.file.hashes.value) = lower('abc') AND lower(unmapped.Initiated) = lower('true') "
-        "AND contains(lower(raw), lower('evil'))"
+        "lower(process.file.hashes.value) = 'abc' AND lower(unmapped.Initiated) = 'true' "
+        "AND contains(lower(raw), 'evil')"
     ]
 
 
@@ -150,8 +150,8 @@ def test_auto_enabled_for_ocsf_pipeline():
             kw: [evil]
             condition: sel or kw
     """))[0]
-    assert "exists(evidences, x0 -> endswith(lower(x0.file.name), lower('.exe')))" in query
-    assert "contains(lower(raw_data), lower('evil'))" in query
+    assert "exists(evidences, x0 -> endswith(lower(x0.file.name), '.exe'))" in query
+    assert "contains(lower(raw_data), 'evil')" in query
 
 
 def test_invalid_option_value():

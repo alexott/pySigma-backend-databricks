@@ -61,25 +61,25 @@ EXCHANGE = "microsoft365_audit_exchange"
 @pytest.mark.parametrize("field", ["Directionality", "DeliveryAction"])
 def test_general_aliases(field):
     sql = _sql(GENERAL, "audit", _sel(field))
-    assert f"lower(try_variant_get(payload, '$.{field}', 'string')) = lower('x')" in sql
+    assert f"lower(try_variant_get(payload, '$.{field}', 'string')) = 'x'" in sql
 
 
 @pytest.mark.parametrize("field", ["Operation", "Workload", "ResultStatus", "ObjectId"])
 def test_general_identity_columns(field):
-    assert f"lower({field}) = lower('x')" in _sql(GENERAL, "audit", _sel(field))
+    assert f"lower({field}) = 'x'" in _sql(GENERAL, "audit", _sel(field))
 
 
 def test_general_directionality():
     alias = _sql(GENERAL, "audit", _sel("Directionality"))
     prefix = _sql(GENERAL, "audit", _sel("payload.Directionality"))
-    pred = "lower(try_variant_get(payload, '$.Directionality', 'string')) = lower('x')"
+    pred = "lower(try_variant_get(payload, '$.Directionality', 'string')) = 'x'"
     assert pred in alias
     assert pred in prefix
 
 
 def test_general_payload_contains():
     sql = _sql(GENERAL, "audit", "    sel:\n        payload|contains: x\n    condition: sel")
-    assert "contains(lower(to_json(payload)), lower('x'))" in sql
+    assert "contains(lower(to_json(payload)), 'x')" in sql
 
 
 def test_general_entity():
@@ -95,9 +95,9 @@ def test_general_snapshot():
         "SELECT *, UserId AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(Workload) = lower('ThreatIntelligence') "
-        "AND lower(Operation) = lower('TIMailData') "
-        "AND lower(try_variant_get(payload, '$.Directionality', 'string')) = lower('Inbound'))"
+        "  AND (lower(Workload) = 'threatintelligence' "
+        "AND lower(Operation) = 'timaildata' "
+        "AND lower(try_variant_get(payload, '$.Directionality', 'string')) = 'inbound')"
     )
 
 
@@ -105,15 +105,15 @@ def test_general_snapshot():
 
 
 def test_aad_aliases():
-    assert "lower(ApplicationId) = lower('x')" in _sql(AAD, "audit", _sel("ApplicationId"))
-    assert "lower(Operation) = lower('x')" in _sql(AAD, "audit", _sel("Operation"))
+    assert "lower(ApplicationId) = 'x'" in _sql(AAD, "audit", _sel("ApplicationId"))
+    assert "lower(Operation) = 'x'" in _sql(AAD, "audit", _sel("Operation"))
     sql = _sql(AAD, "audit", _sel("RequestType", "Cmsi:Cmsi"))
-    assert "exists(ExtendedProperties, x0 -> lower(x0.Value) = lower('Cmsi:Cmsi'))" in sql
+    assert "exists(ExtendedProperties, x0 -> lower(x0.Value) = 'cmsi:cmsi')" in sql
 
 
 def test_aad_modified_properties():
     sql = _sql(AAD, "audit", "    sel:\n        ModifiedProperties|contains: x\n    condition: sel")
-    assert "exists(ModifiedProperties, x0 -> contains(lower(to_json(x0)), lower('x')))" in sql
+    assert "exists(ModifiedProperties, x0 -> contains(lower(to_json(x0)), 'x'))" in sql
 
 
 def test_aad_entity():
@@ -130,9 +130,9 @@ def test_aad_snapshot():
         "SELECT *, UserId AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(Operation) = lower('UserLoggedIn') "
-        "AND lower(ApplicationId) = lower('9ba1a5c7-f17a-4de9-a1f1-6178c8d51223') "
-        "AND lower(ResultStatus) = lower('Success'))"
+        "  AND (lower(Operation) = 'userloggedin' "
+        "AND lower(ApplicationId) = '9ba1a5c7-f17a-4de9-a1f1-6178c8d51223' "
+        "AND lower(ResultStatus) = 'success')"
     )
 
 
@@ -141,16 +141,16 @@ def test_aad_snapshot():
 
 def test_exchange_parameters_name_or_value():
     sql = _sql(EXCHANGE, "audit", "    sel:\n        Parameters|contains: DeleteMessage\n    condition: sel")
-    name = "exists(Parameters, x0 -> contains(lower(x0.Name), lower('DeleteMessage')))"
-    value = "exists(Parameters, x0 -> contains(lower(x0.Value), lower('DeleteMessage')))"
+    name = "exists(Parameters, x0 -> contains(lower(x0.Name), 'deletemessage'))"
+    value = "exists(Parameters, x0 -> contains(lower(x0.Value), 'deletemessage'))"
     assert f"({name} OR {value})" in sql
 
 
 def test_exchange_status_value_map():
     sql = _sql(EXCHANGE, "exchange", _sel("status", "success"))
     assert (
-        "(lower(ResultStatus) = lower('True') OR lower(ResultStatus) = lower('Succeeded') "
-        "OR lower(ResultStatus) = lower('Success'))"
+        "(lower(ResultStatus) = 'true' OR lower(ResultStatus) = 'succeeded' "
+        "OR lower(ResultStatus) = 'success')"
     ) in sql
 
 
@@ -162,14 +162,14 @@ def test_exchange_status_failure_fails():
 
 def test_exchange_result_status_has_no_value_map():
     sql = _sql(EXCHANGE, "audit", _sel("ResultStatus", "True"))
-    assert "AND (lower(ResultStatus) = lower('True'))" in sql
+    assert "AND (lower(ResultStatus) = 'true')" in sql
     assert "Succeeded" not in sql
     assert " OR " not in sql
 
 
 def test_exchange_ecs_aliases():
-    assert "lower(Workload) = lower('x')" in _sql(EXCHANGE, "exchange", _sel("eventSource"))
-    assert "lower(Operation) = lower('x')" in _sql(EXCHANGE, "exchange", _sel("eventName"))
+    assert "lower(Workload) = 'x'" in _sql(EXCHANGE, "exchange", _sel("eventSource"))
+    assert "lower(Operation) = 'x'" in _sql(EXCHANGE, "exchange", _sel("eventName"))
 
 
 def test_exchange_service_routes_to_exchange_only():
@@ -193,10 +193,10 @@ def test_exchange_snapshot():
         "SELECT *, UserId AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(Workload) = lower('Exchange') "
-        "AND lower(Operation) = lower('New-InboxRule') "
-        "AND (exists(Parameters, x0 -> contains(lower(x0.Name), lower('DeleteMessage'))) "
-        "OR exists(Parameters, x0 -> contains(lower(x0.Value), lower('DeleteMessage')))))"
+        "  AND (lower(Workload) = 'exchange' "
+        "AND lower(Operation) = 'new-inboxrule' "
+        "AND (exists(Parameters, x0 -> contains(lower(x0.Name), 'deletemessage')) "
+        "OR exists(Parameters, x0 -> contains(lower(x0.Value), 'deletemessage'))))"
     )
 
 
@@ -227,7 +227,7 @@ def test_field_absent_on_other_parsers(field, parser):
 
 @pytest.mark.parametrize("parser", [GENERAL, AAD, EXCHANGE])
 def test_audit_operation_rule_converts_everywhere(parser):
-    assert "lower(Operation) = lower('x')" in _sql(parser, "audit", _sel("Operation"))
+    assert "lower(Operation) = 'x'" in _sql(parser, "audit", _sel("Operation"))
 
 
 def test_audit_operation_rule_discovery_lists_three_profiles():

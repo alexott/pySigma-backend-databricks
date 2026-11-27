@@ -94,7 +94,7 @@ def test_okta_array_target():
         target.displayName|contains: admin
     condition: sel""",
     )
-    assert "exists(target, x0 -> contains(lower(x0.displayName), lower('admin')))" in sql
+    assert "exists(target, x0 -> contains(lower(x0.displayName), 'admin'))" in sql
 
 
 def test_okta_debugdata_variant():

@@ -26,7 +26,7 @@ def test_databricks_sigma_and_expression(databricks_sigma_backend: DatabricksBac
                     fieldB: valueB
                 condition: sel
         """)
-    ) == ["lower(fieldA) = lower('valueA') AND lower(fieldB) = lower('valueB')"]
+    ) == ["lower(fieldA) = 'valuea' AND lower(fieldB) = 'valueb'"]
 
 
 def test_databricks_sigma_or_expression(databricks_sigma_backend: DatabricksBackend):
@@ -44,7 +44,7 @@ def test_databricks_sigma_or_expression(databricks_sigma_backend: DatabricksBack
                     fieldB: valueB
                 condition: 1 of sel*
         """)
-    ) == ["lower(fieldA) = lower('valueA') OR lower(fieldB) = lower('valueB')"]
+    ) == ["lower(fieldA) = 'valuea' OR lower(fieldB) = 'valueb'"]
 
 
 def test_databricks_sigma_match_with_dot_string(databricks_sigma_backend: DatabricksBackend):
@@ -62,7 +62,7 @@ def test_databricks_sigma_match_with_dot_string(databricks_sigma_backend: Databr
                     fieldB: valueB
                 condition: 1 of sel*
         """)
-    ) == ["lower(fieldA) = lower('value.A') OR lower(fieldB) = lower('valueB')"]
+    ) == ["lower(fieldA) = 'value.a' OR lower(fieldB) = 'valueb'"]
 
 
 def test_databricks_sigma_and_or_expression(databricks_sigma_backend: DatabricksBackend):
@@ -83,8 +83,8 @@ def test_databricks_sigma_and_or_expression(databricks_sigma_backend: Databricks
                         - valueB2
                 condition: sel
         """)
-    ) == ["(lower(fieldA) = lower('valueA1') OR lower(fieldA) = lower('valueA2')) AND "
-          "(lower(fieldB) = lower('valueB1') OR lower(fieldB) = lower('valueB2'))"]
+    ) == ["(lower(fieldA) = 'valuea1' OR lower(fieldA) = 'valuea2') AND "
+          "(lower(fieldB) = 'valueb1' OR lower(fieldB) = 'valueb2')"]
 
 
 def test_databricks_sigma_or_and_expression(databricks_sigma_backend: DatabricksBackend):
@@ -104,8 +104,8 @@ def test_databricks_sigma_or_and_expression(databricks_sigma_backend: Databricks
                     fieldB: valueB2
                 condition: 1 of sel*
         """)
-    ) == ["lower(fieldA) = lower('valueA1') AND lower(fieldB) = lower('valueB1') OR lower(fieldA) = lower('valueA2') "
-          "AND lower(fieldB) = lower('valueB2')"]
+    ) == ["lower(fieldA) = 'valuea1' AND lower(fieldB) = 'valueb1' OR lower(fieldA) = 'valuea2' "
+          "AND lower(fieldB) = 'valueb2'"]
 
 
 def test_databricks_sigma_in_expression(databricks_sigma_backend: DatabricksBackend):
@@ -124,8 +124,8 @@ def test_databricks_sigma_in_expression(databricks_sigma_backend: DatabricksBack
                         - valueC*
                 condition: sel
         """)
-    ) == ["lower(fieldA) = lower('valueA') OR lower(fieldA) = lower('valueB') OR "
-          "startswith(lower(fieldA), lower('valueC'))"]
+    ) == ["lower(fieldA) = 'valuea' OR lower(fieldA) = 'valueb' OR "
+          "startswith(lower(fieldA), 'valuec')"]
 
 
 def test_databricks_sigma_regex_query(databricks_sigma_backend: DatabricksBackend):
@@ -142,7 +142,7 @@ def test_databricks_sigma_regex_query(databricks_sigma_backend: DatabricksBacken
                     fieldB: foo
                 condition: sel
         """)
-    ) == ["fieldA rlike 'foo.*bar' AND lower(fieldB) = lower('foo')"]
+    ) == ["fieldA rlike 'foo.*bar' AND lower(fieldB) = 'foo'"]
 
 
 def test_databricks_sigma_regex_query_flags(databricks_sigma_backend: DatabricksBackend):
@@ -159,7 +159,7 @@ def test_databricks_sigma_regex_query_flags(databricks_sigma_backend: Databricks
                     fieldB: foo
                 condition: sel
         """)
-    ) == ["fieldA rlike '(?iu)foo.*bar' AND lower(fieldB) = lower('foo')"]
+    ) == ["fieldA rlike '(?iu)foo.*bar' AND lower(fieldB) = 'foo'"]
 
 
 def test_databricks_sigma_cidr_query(databricks_sigma_backend: DatabricksBackend):
@@ -228,7 +228,7 @@ def test_databricks_sigma_field_name_with_whitespace(databricks_sigma_backend: D
                     field name: value
                 condition: sel
         """)
-    ) == ["lower(`field name`) = lower('value')"]
+    ) == ["lower(`field name`) = 'value'"]
 
 
 def test_databricks_sigma_field_name_with_period(databricks_sigma_backend: DatabricksBackend):
@@ -245,7 +245,7 @@ def test_databricks_sigma_field_name_with_period(databricks_sigma_backend: Datab
                         - value1
                 condition: sel
         """)
-    ) == ["lower(responseElements.publiclyAccessible) = lower('value1')"]
+    ) == ["lower(responseElements.publiclyAccessible) = 'value1'"]
 
 
 def test_databricks_sigma_detection_yaml_output(databricks_sigma_backend: DatabricksBackend):
@@ -270,7 +270,7 @@ def test_databricks_sigma_detection_yaml_output(databricks_sigma_backend: Databr
 detections:
 - name: Test
   severity: 50
-  sql: fieldA rlike 'foo.*bar' AND lower(fieldB) = lower('foo')
+  sql: fieldA rlike 'foo.*bar' AND lower(fieldB) = 'foo'
   status: release
   template: Test
 """
@@ -293,7 +293,7 @@ def test_databricks_sigma_dbsql_output(databricks_sigma_backend: DatabricksBacke
     final_queries = [databricks_sigma_backend.finalize_query_dbsql(q[0], q[1], 0, None)
                      for q in zip(sigma_rules.rules, queries)]
     sql_rules = databricks_sigma_backend.finalize_output_dbsql(final_queries)
-    assert sql_rules == "-- title: \"Test\". status: stable\nfieldA rlike 'foo.*bar' AND lower(fieldB) = lower('foo')"
+    assert sql_rules == "-- title: \"Test\". status: stable\nfieldA rlike 'foo.*bar' AND lower(fieldB) = 'foo'"
 
 
 def test_databricks_sigma_fieldref(databricks_sigma_backend: DatabricksBackend):
@@ -311,7 +311,7 @@ def test_databricks_sigma_fieldref(databricks_sigma_backend: DatabricksBackend):
                     fieldB|fieldref: fieldC
                 condition: selection and not filter
         """)
-    ) == ["lower(fieldA) = lower('valueA') AND NOT fieldB = fieldC"]
+    ) == ["lower(fieldA) = 'valuea' AND NOT fieldB = fieldC"]
 
 
 def test_fieldref_contains_dbsql(databricks_sigma_backend: DatabricksBackend):
@@ -545,7 +545,7 @@ def test_complex_and_or_conditions(databricks_sigma_backend: DatabricksBackend):
     )
     # Should have optimized the contains OR into regex
     assert "rlike '(?iu).*(nessusd|santad|falcond).*'" in result[0]
-    assert "lower(Image) = lower('/usr/bin/grep')" in result[0]
+    assert "lower(Image) = '/usr/bin/grep'" in result[0]
     assert " AND " in result[0]
 
 
@@ -617,7 +617,7 @@ def test_real_sigma_rule_macos_security(databricks_sigma_backend: DatabricksBack
     # Should not have individual contains calls
     assert "contains(" not in result[0]
     # Should have the AND condition with Image check
-    assert "lower(Image) = lower('/usr/bin/grep')" in result[0]
+    assert "lower(Image) = '/usr/bin/grep'" in result[0]
 
 
 def test_databricks_sigma_no_status(databricks_sigma_backend: DatabricksBackend):
@@ -660,7 +660,7 @@ def test_databricks_sigma_unbound_keywords_or(databricks_sigma_backend: Databric
                     - 'keyword2'
                 condition: keywords
         """)
-    ) == ["contains(lower(raw), lower('keyword1')) OR contains(lower(raw), lower('keyword2'))"]
+    ) == ["contains(lower(raw), 'keyword1') OR contains(lower(raw), 'keyword2')"]
 
 
 def test_databricks_sigma_unbound_keywords_all(databricks_sigma_backend: DatabricksBackend):
@@ -680,9 +680,9 @@ def test_databricks_sigma_unbound_keywords_all(databricks_sigma_backend: Databri
                         - ' -Confirm "False"'
                 condition: keywords
         """)
-    ) == ['contains(lower(raw), lower(\'Remove-MailboxExportRequest\')) AND ' +
-          'contains(lower(raw), lower(\' -Identity \')) AND ' +
-          'contains(lower(raw), lower(\' -Confirm "False"\'))']
+    ) == ['contains(lower(raw), \'remove-mailboxexportrequest\') AND ' +
+          'contains(lower(raw), \' -identity \') AND ' +
+          'contains(lower(raw), \' -confirm "false"\')']
 
 
 def test_databricks_sigma_mixed_field_and_keywords(databricks_sigma_backend: DatabricksBackend):
@@ -701,7 +701,7 @@ def test_databricks_sigma_mixed_field_and_keywords(databricks_sigma_backend: Dat
                     - 'evil'
                 condition: selection and keywords
         """)
-    ) == ["EventID = 4688 AND contains(lower(raw), lower('evil'))"]
+    ) == ["EventID = 4688 AND contains(lower(raw), 'evil')"]
 
 
 def test_databricks_sigma_custom_raw_field():
@@ -721,7 +721,7 @@ def test_databricks_sigma_custom_raw_field():
         """)
     )
     assert "message" in result[0]
-    assert "contains(lower(message), lower('test'))" in result[0]
+    assert "contains(lower(message), 'test')" in result[0]
 
 
 def test_databricks_sigma_unbound_regex(databricks_sigma_backend: DatabricksBackend):
@@ -757,7 +757,7 @@ def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: Databricks
                 condition: keywords
         """)
     )
-    assert "contains(lower(raw), lower('evil'))" in result1[0]
+    assert "contains(lower(raw), 'evil')" in result1[0]
 
     # Test startswith pattern (keyword*)
     result2 = databricks_sigma_backend.convert(
@@ -772,7 +772,7 @@ def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: Databricks
                 condition: keywords
         """)
     )
-    assert "startswith(lower(raw), lower('cmd.exe'))" in result2[0]
+    assert "startswith(lower(raw), 'cmd.exe')" in result2[0]
 
     # Test endswith pattern (*keyword)
     result3 = databricks_sigma_backend.convert(
@@ -787,7 +787,7 @@ def test_databricks_sigma_unbound_wildcards(databricks_sigma_backend: Databricks
                 condition: keywords
         """)
     )
-    assert "endswith(lower(raw), lower('.exe'))" in result3[0]
+    assert "endswith(lower(raw), '.exe')" in result3[0]
 
 
 def test_databricks_sigma_unbound_numeric(databricks_sigma_backend: DatabricksBackend):
@@ -805,7 +805,7 @@ def test_databricks_sigma_unbound_numeric(databricks_sigma_backend: DatabricksBa
                 condition: keywords
         """)
     )
-    assert "contains(lower(raw), lower('12345'))" in result[0]
+    assert "contains(lower(raw), '12345')" in result[0]
 
 
 def test_databricks_sigma_unbound_complex_condition(databricks_sigma_backend: DatabricksBackend):
@@ -875,8 +875,8 @@ def test_or_inner_wildcard_no_optimization(databricks_sigma_backend: DatabricksB
                         - 'd'
                 condition: selection
         """)
-    ) == ["CommandLine rlike '(?isu)^.*a.*b.*$' OR contains(lower(CommandLine), lower('c')) OR "
-          "contains(lower(CommandLine), lower('d'))"]
+    ) == ["CommandLine rlike '(?isu)^.*a.*b.*$' OR contains(lower(CommandLine), 'c') OR "
+          "contains(lower(CommandLine), 'd')"]
 
 
 def test_databricks_sigma_regex_query_sql_escaping(databricks_sigma_backend: DatabricksBackend):
@@ -989,3 +989,53 @@ def test_databricks_sigma_unicode_case_insensitive(databricks_sigma_backend: Dat
         """)
     ) == ["fieldA rlike '(?imu)привет' AND fieldB rlike 'ПРИВЕТ' OR "
           "fieldC rlike '(?iu).*(привет|мир|ä).*'"]
+
+
+def _convert_sel(backend: DatabricksBackend, sel: str) -> str:
+    return backend.convert(
+        SigmaCollection.from_yaml(f"""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                sel:
+{sel}
+                condition: sel
+        """)
+    )[0]
+
+
+def test_ascii_literal_lowercased(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    Image: 'C:\\Windows\\CMD.exe'")
+    assert out == r"lower(Image) = 'c:\\windows\\cmd.exe'"
+
+
+def test_non_ascii_literal_keeps_lower(databricks_sigma_backend: DatabricksBackend):
+    out = _convert_sel(databricks_sigma_backend, "                    User: 'İnsan'")
+    assert out == "lower(User) = lower('İnsan')"
+
+
+@pytest.mark.parametrize("mod,fn", [("contains", "contains"), ("startswith", "startswith"), ("endswith", "endswith")])
+def test_contains_startswith_endswith_ascii(databricks_sigma_backend: DatabricksBackend, mod, fn):
+    out = _convert_sel(databricks_sigma_backend, f"                    CommandLine|{mod}: 'ABC'")
+    assert out == f"{fn}(lower(CommandLine), 'abc')"
+
+
+def test_keyword_ascii_and_non_ascii(databricks_sigma_backend: DatabricksBackend):
+    out = databricks_sigma_backend.convert(
+        SigmaCollection.from_yaml("""
+            title: Test
+            status: test
+            logsource:
+                category: test_category
+                product: test_product
+            detection:
+                keywords:
+                    - 'EVIL'
+                    - 'Ünïcode'
+                condition: keywords
+        """)
+    )[0]
+    assert out == "contains(lower(raw), 'evil') OR contains(lower(raw), lower('Ünïcode'))"

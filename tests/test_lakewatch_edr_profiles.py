@@ -45,7 +45,7 @@ def _sql(parser, product, category, detection):
 def _names_selected(sql, names):
     """Check that every event name is matched against ``event_simpleName`` in ``sql``."""
     low = sql.lower()
-    return all(f"lower(event_simplename) = lower('{n.lower()}')" in low for n in names)
+    return all(f"lower(event_simplename) = '{n.lower()}'" in low for n in names)
 
 
 # --- crowdstrike_fdr_event -----------------------------------------------------------------
@@ -70,9 +70,9 @@ def test_cs_process_creation():
     condition: sel""",
         )
     low = sql.lower()
-    assert "endswith(lower(try_variant_get(event, '$.imagefilename', 'string')), lower('\\\\rundll32.exe'))" in low
-    assert "lower(try_variant_get(event, '$.parentbasefilename', 'string')) = lower('explorer.exe')" in low
-    assert "lower(event_platform) = lower('win')" in low
+    assert "endswith(lower(try_variant_get(event, '$.imagefilename', 'string')), '\\\\rundll32.exe')" in low
+    assert "lower(try_variant_get(event, '$.parentbasefilename', 'string')) = 'explorer.exe'" in low
+    assert "lower(event_platform) = 'win'" in low
     assert _names_selected(sql, ["ProcessRollup2", "SyntheticProcessRollup2"])
     # The VARIANT key keeps the dictionary's spelling.
     assert "'$.ImageFileName'" in sql
@@ -94,7 +94,7 @@ def test_cs_image_startswith_device_path():
         "'(?isu)^\\\\\\\\Device\\\\\\\\HarddiskVolume.*\\\\\\\\Users\\\\\\\\.*$'"
     ) in sql
     # The drive form is kept too: live FDR data holds both.
-    assert "startswith(lower(try_variant_get(event, '$.ImageFileName', 'string')), lower('C:\\\\Users\\\\'))" in sql
+    assert "startswith(lower(try_variant_get(event, '$.ImageFileName', 'string')), 'c:\\\\users\\\\')" in sql
 
 
 def test_cs_network_initiated():
@@ -163,7 +163,7 @@ def test_cs_linux_platform():
         CommandLine|contains: 'curl'
     condition: sel""",
     )
-    assert "lower(event_platform) = lower('lin')" in sql.lower()
+    assert "lower(event_platform) = 'lin'" in sql.lower()
     assert "try_variant_get(event, '$.CommandLine', 'string')" in sql
 
 
@@ -240,7 +240,7 @@ def test_cs_file_event_device_path():
 
 def test_cs_dns_query_name():
     sql = _sql(CS, "windows", "dns_query", "    sel:\n        QueryName|endswith: '.onion'\n    condition: sel")
-    assert "endswith(lower(try_variant_get(event, '$.DomainName', 'string')), lower('.onion'))" in sql
+    assert "endswith(lower(try_variant_get(event, '$.DomainName', 'string')), '.onion')" in sql
     assert _names_selected(sql, ["DnsRequest"])
 
 
@@ -252,7 +252,7 @@ def _sel(key, value):
 def test_cs_hashes_sha256():
     digest = "ab" * 32
     sql = _sql(CS, "windows", "process_creation", _sel("Hashes|contains", f"SHA256={digest}"))
-    assert f"lower(try_variant_get(event, '$.SHA256HashData', 'string')) = lower('{digest}')" in sql
+    assert f"lower(try_variant_get(event, '$.SHA256HashData', 'string')) = '{digest}'" in sql
 
 
 @pytest.mark.parametrize("parser", [CS, "sentinelone_deep_visibility"])
@@ -282,7 +282,7 @@ def test_registry_regex_details_inline_flag_fails(parser):
 @pytest.mark.parametrize("parser", [CS, "sentinelone_deep_visibility"])
 def test_registry_string_details_ok(parser):
     sql = _sql(parser, "windows", "registry_set", _sel("Details|contains", "powershell"))
-    assert "lower('powershell')" in sql
+    assert "'powershell'" in sql
 
 
 def test_cs_registry_hive_inside_pattern_fails():
@@ -304,7 +304,7 @@ def test_cs_parent_image_contains_fails():
 
 def test_cs_image_startswith_drive_and_device():
     sql = _sql(CS, "windows", "process_creation", _sel("Image|startswith", "C:\\Windows\\"))
-    drive = "startswith(lower(try_variant_get(event, '$.ImageFileName', 'string')), lower('C:\\\\Windows\\\\'))"
+    drive = "startswith(lower(try_variant_get(event, '$.ImageFileName', 'string')), 'c:\\\\windows\\\\')"
     device = (
         "try_variant_get(event, '$.ImageFileName', 'string') rlike "
         "'(?isu)^\\\\\\\\Device\\\\\\\\HarddiskVolume.*\\\\\\\\Windows\\\\\\\\.*$'"
@@ -315,13 +315,13 @@ def test_cs_image_startswith_drive_and_device():
 def test_cs_parent_image_base_name_or_full_path():
     sql = _sql(CS, "windows", "process_creation", _sel("ParentImage|endswith", "\\explorer.exe"))
     col = "lower(try_variant_get(event, '$.ParentBaseFileName', 'string'))"
-    assert f"{col} = lower('explorer.exe') OR endswith({col}, lower('\\\\explorer.exe'))" in sql
+    assert f"{col} = 'explorer.exe' OR endswith({col}, '\\\\explorer.exe')" in sql
 
 
 def test_cs_parent_image_plain_name():
     sql = _sql(CS, "windows", "process_creation", _sel("ParentImage", "cmd.exe"))
     col = "lower(try_variant_get(event, '$.ParentBaseFileName', 'string'))"
-    assert f"({col} = lower('cmd.exe') OR endswith({col}, lower('\\\\cmd.exe')))" in sql
+    assert f"({col} = 'cmd.exe' OR endswith({col}, '\\\\cmd.exe'))" in sql
 
 
 def test_cs_parent_image_alternatives_under_not_and_list():
@@ -338,8 +338,8 @@ def test_cs_parent_image_alternatives_under_not_and_list():
     condition: sel and not filter""",
     )
     col = "lower(try_variant_get(event, '$.ParentBaseFileName', 'string'))"
-    explorer = f"{col} = lower('explorer.exe') OR endswith({col}, lower('\\\\explorer.exe'))"
-    cmd = f"{col} = lower('cmd.exe') OR endswith({col}, lower('\\\\cmd.exe'))"
+    explorer = f"{col} = 'explorer.exe' OR endswith({col}, '\\\\explorer.exe')"
+    cmd = f"{col} = 'cmd.exe' OR endswith({col}, '\\\\cmd.exe')"
     # Both alternatives of every list value sit inside the NOT; the backend flattens the nested ORs.
     assert f"NOT ({explorer} OR {cmd})" in sql
 
@@ -377,10 +377,10 @@ def test_s1_process_creation():
     condition: sel""",
     )
     low = sql.lower()
-    assert "endswith(lower(tgt_process_image_path), lower('\\\\rundll32.exe'))" in low
-    assert "contains(lower(src_process_cmdline), lower('winword'))" in low
-    assert "lower(endpoint_os) = lower('windows')" in low
-    assert "lower(event_type) = lower('process creation')" in low
+    assert "endswith(lower(tgt_process_image_path), '\\\\rundll32.exe')" in low
+    assert "contains(lower(src_process_cmdline), 'winword')" in low
+    assert "lower(endpoint_os) = 'windows'" in low
+    assert "lower(event_type) = 'process creation'" in low
 
 
 def test_s1_unverified_blocks_removed():
@@ -408,15 +408,15 @@ def test_s1_users():
     condition: sel""",
     )
     low = sql.lower()
-    assert "lower(tgt_process_user) = lower('bob')" in low
-    assert "lower(src_process_user) = lower('alice')" in low
+    assert "lower(tgt_process_user) = 'bob'" in low
+    assert "lower(src_process_user) = 'alice'" in low
 
 
 def test_s1_registry_set_and_dns_event_types():
     sql = _sql(S1, "windows", "registry_set", "    sel:\n        TargetObject|contains: 'Run'\n    condition: sel")
-    assert "lower(event_type) = lower('registry value modified')" in sql.lower()
+    assert "lower(event_type) = 'registry value modified'" in sql.lower()
     sql = _sql(S1, "windows", "dns_query", "    sel:\n        QueryName: x.test\n    condition: sel")
-    assert "lower(event_type) = lower('dns resolved')" in sql.lower()
+    assert "lower(event_type) = 'dns resolved'" in sql.lower()
 
 
 def test_s1_network_hostname_unsupported():
@@ -435,7 +435,7 @@ def test_s1_hashes():
         Hashes|contains: 'SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
     condition: sel""",
     )
-    assert f"lower(tgt_process_image_sha256) = lower('{'A' * 64}')" in sql
+    assert f"lower(tgt_process_image_sha256) = '{'a' * 64}'" in sql
     sql = _sql(
         S1,
         "windows",
@@ -444,7 +444,7 @@ def test_s1_hashes():
         Hashes|contains: 'MD5=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
     condition: sel""",
     )
-    assert "lower(module_md5) = lower('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')" in sql
+    assert "lower(module_md5) = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'" in sql
 
 
 def test_s1_unsupported_current_directory():
@@ -471,7 +471,7 @@ def test_s1_network_outgoing_only():
     )
     low = sql.lower()
     assert "dst_port_number = 4444" in low
-    assert "lower(event_network_direction) = lower('outgoing')" in low
+    assert "lower(event_network_direction) = 'outgoing'" in low
     with pytest.raises(SigmaTransformationError, match="field Initiated: value 'false' is not one of"):
         _sql(
             S1,
@@ -492,7 +492,7 @@ def test_s1_file_delete_event_type():
         TargetFilename|endswith: '.log'
     condition: sel""",
     )
-    assert "lower(event_type) = lower('file deletion')" in sql.lower()
+    assert "lower(event_type) = 'file deletion'" in sql.lower()
 
 
 # --- carbonblack_endpoint_event ------------------------------------------------------------
@@ -520,19 +520,19 @@ def test_cb_process_creation_child_vs_parent():
     condition: sel""",
     )
     # Image is the child process; the parent is the actor process.
-    assert "endswith(lower(childproc_name), lower('\\\\cmd.exe'))" in sql
-    assert "endswith(lower(process_path), lower('\\\\winword.exe'))" in sql
-    assert "contains(lower(target_cmdline), lower('whoami'))" in sql
-    assert "contains(lower(process_cmdline), lower('doc'))" in sql
+    assert "endswith(lower(childproc_name), '\\\\cmd.exe')" in sql
+    assert "endswith(lower(process_path), '\\\\winword.exe')" in sql
+    assert "contains(lower(target_cmdline), 'whoami')" in sql
+    assert "contains(lower(process_cmdline), 'doc')" in sql
     assert "parent_path" not in sql
-    assert "lower(type) = lower('endpoint.event.procstart')" in sql
-    assert "lower(device_os) = lower('WINDOWS')" in sql
+    assert "lower(type) = 'endpoint.event.procstart'" in sql
+    assert "lower(device_os) = 'windows'" in sql
 
 
 def test_cb_hashes_array():
     for algo, digest in (("MD5", "A" * 32), ("SHA256", "b" * 64)):
         sql = _sql(CB, "windows", "process_creation", _sel("Hashes|contains", f"{algo}={digest}"))
-        assert f"exists(childproc_hash, x0 -> lower(x0) = lower('{digest}'))" in sql
+        assert f"exists(childproc_hash, x0 -> lower(x0) = '{digest.lower()}')" in sql
 
 
 def test_cb_initiated_bool_column():
@@ -582,9 +582,9 @@ def test_cb_protocol_map_ok():
         Protocol: udp
     condition: sel""",
     )
-    assert "lower(netconn_protocol) = lower('PROTO_UDP')" in sql
+    assert "lower(netconn_protocol) = 'proto_udp'" in sql
     sql = _sql(CB, "windows", "network_connection", "    sel:\n        Protocol: TCP\n    condition: sel")
-    assert "lower(netconn_protocol) = lower('PROTO_TCP')" in sql
+    assert "lower(netconn_protocol) = 'proto_tcp'" in sql
 
 
 def test_cb_file_event_and_products():

@@ -501,7 +501,7 @@ def test_join_transform_apply():
 
 def test_join_eq(tmp_path):
     sql = _join_sql(tmp_path, "u: '/a\\?b=1'")
-    assert sql == f"SELECT *\nFROM t\nWHERE IN_TIMERANGE(time)\n  AND (lower({JOIN_EXPR}) = lower('/a?b=1'))"
+    assert sql == f"SELECT *\nFROM t\nWHERE IN_TIMERANGE(time)\n  AND (lower({JOIN_EXPR}) = '/a?b=1')"
 
 
 def test_join_modifiers(tmp_path):

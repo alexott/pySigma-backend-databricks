@@ -370,9 +370,9 @@ def test_select_condition_under_not(tmp_path):
         fields,
         "    sel:\n        Image: x\n    filter:\n        Initiated: 'false'\n    condition: sel and not filter",
     )
-    assert "lower(event_platform) = lower('Win')" in sql
-    assert re.search(r"NOT \(?lower\(t\) = lower\('B'\)", sql), sql
-    assert "'A'" not in sql
+    assert "lower(event_platform) = 'win'" in sql
+    assert re.search(r"NOT \(?lower\(t\) = 'b'", sql), sql
+    assert "'a'" not in sql
 
 
 def test_transform_linking_end_to_end(tmp_path):
@@ -383,8 +383,8 @@ def test_transform_linking_end_to_end(tmp_path):
     sql = convert_sql(tmp_path, fields, "    sel:\n        T|all: [ab, c]\n    condition: not sel")
     where = sql.split("WHERE", 1)[1]
     assert (
-        "NOT ((lower(t) = lower('a') OR lower(Image) = lower('a') OR lower(t) = lower('b') "
-        "OR lower(Image) = lower('b')) AND (lower(t) = lower('c') OR lower(Image) = lower('c')))"
+        "NOT ((lower(t) = 'a' OR lower(Image) = 'a' OR lower(t) = 'b' "
+        "OR lower(Image) = 'b') AND (lower(t) = 'c' OR lower(Image) = 'c'))"
     ) in where, where
 
 

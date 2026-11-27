@@ -75,7 +75,7 @@ def test_variant_array_leaf(tmp_path):
     where = _gcp(tmp_path, "protoPayload.authorizationInfo.permission")
     assert where == (
         "exists(try_variant_get(protoPayload, '$.authorizationInfo', 'ARRAY<VARIANT>'), "
-        "x0 -> lower(try_variant_get(x0, '$.permission', 'string')) = lower('x'))"
+        "x0 -> lower(try_variant_get(x0, '$.permission', 'string')) = 'x')"
     )
 
 
@@ -83,7 +83,7 @@ def test_variant_array_bool(tmp_path):
     where = _gcp(tmp_path, "protoPayload.authorizationInfo.granted", "'true'")
     assert where == (
         "exists(try_variant_get(protoPayload, '$.authorizationInfo', 'ARRAY<VARIANT>'), "
-        "x0 -> lower(try_variant_get(x0, '$.granted', 'boolean')) = lower('true'))"
+        "x0 -> lower(try_variant_get(x0, '$.granted', 'boolean')) = 'true')"
     )
 
 
@@ -91,7 +91,7 @@ def test_variant_array_scalar(tmp_path):
     where = _gcp(tmp_path, "protoPayload.resourceLocation.currentLocations", "us")
     assert where == (
         "exists(try_variant_get(protoPayload, '$.resourceLocation.currentLocations', 'ARRAY<STRING>'), "
-        "x0 -> lower(x0) = lower('us'))"
+        "x0 -> lower(x0) = 'us')"
     )
 
 
@@ -100,7 +100,7 @@ def test_variant_array_nested_in_column_array(tmp_path):
     assert where == (
         "exists(ruleGroupList, x0 -> exists("
         "try_variant_get(x0, '$.terminatingRule.ruleMatchDetails', 'ARRAY<VARIANT>'), "
-        "x1 -> lower(try_variant_get(x1, '$.conditionType', 'string')) = lower('x')))"
+        "x1 -> lower(try_variant_get(x1, '$.conditionType', 'string')) = 'x'))"
     )
 
 
@@ -110,7 +110,7 @@ def test_variant_array_nested_in_variant_array(tmp_path):
         "exists(ruleGroupList, x0 -> exists("
         "try_variant_get(x0, '$.terminatingRule.ruleMatchDetails', 'ARRAY<VARIANT>'), "
         "x1 -> exists(try_variant_get(x1, '$.matchedData', 'ARRAY<STRING>'), "
-        "x2 -> lower(x2) = lower('evil'))))"
+        "x2 -> lower(x2) = 'evil')))"
     )
 
 
@@ -120,7 +120,7 @@ def test_variant_array_inside_variant_array_only(tmp_path):
     assert where == (
         "exists(nonTerminatingMatchingRules, x0 -> exists("
         "try_variant_get(x0, '$.ruleMatchDetails', 'ARRAY<VARIANT>'), "
-        "x1 -> lower(try_variant_get(x1, '$.conditionType', 'string')) = lower('x')))"
+        "x1 -> lower(try_variant_get(x1, '$.conditionType', 'string')) = 'x'))"
     )
 
 
@@ -128,7 +128,7 @@ def test_variant_array_contains(tmp_path):
     where = _gcp(tmp_path, "protoPayload.authorizationInfo.permission", "x", "|contains")
     assert where == (
         "exists(try_variant_get(protoPayload, '$.authorizationInfo', 'ARRAY<VARIANT>'), "
-        "x0 -> contains(lower(try_variant_get(x0, '$.permission', 'string')), lower('x')))"
+        "x0 -> contains(lower(try_variant_get(x0, '$.permission', 'string')), 'x'))"
     )
 
 
@@ -144,7 +144,7 @@ def test_variant_array_nested_variant_key(tmp_path):
     where = _gcp(tmp_path, "protoPayload.authorizationInfo.resourceAttributes.name")
     assert where == (
         "exists(try_variant_get(protoPayload, '$.authorizationInfo', 'ARRAY<VARIANT>'), "
-        "x0 -> lower(try_variant_get(x0, '$.resourceAttributes.name', 'string')) = lower('x'))"
+        "x0 -> lower(try_variant_get(x0, '$.resourceAttributes.name', 'string')) = 'x')"
     )
 
 
@@ -155,7 +155,7 @@ def test_undeclared_array_unchanged(tmp_path):
              "protoPayload.authorizationInfo.nope")
     # an existing non-array VARIANT key renders as before
     assert _gcp(tmp_path, "protoPayload.methodName") == (
-        "lower(try_variant_get(protoPayload, '$.methodName', 'string')) = lower('x')"
+        "lower(try_variant_get(protoPayload, '$.methodName', 'string')) = 'x'"
     )
 
 

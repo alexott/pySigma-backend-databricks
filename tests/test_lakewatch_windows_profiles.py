@@ -74,7 +74,7 @@ def test_sysmon_process_creation():
     condition: sel""",
     )
     low = sql.lower()
-    assert "lower(eventid) = lower('1')" in low
+    assert "lower(eventid) = '1'" in low
     assert "e._name = 'image'" in low
     assert "e._name = 'commandline'" in low
 
@@ -98,7 +98,7 @@ def test_sysmon_registry_add_eventtype():
     )
     assert "e._Name = 'EventType'" in sql
     assert "createkey" in sql.lower()
-    assert "lower(eventid) = lower('12')" in sql.lower()
+    assert "lower(eventid) = '12'" in sql.lower()
 
 
 def test_sysmon_service_routes():
@@ -158,8 +158,8 @@ def test_security_4688_mapping():
     )
     assert "e._Name = 'NewProcessName'" in sql
     assert "e._Name = 'ParentProcessName'" in sql
-    assert "S-1-16-12288" in sql
-    assert "lower(eventid) = lower('4688')" in sql.lower()
+    assert "s-1-16-12288" in sql
+    assert "lower(eventid) = '4688'" in sql.lower()
 
 
 def test_security_4688_ids():
@@ -171,8 +171,8 @@ def test_security_4688_ids():
         ParentProcessId: 255
     condition: sel""",
     )
-    assert re.search(r"e\._Name = 'NewProcessId'\), 1\)\._VALUE\) = lower\('0x1018'\)", sql)
-    assert re.search(r"e\._Name = 'ProcessId'\), 1\)\._VALUE\) = lower\('0xff'\)", sql)
+    assert re.search(r"e\._Name = 'NewProcessId'\), 1\)\._VALUE\) = '0x1018'", sql)
+    assert re.search(r"e\._Name = 'ProcessId'\), 1\)\._VALUE\) = '0xff'", sql)
 
 
 def test_security_4688_user():
@@ -249,7 +249,7 @@ def test_security_4688_integrity_sid_literal():
         _cat("process_creation"),
         "    sel:\n        IntegrityLevel: S-1-16-16384\n    condition: sel",
     )
-    assert re.search(r"e\._Name = 'MandatoryLabel'\), 1\)\._VALUE\) = lower\('S-1-16-16384'\)", sql)
+    assert re.search(r"e\._Name = 'MandatoryLabel'\), 1\)\._VALUE\) = 's-1-16-16384'", sql)
 
 
 def test_security_service_route_multi_eventid():
@@ -289,7 +289,7 @@ def test_ps_script_4104():
         "    product: windows\n    category: ps_script",
         "    sel:\n        ScriptBlockText|contains: 'Invoke-Mimikatz'\n    condition: sel",
     )
-    assert "lower(eventid) = lower('4104')" in sql.lower()
+    assert "lower(eventid) = '4104'" in sql.lower()
     assert "e._Name = 'ScriptBlockText'" in sql
 
 
@@ -299,7 +299,7 @@ def test_ps_module_4103():
         "    product: windows\n    category: ps_module",
         "    sel:\n        ContextInfo|contains: 'x'\n    condition: sel",
     )
-    assert "lower('4103')" in sql.lower()
+    assert "'4103'" in sql.lower()
     assert "e._Name = 'ContextInfo'" in sql
 
 
@@ -322,7 +322,7 @@ def test_event_other_channel_and_keyword():
         "    keywords:\n        - 'Set-Mailbox'\n    condition: keywords",
     )
     sql = json.loads(queries[0])["sql"]
-    assert "Channel" in sql and "MSExchange Management" in sql
+    assert "Channel" in sql and "msexchange management" in sql
     assert "to_json(raw_event)" in sql
     assert any("approximate" in w.lower() for w in warns)
 
@@ -336,7 +336,7 @@ def test_event_logs_header_only():
     )
     sql = _sql("windows_event_logs", _svc("system"), "    sel:\n        EventID: 7045\n    condition: sel")
     assert "7045" in sql
-    assert "lower(Channel) = lower('System')" in sql
+    assert "lower(Channel) = 'system'" in sql
 
 
 def test_ps_classic_start():
@@ -345,8 +345,8 @@ def test_ps_classic_start():
         _cat("ps_classic_start"),
         "    sel:\n        Data|contains: 'HostName=ConsoleHost'\n    condition: sel",
     )
-    assert "Windows PowerShell" in sql
-    assert "lower('400')" in sql.lower()
+    assert "windows powershell" in sql
+    assert "'400'" in sql.lower()
     assert "array_join(transform(filter(coalesce(try_variant_get(EventData, '$', 'ARRAY<VARIANT>')" in sql
 
 
@@ -371,7 +371,7 @@ def test_dns_client_channel_registered_name():
         "    sel:\n        QueryName: x\n    condition: sel",
     )
     sql = json.loads(queries[0])["sql"]
-    assert "Microsoft-Windows-DNS-Client/Operational" in sql
+    assert "microsoft-windows-dns-client/operational" in sql
     assert "DNS Client Events" not in sql
 
 

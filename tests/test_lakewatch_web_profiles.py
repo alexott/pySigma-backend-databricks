@@ -64,12 +64,12 @@ LB_URL = "lower(try_variant_get(httpRequest, '$.requestUrl', 'string'))"
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("cs-uri-query", "lower(ClientRequestURI) = lower('x')"),
-        ("cs-uri-stem", "lower(ClientRequestPath) = lower('x')"),
-        ("cs-method", "lower(ClientRequestMethod) = lower('x')"),
-        ("cs-user-agent", "lower(ClientRequestUserAgent) = lower('x')"),
-        ("cs-referer", "lower(ClientRequestReferer) = lower('x')"),
-        ("cs-host", "lower(ClientRequestHost) = lower('x')"),
+        ("cs-uri-query", "lower(ClientRequestURI) = 'x'"),
+        ("cs-uri-stem", "lower(ClientRequestPath) = 'x'"),
+        ("cs-method", "lower(ClientRequestMethod) = 'x'"),
+        ("cs-user-agent", "lower(ClientRequestUserAgent) = 'x'"),
+        ("cs-referer", "lower(ClientRequestReferer) = 'x'"),
+        ("cs-host", "lower(ClientRequestHost) = 'x'"),
     ],
 )
 def test_cloudflare_aliases(field, expected):
@@ -83,7 +83,7 @@ def test_cloudflare_sc_status():
 
 def test_cloudflare_u2_not_applied():
     # Cloudflare ClientRequestURI is path plus query, so plain equality stays allowed.
-    assert "lower(ClientRequestURI) = lower('/a')" in _sql(CLOUDFLARE, "webserver", _sel("cs-uri-query", "/a"))
+    assert "lower(ClientRequestURI) = '/a'" in _sql(CLOUDFLARE, "webserver", _sel("cs-uri-query", "/a"))
 
 
 # --- gcp_http_load_balancer -----------------------------------------------------------------
@@ -92,9 +92,9 @@ def test_cloudflare_u2_not_applied():
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("cs-method", "lower(try_variant_get(httpRequest, '$.requestMethod', 'string')) = lower('x')"),
-        ("cs-user-agent", "lower(try_variant_get(httpRequest, '$.userAgent', 'string')) = lower('x')"),
-        ("cs-referer", "lower(try_variant_get(httpRequest, '$.referer', 'string')) = lower('x')"),
+        ("cs-method", "lower(try_variant_get(httpRequest, '$.requestMethod', 'string')) = 'x'"),
+        ("cs-user-agent", "lower(try_variant_get(httpRequest, '$.userAgent', 'string')) = 'x'"),
+        ("cs-referer", "lower(try_variant_get(httpRequest, '$.referer', 'string')) = 'x'"),
     ],
 )
 def test_gcplb_aliases(field, expected):
@@ -109,12 +109,12 @@ def test_gcplb_sc_status():
 def test_u2_converts():
     contains = "    sel:\n        cs-uri-query|contains: /owa/auth/\n    condition: sel"
     sql = _sql(GCPLB, "webserver", contains)
-    assert f"AND (contains({LB_URL}, lower('/owa/auth/')))" in sql
+    assert f"AND (contains({LB_URL}, '/owa/auth/'))" in sql
     all_ = "    sel:\n        cs-uri-query|contains|all:\n            - /a\n            - /b\n    condition: sel"
     both = _sql(GCPLB, "webserver", all_)
-    assert f"AND (contains({LB_URL}, lower('/a')) AND contains({LB_URL}, lower('/b')))" in both
+    assert f"AND (contains({LB_URL}, '/a') AND contains({LB_URL}, '/b'))" in both
     end = _sql(GCPLB, "webserver", "    sel:\n        cs-uri-query|endswith: .php\n    condition: sel")
-    assert f"AND (endswith({LB_URL}, lower('.php')))" in end
+    assert f"AND (endswith({LB_URL}, '.php'))" in end
     rx = _sql(GCPLB, "webserver", "    sel:\n        cs-uri-query|re: 'a.+b'\n    condition: sel")
     assert "AND (try_variant_get(httpRequest, '$.requestUrl', 'string') rlike 'a.+b')" in rx
 
@@ -123,15 +123,15 @@ def test_u2_converts():
 @pytest.mark.parametrize("field", ["c-uri", "cs-uri"])
 def test_u2_converts_proxy(parser, col, field):
     sql = _sql(parser, "proxy", f"    sel:\n        {field}|contains: /a\n    condition: sel")
-    assert f"AND (contains(lower({col}), lower('/a')))" in sql
+    assert f"AND (contains(lower({col}), '/a'))" in sql
     all_ = _sql(
         parser,
         "proxy",
         f"    sel:\n        {field}|contains|all:\n            - /a\n            - /b\n    condition: sel",
     )
-    assert f"AND (contains(lower({col}), lower('/a')) AND contains(lower({col}), lower('/b')))" in all_
+    assert f"AND (contains(lower({col}), '/a') AND contains(lower({col}), '/b'))" in all_
     end = _sql(parser, "proxy", f"    sel:\n        {field}|endswith: .hta\n    condition: sel")
-    assert f"AND (endswith(lower({col}), lower('.hta')))" in end
+    assert f"AND (endswith(lower({col}), '.hta'))" in end
     rx = _sql(parser, "proxy", f"    sel:\n        {field}|re: 'a.+b'\n    condition: sel")
     assert f"AND ({col} rlike 'a.+b')" in rx
 
@@ -220,10 +220,10 @@ AW_JOIN = f"concat_ws('?', nullif({AW_URI}, ''), nullif({AW_ARGS}, ''))"
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("cs-uri-query", f"lower({AK_JOIN}) = lower('x')"),
-        ("cs-uri-stem", f"lower({AK_PATH}) = lower('x')"),
-        ("cs-method", "lower(httpMessage.method) = lower('x')"),
-        ("cs-host", "lower(httpMessage.host) = lower('x')"),
+        ("cs-uri-query", f"lower({AK_JOIN}) = 'x'"),
+        ("cs-uri-stem", f"lower({AK_PATH}) = 'x'"),
+        ("cs-method", "lower(httpMessage.method) = 'x'"),
+        ("cs-host", "lower(httpMessage.host) = 'x'"),
     ],
 )
 def test_akamai_aliases(field, expected):
@@ -233,17 +233,17 @@ def test_akamai_aliases(field, expected):
 def test_akamai_sc_status():
     # httpMessage.status is a STRING column, so the number renders as a (case-folded) string comparison.
     sql = _sql(AKAMAI, "webserver", "    sel:\n        sc-status: 200\n    condition: sel")
-    assert "AND (lower(httpMessage.status) = lower('200'))" in sql
+    assert "AND (lower(httpMessage.status) = '200')" in sql
 
 
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("cs-uri-query", f"lower({AW_JOIN}) = lower('x')"),
-        ("cs-uri-stem", f"lower({AW_URI}) = lower('x')"),
+        ("cs-uri-query", f"lower({AW_JOIN}) = 'x'"),
+        ("cs-uri-stem", f"lower({AW_URI}) = 'x'"),
         (
             "cs-method",
-            "lower(try_variant_get(httpRequest, '$.httpMethod', 'string')) = lower('x')",
+            "lower(try_variant_get(httpRequest, '$.httpMethod', 'string')) = 'x'",
         ),
     ],
 )
@@ -255,15 +255,15 @@ U1_CONTAINS = "    sel:\n        cs-uri-query|contains: x\n    condition: sel"
 
 
 def test_u1_join_contains():
-    assert f"AND (contains(lower({AK_JOIN}), lower('x')))" in _sql(AKAMAI, "webserver", U1_CONTAINS)
-    assert f"AND (contains(lower({AW_JOIN}), lower('x')))" in _sql(AWSWAF, "webserver", U1_CONTAINS)
+    assert f"AND (contains(lower({AK_JOIN}), 'x'))" in _sql(AKAMAI, "webserver", U1_CONTAINS)
+    assert f"AND (contains(lower({AW_JOIN}), 'x'))" in _sql(AWSWAF, "webserver", U1_CONTAINS)
 
 
 def test_u1_contains_all_converts():
     det = "    sel:\n        cs-uri-query|contains|all:\n            - /a\n            - /b\n    condition: sel"
     sql = _sql(AKAMAI, "webserver", det)
     assert (
-        f"AND (contains(lower({AK_JOIN}), lower('/a')) AND contains(lower({AK_JOIN}), lower('/b')))"
+        f"AND (contains(lower({AK_JOIN}), '/a') AND contains(lower({AK_JOIN}), '/b'))"
     ) in sql
 
 
@@ -271,7 +271,7 @@ def test_u1_contains_all_converts():
 def test_u1_literal_question_mark(parser, join):
     # \? is a literal ?, so the value is an exact comparison against the joined URI
     sql = _sql(parser, "webserver", "    sel:\n        cs-uri-query: '/a\\?b=1'\n    condition: sel")
-    assert f"AND (lower({join}) = lower('/a?b=1'))" in sql
+    assert f"AND (lower({join}) = '/a?b=1')" in sql
 
 
 @pytest.mark.parametrize("parser, join", [(AKAMAI, AK_JOIN), (AWSWAF, AW_JOIN)])
@@ -289,7 +289,7 @@ def test_u1_corpus_value_converts(parser, join):
 @pytest.mark.parametrize("parser, join", [(AKAMAI, AK_JOIN), (AWSWAF, AW_JOIN)])
 def test_u1_contains_literal_question_mark(parser, join):
     det = "    sel:\n        cs-uri-query|contains: 'a\\?b'\n    condition: sel"
-    assert f"AND (contains(lower({join}), lower('a?b')))" in _sql(parser, "webserver", det)
+    assert f"AND (contains(lower({join}), 'a?b'))" in _sql(parser, "webserver", det)
 
 
 @pytest.mark.parametrize("parser", [AKAMAI, AWSWAF])
@@ -311,7 +311,7 @@ def test_awswaf_array_variant_members_unmapped(field):
 
 def test_awswaf_labels_whole_value():
     ok = _sql(AWSWAF, "webserver", "    sel:\n        labels|contains: x\n    condition: sel")
-    assert "AND (contains(lower(to_json(labels)), lower('x')))" in ok
+    assert "AND (contains(lower(to_json(labels)), 'x'))" in ok
     err = _convert_error(AWSWAF, "webserver", _sel("labels"))
     assert err == (
         f"comparison against the whole VARIANT column labels supports only contains (profile {AWSWAF}) (rule 'T')"
@@ -320,7 +320,7 @@ def test_awswaf_labels_whole_value():
 
 AW_HEADER = (
     "lower(try_variant_get(try_element_at(filter(try_variant_get(httpRequest, '$.headers', 'ARRAY<VARIANT>'), "
-    "e -> lower(try_variant_get(e, '$.name', 'STRING')) = lower('{h}')), 1), '$.value', 'STRING')) = lower('x')"
+    "e -> lower(try_variant_get(e, '$.name', 'STRING')) = '{h}'), 1), '$.value', 'STRING')) = 'x'"
 )
 
 
@@ -329,14 +329,14 @@ AW_HEADER = (
     [("cs-user-agent", "User-Agent"), ("cs-referer", "Referer"), ("cs-host", "Host")],
 )
 def test_aws_waf_headers(field, header):
-    assert f"AND ({AW_HEADER.format(h=header)})" in _sql(AWSWAF, "webserver", _sel(field))
+    assert f"AND ({AW_HEADER.format(h=header.lower())})" in _sql(AWSWAF, "webserver", _sel(field))
 
 
 def test_aws_waf_header_array_identity():
     sql = _sql(AWSWAF, "webserver", _sel("httpRequest.headers.name", "host"))
     assert (
         "AND (exists(try_variant_get(httpRequest, '$.headers', 'ARRAY<VARIANT>'), "
-        "x0 -> lower(try_variant_get(x0, '$.name', 'string')) = lower('host')))"
+        "x0 -> lower(try_variant_get(x0, '$.name', 'string')) = 'host'))"
     ) in sql
 
 
@@ -345,7 +345,7 @@ def test_aws_waf_rule_match_array_identity():
     assert (
         "AND (exists(ruleGroupList, x0 -> exists("
         "try_variant_get(x0, '$.terminatingRule.ruleMatchDetails', 'ARRAY<VARIANT>'), "
-        "x1 -> lower(try_variant_get(x1, '$.conditionType', 'string')) = lower('x'))))"
+        "x1 -> lower(try_variant_get(x1, '$.conditionType', 'string')) = 'x')))"
     ) in sql
 
 
@@ -362,8 +362,8 @@ def test_cloudflare_snapshot():
         "SELECT *, ClientIP AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(ClientRequestMethod) = lower('POST') "
-        "AND contains(lower(ClientRequestURI), lower('/owa/auth/')) "
+        "  AND (lower(ClientRequestMethod) = 'post' "
+        "AND contains(lower(ClientRequestURI), '/owa/auth/') "
         "AND EdgeResponseStatus = 200)"
     )
 
@@ -373,8 +373,8 @@ def test_gcplb_snapshot():
         "SELECT *, try_variant_get(httpRequest, '$.remoteIp', 'string') AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(try_variant_get(httpRequest, '$.requestMethod', 'string')) = lower('POST') "
-        f"AND contains({LB_URL}, lower('/owa/auth/')) "
+        "  AND (lower(try_variant_get(httpRequest, '$.requestMethod', 'string')) = 'post' "
+        f"AND contains({LB_URL}, '/owa/auth/') "
         "AND try_variant_get(httpRequest, '$.status', 'bigint') = 200)"
     )
 
@@ -382,8 +382,8 @@ def test_gcplb_snapshot():
 def test_cloudflare_variant_columns():
     whole = _sql(CLOUDFLARE, "webserver", "    sel:\n        Cookies|contains: x\n    condition: sel")
     member = _sql(CLOUDFLARE, "webserver", _sel("RequestHeaders.User-Agent"))
-    assert "AND (contains(lower(to_json(Cookies)), lower('x')))" in whole
-    assert "AND (lower(try_variant_get(RequestHeaders, '$[\\'User-Agent\\']', 'string')) = lower('x'))" in member
+    assert "AND (contains(lower(to_json(Cookies)), 'x'))" in whole
+    assert "AND (lower(try_variant_get(RequestHeaders, '$[\\'User-Agent\\']', 'string')) = 'x')" in member
 
 
 def test_akamai_snapshot():
@@ -391,9 +391,9 @@ def test_akamai_snapshot():
         "SELECT *, attackData.clientIP AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(httpMessage.method) = lower('POST') "
-        f"AND contains(lower({AK_JOIN}), lower('/owa/auth/')) "
-        "AND lower(httpMessage.status) = lower('200'))"
+        "  AND (lower(httpMessage.method) = 'post' "
+        f"AND contains(lower({AK_JOIN}), '/owa/auth/') "
+        "AND lower(httpMessage.status) = '200')"
     )
 
 
@@ -403,8 +403,8 @@ def test_awswaf_snapshot():
         "SELECT *, try_variant_get(httpRequest, '$.clientIp', 'string') AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(try_variant_get(httpRequest, '$.httpMethod', 'string')) = lower('POST') "
-        f"AND contains(lower({AW_JOIN}), lower('/owa/auth/')))"
+        "  AND (lower(try_variant_get(httpRequest, '$.httpMethod', 'string')) = 'post' "
+        f"AND contains(lower({AW_JOIN}), '/owa/auth/'))"
     )
 
 
@@ -416,16 +416,16 @@ def test_awswaf_snapshot():
 def test_proxy_url_alias_is_u2(parser, field):
     # The URL alias is the whole-URL column, so only U2 modifiers convert (see test_u2_*_proxy).
     sql = _sql(parser, "proxy", f"    sel:\n        {field}|contains: x\n    condition: sel")
-    assert "AND (contains(lower(url), lower('x')))" in sql
+    assert "AND (contains(lower(url), 'x'))" in sql
 
 
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("c-useragent", "lower(useragent) = lower('x')"),
-        ("cs-method", "lower(requestmethod) = lower('x')"),
-        ("cs-host", "lower(hostname) = lower('x')"),
-        ("dst_ip", "lower(serverip) = lower('x')"),
+        ("c-useragent", "lower(useragent) = 'x'"),
+        ("cs-method", "lower(requestmethod) = 'x'"),
+        ("cs-host", "lower(hostname) = 'x'"),
+        ("dst_ip", "lower(serverip) = 'x'"),
     ],
 )
 def test_zscaler_aliases(field, expected):
@@ -435,10 +435,10 @@ def test_zscaler_aliases(field, expected):
 @pytest.mark.parametrize(
     "field, expected",
     [
-        ("c-useragent", "lower(userAgent) = lower('x')"),
-        ("cs-method", "lower(requestMethod) = lower('x')"),
-        ("cs-host", "lower(serverName) = lower('x')"),
-        ("dst_ip", "lower(destinationIp) = lower('x')"),
+        ("c-useragent", "lower(userAgent) = 'x'"),
+        ("cs-method", "lower(requestMethod) = 'x'"),
+        ("cs-host", "lower(serverName) = 'x'"),
+        ("dst_ip", "lower(destinationIp) = 'x'"),
     ],
 )
 def test_umbrella_aliases(field, expected):
@@ -448,7 +448,7 @@ def test_umbrella_aliases(field, expected):
 def test_proxy_sc_status():
     det = "    sel:\n        sc-status: 200\n    condition: sel"
     # Zscaler status is a STRING column; Umbrella statusCode is INT.
-    assert "AND (lower(status) = lower('200'))" in _sql(ZSCALER, "proxy", det)
+    assert "AND (lower(status) = '200')" in _sql(ZSCALER, "proxy", det)
     assert "AND (statusCode = 200)" in _sql(UMBRELLA, "proxy", det)
 
 
@@ -463,9 +463,9 @@ def test_zscaler_snapshot():
         "SELECT *, user AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (endswith(lower(url), lower('.hta')) "
-        "AND lower(requestmethod) = lower('GET') "
-        "AND contains(lower(useragent), lower('curl')))"
+        "  AND (endswith(lower(url), '.hta') "
+        "AND lower(requestmethod) = 'get' "
+        "AND contains(lower(useragent), 'curl'))"
     )
 
 
@@ -474,9 +474,9 @@ def test_umbrella_snapshot():
         "SELECT *, identity AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (endswith(lower(url), lower('.hta')) "
-        "AND lower(requestMethod) = lower('GET') "
-        "AND contains(lower(userAgent), lower('curl')))"
+        "  AND (endswith(lower(url), '.hta') "
+        "AND lower(requestMethod) = 'get' "
+        "AND contains(lower(userAgent), 'curl'))"
     )
 
 
@@ -484,7 +484,7 @@ def test_zscaler_keyword_searches_event_json():
     det = "    keywords:\n        - 'C:\\\\evil'\n    condition: keywords"
     with pytest.warns(UserWarning):
         sql = _convert(ZSCALER, "proxy", det)
-    assert "AND (contains(lower((to_json(event))), lower('C:\\\\\\\\evil')))" in sql
+    assert "AND (contains(lower((to_json(event))), 'c:\\\\\\\\evil'))" in sql
 
 
 def test_umbrella_keyword_has_no_raw_event():

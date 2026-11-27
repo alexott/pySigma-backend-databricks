@@ -256,7 +256,7 @@ detection:
     condition: selection and keywords
 ```
 
-Generates: `EventID = 4688 AND (contains(lower(raw), lower('mimikatz')) OR raw rlike '.*evil(cmd|powershell).*')`
+Generates: `EventID = 4688 AND (contains(lower(raw), 'mimikatz') OR raw rlike '.*evil(cmd|powershell).*')`
 
 Keywords in a list are ORed, and `'|all'` ANDs them. Wildcards turn into `contains()`
 (`*malware*`), `startswith()` (`cmd.exe*`) or `endswith()` (`*.dll`).

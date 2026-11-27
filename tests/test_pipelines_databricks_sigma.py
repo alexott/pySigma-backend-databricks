@@ -33,7 +33,7 @@ def test_snake_case_fields_conversion():
 def test_snake_case_detection_conversion():
     rule = DatabricksBackend(snake_case()).convert(
         SigmaCollection.from_yaml(YAML_STR))
-    assert rule == ["event_id = 123 AND lower(image) = lower('test.exe') AND lower(test_field) = lower('test')"]
+    assert rule == ["event_id = 123 AND lower(image) = 'test.exe' AND lower(test_field) = 'test'"]
 
 
 def test_databricks_pipeline_registration():

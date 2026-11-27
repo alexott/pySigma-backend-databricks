@@ -168,7 +168,7 @@ skipped and reported.
 **Keywords.** A keyword (a detection list without a field name) is searched in the raw event of
 the profile. The profile says where it is with `raw:`, one of:
 
-* `raw: {column: raw_line}`: a STRING column, searched as is (`contains(lower(col), lower('x'))`).
+* `raw: {column: raw_line}`: a STRING column, searched as is (`contains(lower(col), 'x')`).
 * `raw: {entries: EventData}`: the `_VALUE`s of the named entries joined with newlines.
 * `raw: {expr: "to_json(raw_event)", encoding: json}`: any SQL expression; `encoding` is `text`
   or `json` and is required.

@@ -100,7 +100,7 @@ def test_audit_aliases(alias, target):
     elif target.startswith("properties."):
         assert f"try_variant_get(properties, '$.{target[len('properties.'):]}', 'string')" in sql
     else:
-        assert f"lower({target}) = lower('x')" in sql
+        assert f"lower({target}) = 'x'" in sql
 
 
 def test_audit_properties_message_is_activity_display_name():
@@ -139,7 +139,7 @@ def report_approximate(detection, service, parser):
 
 def test_audit_properties_contains_approximate():
     sql = _sql(AUDIT, "auditlogs", _sel("properties|contains"))
-    assert "contains(lower(to_json(properties)), lower('x'))" in sql
+    assert "contains(lower(to_json(properties)), 'x')" in sql
     assert report_approximate(_sel("properties|contains"), "auditlogs", AUDIT) is True
 
 
@@ -149,7 +149,7 @@ def test_audit_snapshot():
         "SELECT *, coalesce(initiatedByUserPrincipalName, initiatedByAppDisplayName) AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(auditCategory) = lower('UserManagement') AND lower(result) = lower('Success'))"
+        "  AND (lower(auditCategory) = 'usermanagement' AND lower(result) = 'success')"
     )
 
 
@@ -200,7 +200,7 @@ def test_signin_aliases(alias, target):
     if target.startswith("properties."):
         expected = f"try_variant_get(properties, '$.{target[len('properties.'):]}', 'string')"
     else:
-        expected = f"lower({target}) = lower('x')"
+        expected = f"lower({target}) = 'x'"
     assert expected in sql
     if alias != target:
         # the alias text itself must not leak into the SQL as a column reference
@@ -211,7 +211,7 @@ def test_signin_aliases(alias, target):
 def test_signin_numeric_result_type():
     sql = _sql(SIGNIN, "signinlogs", "    sel:\n        ResultType: 50126\n    condition: sel")
     # Spark compares the STRING column with a quoted string literal, never a bare number.
-    assert "lower(resultType) = lower('50126')" in sql
+    assert "lower(resultType) = '50126'" in sql
 
 
 def test_signin_status_unmapped():
@@ -266,12 +266,12 @@ _ACTIVITY_PARAMS = [(a, t) for t, aliases in _ACTIVITY_ALIASES.items() for a in 
 @pytest.mark.parametrize("alias,target", _ACTIVITY_PARAMS)
 def test_activity_aliases(alias, target):
     sql = _sql(ACTIVITY, "activitylogs", _sel(alias))
-    assert f"lower({target}) = lower('x')" in sql
+    assert f"lower({target}) = 'x'" in sql
 
 
 def test_activity_operation_name():
     sql = _sql(ACTIVITY, "activitylogs", _sel("operationName", "MICROSOFT.KEYVAULT/VAULTS/WRITE"))
-    assert "lower(operationName) = lower('MICROSOFT.KEYVAULT/VAULTS/WRITE')" in sql
+    assert "lower(operationName) = 'microsoft.keyvault/vaults/write'" in sql
 
 
 def test_activity_entity():
@@ -296,7 +296,7 @@ _IDENTITY_PARAMS = [(a, t) for t, aliases in _IDENTITY_ALIASES.items() for a in 
 @pytest.mark.parametrize("alias,target", _IDENTITY_PARAMS)
 def test_identity_protection_aliases(alias, target):
     sql = _sql(IDENTITY, "riskdetection", _sel(alias))
-    assert f"lower({target}) = lower('x')" in sql
+    assert f"lower({target}) = 'x'" in sql
 
 
 def test_identity_protection_entity():

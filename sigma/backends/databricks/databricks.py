@@ -130,6 +130,11 @@ def _represent_str_block(dumper: yaml.SafeDumper, data: str):
 _LakewatchDumper.add_representer(str, _represent_str_block)
 
 
+def lower_literal_text(name: str) -> str:
+    """Quoted SQL literal for a plain string, case-folded at conversion time when ASCII."""
+    return f"'{name.lower()}'" if name.isascii() else f"lower('{name}')"
+
+
 def _collect_field_values(detection: Any, field: str, found: List[Set[str]]) -> None:
     for item in detection.detection_items:
         if isinstance(item, SigmaDetection):
@@ -245,9 +250,9 @@ class DatabricksBackend(TextQueryBackend):
     }
 
     # String matching operators. if none is appropriate eq_token is used.
-    startswith_expression: ClassVar[Optional[str]] = "startswith(lower({field}), lower({value}))"
-    endswith_expression: ClassVar[Optional[str]] = "endswith(lower({field}), lower({value}))"
-    contains_expression: ClassVar[Optional[str]] = "contains(lower({field}), lower({value}))"
+    startswith_expression: ClassVar[Optional[str]] = "startswith(lower({field}), {value})"
+    endswith_expression: ClassVar[Optional[str]] = "endswith(lower({field}), {value})"
+    contains_expression: ClassVar[Optional[str]] = "contains(lower({field}), {value})"
     # Special expression if wildcards can't be matched with the eq_token operator. {value} is a quoted SQL string
     # with an anchored, case-insensitive regex built by make_wildcard_regex
     wildcard_match_expression: ClassVar[Optional[str]] = "{field} rlike {value}"
@@ -793,7 +798,7 @@ class DatabricksBackend(TextQueryBackend):
         """
         spec = path.entry_spec
         assert spec is not None
-        quoted = f"lower('{name}')" if spec.ignore_case else f"'{name}'"
+        quoted = lower_literal_text(name) if spec.ignore_case else f"'{name}'"
         if path.entry_variant:
             source = self._struct_ref(None, path.leaf)
             if path.entry_keys:
@@ -897,6 +902,11 @@ class DatabricksBackend(TextQueryBackend):
         )
         return self.quote_string(converted)
 
+    def lower_literal(self, s: SigmaString) -> str:
+        """Return SQL for a case-folded string literal (lowercased if ASCII, else wrapped in lower())."""
+        literal = self.make_sql_string(s)
+        return literal.lower() if literal.isascii() else f"lower({literal})"
+
     @staticmethod
     def sql_quote_regex(pattern: str) -> str:
         """Escape a regex for embedding into a single-quoted Spark SQL string literal (without quotes)."""
@@ -947,7 +957,7 @@ class DatabricksBackend(TextQueryBackend):
             ):
                 expr = self.startswith_expression  # If all conditions are fulfilled, use 'startswith' operator
                 # instead of equal token
-                value = self.make_sql_string(sigma_value[:-1])
+                value = self.lower_literal(sigma_value[:-1])
             elif (
                 # Same as above but for 'endswith' operator: string starts with wildcard and doesn't contain further
                 # special characters
@@ -956,7 +966,7 @@ class DatabricksBackend(TextQueryBackend):
                 and not sigma_value[1:].contains_special()
             ):
                 expr = self.endswith_expression
-                value = self.make_sql_string(sigma_value[1:])
+                value = self.lower_literal(sigma_value[1:])
             elif (  # contains: string starts and ends with wildcard
                 self.contains_expression is not None
                 and sigma_value.startswith(SpecialChars.WILDCARD_MULTI)
@@ -964,7 +974,7 @@ class DatabricksBackend(TextQueryBackend):
                 and not sigma_value[1:-1].contains_special()
             ):
                 expr = self.contains_expression
-                value = self.make_sql_string(sigma_value[1:-1])
+                value = self.lower_literal(sigma_value[1:-1])
             elif (  # wildcard match expression: string contains wildcard
                 self.wildcard_match_expression is not None
                 and sigma_value.contains_special()
@@ -972,8 +982,8 @@ class DatabricksBackend(TextQueryBackend):
                 expr = self.wildcard_match_expression
                 value = self.make_wildcard_regex(sigma_value)
             else:  # We have just plain string
-                expr = "lower({field}) = lower({value})"
-                value = self.make_sql_string(sigma_value)
+                expr = "lower({field}) = {value}"
+                value = self.lower_literal(sigma_value)
 
             return expr.format(field=self.escape_and_quote_field(cond.field),
                                value=value)
@@ -1006,19 +1016,19 @@ class DatabricksBackend(TextQueryBackend):
             and value.endswith(SpecialChars.WILDCARD_MULTI)
             and not value[1:-1].contains_special()):
             # *keyword* -> contains()
-            val_str = self.make_sql_string(value[1:-1])
+            val_str = self.lower_literal(value[1:-1])
             return self.contains_expression.format(field=field, value=val_str)
         elif (self.startswith_expression is not None
               and value.endswith(SpecialChars.WILDCARD_MULTI)
               and not value[:-1].contains_special()):
             # keyword* -> startswith()
-            val_str = self.make_sql_string(value[:-1])
+            val_str = self.lower_literal(value[:-1])
             return self.startswith_expression.format(field=field, value=val_str)
         elif (self.endswith_expression is not None
               and value.startswith(SpecialChars.WILDCARD_MULTI)
               and not value[1:].contains_special()):
             # *keyword -> endswith()
-            val_str = self.make_sql_string(value[1:])
+            val_str = self.lower_literal(value[1:])
             return self.endswith_expression.format(field=field, value=val_str)
         elif (self.wildcard_match_expression is not None
               and value.contains_special()):
@@ -1027,7 +1037,7 @@ class DatabricksBackend(TextQueryBackend):
             return self.wildcard_match_expression.format(field=field, value=val_str)
         else:
             # Plain keyword -> contains() (most common case)
-            val_str = self.make_sql_string(value)
+            val_str = self.lower_literal(value)
             if self.contains_expression:
                 return self.contains_expression.format(field=field, value=val_str)
             raise ValueError("contains_expression is not defined")
@@ -1057,7 +1067,7 @@ class DatabricksBackend(TextQueryBackend):
         # Convert number to string search in raw log
         field, raw = self._raw_expression()
         self._warn_raw(raw)
-        value = self.make_sql_string(SigmaString(str(cond.value)))
+        value = self.lower_literal(SigmaString(str(cond.value)))
         if self.contains_expression:
             return self.contains_expression.format(field=field, value=value)
         raise ValueError("contains_expression is not defined")

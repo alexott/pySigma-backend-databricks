@@ -110,6 +110,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- ASCII string literals are lowercased by the converter (`lower(F) = 'v'` instead of `lower(F) = lower('V')`);
+  non-ASCII literals keep `lower()`.
 - **Documentation:** the README now covers installation, a Lakewatch quick start, the main options
   and deployment. The details moved to `docs/`: `lakewatch-output.md`, `discovery-and-reports.md`,
   `built-in-profiles.md`, `writing-profiles.md`, `deploying.md` and `ocsf.md`.

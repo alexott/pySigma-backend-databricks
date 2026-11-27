@@ -248,7 +248,7 @@ def test_parsed_plain_column_and_table(env):
     sql = _one(env, SEL)
     assert sql == (
         "SELECT *\nFROM ct_table\nWHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(eventType) = lower('AwsApiCall') AND lower(eventName) = lower('ConsoleLogin'))"
+        "  AND (lower(eventType) = 'awsapicall' AND lower(eventName) = 'consolelogin')"
     )
 
 
@@ -256,14 +256,14 @@ def test_parsed_renders_variant_typed(env):
     sql = _one(env, """    sel:
         userIdentity.arn|endswith: ':root'
     condition: sel""")
-    assert "endswith(lower(try_variant_get(userIdentity, '$.arn', 'string')), lower(':root'))" in sql
+    assert "endswith(lower(try_variant_get(userIdentity, '$.arn', 'string')), ':root')" in sql
 
 
 def test_parsed_freeform_variant_path(env):
     sql = _one(env, """    sel:
         requestParameters.bucketName: b
     condition: sel""")
-    assert "lower(try_variant_get(requestParameters, '$.bucketName', 'string')) = lower('b')" in sql
+    assert "lower(try_variant_get(requestParameters, '$.bucketName', 'string')) = 'b'" in sql
 
 
 def test_parsed_freeform_variant_number_and_bool(env):
@@ -326,22 +326,22 @@ def test_parsed_struct_dot_access_and_quoting(env):
         Host|contains: evil
         TlsVersion: '1.0'
     condition: sel""")
-    assert "contains(lower(tlsDetails.clientProvidedHostHeader), lower('evil'))" in sql
-    assert "lower(tlsDetails.`tls-version`) = lower('1.0')" in sql
+    assert "contains(lower(tlsDetails.clientProvidedHostHeader), 'evil')" in sql
+    assert "lower(tlsDetails.`tls-version`) = '1.0'" in sql
 
 
 def test_parsed_uses_catalog_spelling(env):
     sql = _one(env, """    sel:
         Src: s3.amazonaws.com
     condition: sel""")
-    assert "lower(eventSource) = lower('s3.amazonaws.com')" in sql
+    assert "lower(eventSource) = 's3.amazonaws.com'" in sql
 
 
 def test_parsed_number_vs_string_column_quoted(env):
     sql = _one(env, """    sel:
         EventID: 4688
     condition: sel""")
-    assert "lower(EventID) = lower('4688')" in sql
+    assert "lower(EventID) = '4688'" in sql
     assert "= 4688" not in sql
 
 
@@ -349,14 +349,14 @@ def test_parsed_bool_vs_string_column_quoted(env):
     sql = _one(env, """    sel:
         EventID: true
     condition: sel""")
-    assert "lower(EventID) = lower('true')" in sql
+    assert "lower(EventID) = 'true'" in sql
 
 
 def test_parsed_number_vs_declared_string_variant_key(env):
     sql = _one(env, """    sel:
         userIdentity.arn: 42
     condition: sel""")
-    assert "lower(try_variant_get(userIdentity, '$.arn', 'string')) = lower('42')" in sql
+    assert "lower(try_variant_get(userIdentity, '$.arn', 'string')) = '42'" in sql
 
 
 def test_parsed_bool_column_not_coerced(env):
@@ -375,7 +375,7 @@ def test_whole_variant_contains(env):
         sqls = _sqls(backend, _rule("""    sel:
         requestParameters|contains: Suspended
     condition: sel"""))
-    assert "contains(lower(to_json(requestParameters)), lower('Suspended'))" in sqls[0]
+    assert "contains(lower(to_json(requestParameters)), 'suspended')" in sqls[0]
 
 
 def test_whole_variant_contains_all_quotes(env):
@@ -384,9 +384,9 @@ def test_whole_variant_contains_all_quotes(env):
             - '"Allow"'
             - '"s3:GetObject"'
     condition: sel""", extra_fields=WV)
-    assert "contains(lower(to_json(requestParameters)), lower('\\\\\"Allow\\\\\"'))" in sql
+    assert "contains(lower(to_json(requestParameters)), '\\\\\"allow\\\\\"')" in sql
     assert " AND " in sql
-    assert "lower('\\\\\"s3:GetObject\\\\\"')" in sql
+    assert "'\\\\\"s3:getobject\\\\\"'" in sql
 
 
 def test_whole_variant_eq_fails(env):
@@ -435,7 +435,7 @@ def test_whole_variant_nested_key_contains(env):
         userIdentity.sessionContext|contains: x
     condition: sel""", extra_fields={"userIdentity.sessionContext": "userIdentity.sessionContext"})
     assert (
-        "contains(lower(to_json(try_variant_get(userIdentity, '$.sessionContext', 'variant'))), lower('x'))"
+        "contains(lower(to_json(try_variant_get(userIdentity, '$.sessionContext', 'variant'))), 'x')"
     ) in sql
 
 
@@ -451,7 +451,7 @@ def test_parsed_array_of_variant(env):
     sql = _one(env, """    sel:
         resources.arn|endswith: x
     condition: sel""")
-    assert "exists(resources, x0 -> endswith(lower(try_variant_get(x0, '$.arn', 'string')), lower('x')))" in sql
+    assert "exists(resources, x0 -> endswith(lower(try_variant_get(x0, '$.arn', 'string')), 'x'))" in sql
 
 
 def test_parsed_negated_array_of_variant(env):
@@ -460,7 +460,7 @@ def test_parsed_negated_array_of_variant(env):
     flt:
         resources.arn: x
     condition: sel and not flt""")
-    assert "NOT exists(resources, x0 -> lower(try_variant_get(x0, '$.arn', 'string')) = lower('x'))" in sql
+    assert "NOT exists(resources, x0 -> lower(try_variant_get(x0, '$.arn', 'string')) = 'x')" in sql
 
 
 def test_parsed_unknown_mapping_target_at_conversion(env):
@@ -511,15 +511,15 @@ def test_parsed_named_entry_variant(env):
     sql = _one(env, """    sel:
         Image|endswith: '\\cmd.exe'
     condition: sel""")
-    assert f"endswith(lower({_entry(EVENT_DATA, 'Image')}), lower('\\\\cmd.exe'))" in sql
+    assert f"endswith(lower({_entry(EVENT_DATA, 'Image')}), '\\\\cmd.exe')" in sql
 
 
 def test_parsed_named_entry_targets_ored(env):
     sql = _one(env, """    sel:
         QueryName: evil.com
     condition: sel""")
-    assert (f"lower({_entry(EVENT_DATA, 'QueryName')}) = lower('evil.com') OR "
-            f"lower({_entry('Data', 'QueryName')}) = lower('evil.com')") in sql
+    assert (f"lower({_entry(EVENT_DATA, 'QueryName')}) = 'evil.com' OR "
+            f"lower({_entry('Data', 'QueryName')}) = 'evil.com'") in sql
 
 
 def test_parsed_named_entry_regex_or_number_and_null(env):
@@ -531,7 +531,7 @@ def test_parsed_named_entry_regex_or_number_and_null(env):
         Image: null
     condition: sel or num or nul""")
     assert f"{_entry(EVENT_DATA, 'Image')} rlike '(?iu).*(a|b|c).*'" in sql
-    assert f"lower({_entry(EVENT_DATA, 'Image')}) = lower('22')" in sql   # STRING value
+    assert f"lower({_entry(EVENT_DATA, 'Image')}) = '22'" in sql   # STRING value
     assert f"{_entry(EVENT_DATA, 'Image')} is null" in sql
 
 
@@ -554,7 +554,7 @@ def test_unnamed_data_joined_sql(env):
     sql = _one(env, """    sel:
         Data|contains: 'HostName=ConsoleHost'
     condition: sel""")
-    assert f"contains(lower({EVENT_DATA_STRINGS}), lower('HostName=ConsoleHost'))" in sql
+    assert f"contains(lower({EVENT_DATA_STRINGS}), 'hostname=consolehost')" in sql
 
 
 def test_unnamed_data_requires_variant(env):
@@ -706,7 +706,7 @@ def test_user_pipeline_runs_before_profile(env):
     sql = _one(env, """    sel:
         Image: x
     condition: sel""", processing_pipeline=pipeline)
-    assert "lower(eventName) = lower('x')" in sql
+    assert "lower(eventName) = 'x'" in sql
 
 
 def test_pipeline_vars_set_and_callback_passed(env):
@@ -835,7 +835,7 @@ def test_parsed_array_of_struct_member(env):
     sql = _one(env, """    sel:
         Items.name: n
     condition: sel""", extra_fields={"Items.name": "items.name"})
-    assert "exists(items, x0 -> lower(x0.name) = lower('n'))" in sql
+    assert "exists(items, x0 -> lower(x0.name) = 'n')" in sql
 
 
 # --- finalizer -----------------------------------------------------------------------------
@@ -856,7 +856,7 @@ def test_v2_parsed_document(env):
     assert doc["rule_name"] == "ct_rule__p_ct"
     sql = doc["batch"]["sql"]["query"]
     assert sql.startswith("SELECT *\nFROM main.sec.cloudtrail\nWHERE IN_TIMERANGE(time)\n  AND (")
-    assert "lower(eventtype) = lower('awsapicall')" in sql.lower()
+    assert "lower(eventtype) = 'awsapicall'" in sql.lower()
     assert doc["annotations"]["sigma_profile"] == "p_ct@1"
     keys = list(doc["annotations"])
     assert keys.index("sigma_profile") == keys.index("converter_version") - 1
@@ -884,8 +884,8 @@ def test_parsed_multi_target_prefix_ors_all_targets(env):
         params.bucketName: b
     condition: sel""", extra_fields={"params.*": ["requestParameters.*", "responseElements.*"]})
     assert (
-        "(lower(try_variant_get(requestParameters, '$.bucketName', 'string')) = lower('b') OR "
-        "lower(try_variant_get(responseElements, '$.bucketName', 'string')) = lower('b'))"
+        "(lower(try_variant_get(requestParameters, '$.bucketName', 'string')) = 'b' OR "
+        "lower(try_variant_get(responseElements, '$.bucketName', 'string')) = 'b')"
     ) in sql
 
 
@@ -1038,7 +1038,7 @@ def test_join_rendering_startswith(env):
     condition: sel""", extra_fields=REG_SPLIT)
     assert (
         f"startswith(lower({REG_JOIN}), "
-        r"lower('\\REGISTRY\\MACHINE\\SOFTWARE\\'))"
+        r"'\\registry\\machine\\software\\')"
     ) in sql
 
 
@@ -1087,8 +1087,8 @@ def test_join_number_bool_coerced_and_compare_cast(env):
     from sigma.types import CompareOperators, SigmaBool, SigmaCompareExpression, SigmaNumber
 
     backend = _parsed_backend(env)
-    assert _convert_cond(backend, _reg_join(), SigmaNumber(5)) == f"lower({REG_JOIN}) = lower('5')"
-    assert _convert_cond(backend, _reg_join(), SigmaBool(True)) == f"lower({REG_JOIN}) = lower('true')"
+    assert _convert_cond(backend, _reg_join(), SigmaNumber(5)) == f"lower({REG_JOIN}) = '5'"
+    assert _convert_cond(backend, _reg_join(), SigmaBool(True)) == f"lower({REG_JOIN}) = 'true'"
     expr = SigmaCompareExpression(SigmaNumber(3), CompareOperators.GT)
     assert _convert_cond(backend, _reg_join(), expr) == f"try_cast({REG_JOIN} AS DOUBLE) > 3"
 
@@ -1108,7 +1108,7 @@ def test_join_non_string_parts_rendered_as_strings(env):
     sql = _convert_cond(backend, join_field_name("\\", ["RegNum", "meta.n"]), SigmaString("x"))
     assert sql == (
         "lower(concat_ws('\\\\', nullif(cast(RegNum AS STRING), ''), "
-        "nullif(try_variant_get(meta, '$.n', 'string'), ''))) = lower('x')"
+        "nullif(try_variant_get(meta, '$.n', 'string'), ''))) = 'x'"
     )
 
 
@@ -1121,7 +1121,7 @@ def test_join_declared_string_variant_part_unchanged(env):
     sql = _convert_cond(backend, join_field_name("/", ["meta.a", "RegKey"]), SigmaString("x"))
     assert sql == (
         "lower(concat_ws('/', nullif(try_variant_get(meta, '$.a', 'string'), ''), "
-        "nullif(RegKey, ''))) = lower('x')"
+        "nullif(RegKey, ''))) = 'x'"
     )
 
 
@@ -1141,7 +1141,7 @@ def test_undeclared_mapping_renders(env):
     sql = _one(env, """    sel:
         X: foo
     condition: sel""", extra_fields={"X": {"field": "meta.custom", "undeclared": True}})
-    assert "lower(try_variant_get(meta, '$.custom', 'string')) = lower('foo')" in sql
+    assert "lower(try_variant_get(meta, '$.custom', 'string')) = 'foo'" in sql
 
 
 def test_undeclared_needs_mapping_flag(env):
@@ -1174,7 +1174,7 @@ def test_allowed_value_warning(env):
     condition: sel""", title="Allowed Rule")
     with pytest.warns(UserWarning, match="never matches") as record:
         sqls = _sqls(backend, rule)
-    assert len(sqls) == 1 and "lower(Level) = lower('11')" in sqls[0]
+    assert len(sqls) == 1 and "lower(Level) = '11'" in sqls[0]
     messages = [str(w.message) for w in record if "never matches" in str(w.message)]
     assert messages == [
         "rule 'Allowed Rule': Level = '11' never matches parser fx_ct; allowed: ['1', '7']"
@@ -1207,7 +1207,7 @@ def test_hashes_end_to_end_array_column(env):
     sql = _one(env, f"""    sel:
         Hashes: 'MD5={md5}'
     condition: sel""", extra_fields={"Hashes": {"transform": {"hashes": {"algos": {"MD5": "hashes_arr"}}}}})
-    assert f"exists(hashes_arr, x0 -> lower(x0) = lower('{md5}'))" in sql
+    assert f"exists(hashes_arr, x0 -> lower(x0) = '{md5}')" in sql
 
 
 FIRST_USER = {"User": {"transform": [
@@ -1227,7 +1227,7 @@ def test_first_set_sql(env):
     assert ", '') NOT IN ('-', '') THEN concat_ws(" in sql
     assert " ELSE concat_ws(" in sql
     assert sql.count("CASE WHEN coalesce(") == 1
-    assert "END), lower('\\\\alice'))" in sql
+    assert "END), '\\\\alice')" in sql
     with pytest.raises(Exception, match="system account"):
         _one(env, """    sel:
         User|contains: AUTHORI
@@ -1254,7 +1254,7 @@ def test_to_hex_sql(env):
     sql = _one(env, """    sel:
         ProcessId: 4120
     condition: sel""", extra_fields=extra)
-    assert f"lower({_entry(EVENT_DATA, 'NewProcessId')}) = lower('0x1018')" in sql
+    assert f"lower({_entry(EVENT_DATA, 'NewProcessId')}) = '0x1018'" in sql
     with pytest.raises(Exception, match="to_hex"):
         _one(env, """    sel:
         ProcessId|gt: 4
@@ -1349,14 +1349,14 @@ def _kw(renv, raw, detection="    keywords:\n        - evil\n    condition: keyw
 
 def test_keyword_text_column(renv):
     sql, warns = _kw(renv, {"column": "raw_line"})
-    assert "contains(lower(raw_line), lower('evil'))" in sql
+    assert "contains(lower(raw_line), 'evil')" in sql
     assert not [w for w in warns if "approximate" in w]
 
 
 def test_keyword_entries(renv):
     sql, warns = _kw(renv, {"entries": "EventData"})
     assert "contains(lower(array_join(concat(coalesce(transform(" in sql
-    assert "e -> e._VALUE), array()), " + EVENT_DATA_PLAIN + "), '\\n')), lower('evil'))" in sql
+    assert "e -> e._VALUE), array()), " + EVENT_DATA_PLAIN + "), '\\n')), 'evil')" in sql
     assert "schema_of_variant(v) = 'STRING'" in sql
     assert len([w for w in warns if "approximate" in w]) == 1
     assert "Win Rule" in warns[0] and "pa" in warns[0]
@@ -1366,7 +1366,7 @@ def test_keyword_json_escaped_sql(renv):
     sql, warns = _kw(renv, {"expr": "to_json(raw_event)", "encoding": "json"},
                      "    keywords:\n        - '\\Temp\\'\n    condition: keywords")
     # \Temp\ -> JSON escape \\Temp\\ -> SQL escape (four backslashes each)
-    assert r"contains(lower((to_json(raw_event))), lower('\\\\Temp\\\\'))" in sql
+    assert r"contains(lower((to_json(raw_event))), '\\\\temp\\\\')" in sql
 
 
 def test_keyword_json_fragment_warns(renv):
@@ -1383,7 +1383,7 @@ def test_keyword_regex_json_warns(renv):
 
 def test_raw_log_field_override(renv):
     sql, _ = _kw(renv, None, raw_log_field="Message")
-    assert "contains(lower(Message), lower('evil'))" in sql
+    assert "contains(lower(Message), 'evil')" in sql
     with pytest.raises(SigmaConfigurationError):
         _kw(renv, None, raw_log_field="nope")
 

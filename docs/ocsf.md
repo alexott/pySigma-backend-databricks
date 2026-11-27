@@ -33,12 +33,12 @@ according to the OCSF attribute types (tables bundled from OCSF 1.9.0, refresh t
 
 * Paths through OCSF **array** attributes (`hashes`, `answers`, `evidences`, `resources`, …) are
   matched against any element:
-  `process.file.hashes.value: abc` → `exists(process.file.hashes, x0 -> lower(x0.value) = lower('abc'))`.
+  `process.file.hashes.value: abc` → `exists(process.file.hashes, x0 -> lower(x0.value) = 'abc')`.
   Each condition gets its own `exists()`, so two conditions on the same array may match
   different elements.
 * Paths into **free-form** attributes (`unmapped`, `xattributes` and `json_t` attributes such as
   `data`) use the Databricks JSON path syntax, which works for VARIANT and JSON string columns:
-  `unmapped.Initiated: 'true'` → `lower(unmapped:Initiated::string) = lower('true')`. Numbers and
+  `unmapped.Initiated: 'true'` → `lower(unmapped:Initiated::string) = 'true'`. Numbers and
   booleans are compared via `try_cast(... AS DOUBLE)` / `try_cast(... AS BOOLEAN)`.
 * Unbound keywords search the OCSF `raw_data` field unless `raw_log_field` is set explicitly.
 

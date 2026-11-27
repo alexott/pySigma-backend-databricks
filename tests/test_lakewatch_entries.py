@@ -57,7 +57,7 @@ def test_named_entry_default_sql_unchanged(tmp_path):
         "lower(try_element_at(filter(coalesce(try_variant_get(EventData, '$', "
         "'ARRAY<STRUCT<_Name: STRING, _VALUE: STRING>>'), CASE WHEN try_variant_get(EventData, "
         "'$._Name', 'STRING') IS NOT NULL THEN array(try_variant_get(EventData, '$', "
-        "'STRUCT<_Name: STRING, _VALUE: STRING>')) END), e -> e._Name = 'Image'), 1)._VALUE) = lower('x')"
+        "'STRUCT<_Name: STRING, _VALUE: STRING>')) END), e -> e._Name = 'Image'), 1)._VALUE) = 'x'"
     )
 
 
@@ -72,7 +72,7 @@ def test_entries_variant(tmp_path):
     )
     assert where == (
         f"lower(coalesce(try_variant_get({entry}, '$.value', 'STRING'), "
-        f"try_variant_get({entry}, '$.boolValue', 'STRING'))) = lower('false')"
+        f"try_variant_get({entry}, '$.boolValue', 'STRING'))) = 'false'"
     )
 
 
@@ -85,9 +85,18 @@ def test_entries_variant_array_ignore_case(tmp_path):
     assert where == (
         "contains(lower(try_variant_get(try_element_at(filter("
         "try_variant_get(httpRequest, '$.headers', 'ARRAY<VARIANT>'), "
-        "e -> lower(try_variant_get(e, '$.name', 'STRING')) = lower('User-Agent')), 1), "
-        "'$.value', 'STRING')), lower('curl'))"
+        "e -> lower(try_variant_get(e, '$.name', 'STRING')) = 'user-agent'), 1), "
+        "'$.value', 'STRING')), 'curl')"
     )
+
+
+def test_entries_ignore_case_name_lowercased(tmp_path):
+    where = _where(
+        tmp_path, "aws_waf_web_acl", {"ua": "httpRequest.headers[User-Agent]"},
+        {"httpRequest.headers": {"name": "name", "value": "value", "ignore_case": True}},
+        "ua", "curl", "|contains",
+    )
+    assert "e -> lower(try_variant_get(e, '$.name', 'STRING')) = 'user-agent'" in where
 
 
 def _struct_schema():
@@ -137,9 +146,9 @@ detection:
         warnings.simplefilter("ignore")
         sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
     entry = (
-        "try_element_at(filter(attrs, e -> lower(e.key) = lower('host')), 1)"
+        "try_element_at(filter(attrs, e -> lower(e.key) = 'host'), 1)"
     )
-    assert f"lower(coalesce({entry}.str::string, {entry}.num::string)) = lower('web1')" in sql
+    assert f"lower(coalesce({entry}.str::string, {entry}.num::string)) = 'web1'" in sql
 
 
 def _schema():
@@ -250,7 +259,7 @@ detection:
         sql = json.loads(backend.convert_rule(rule, "lakewatch")[0])["sql"]
     assert sql.startswith(
         "SELECT *, try_variant_get(try_element_at(filter(try_variant_get(httpRequest, '$.headers', "
-        "'ARRAY<VARIANT>'), e -> lower(try_variant_get(e, '$.name', 'STRING')) = lower('User-Agent')), 1), "
+        "'ARRAY<VARIANT>'), e -> lower(try_variant_get(e, '$.name', 'STRING')) = 'user-agent'), 1), "
         "'$.value', 'STRING') AS sigma_entity"
     )
 

@@ -58,25 +58,25 @@ REPORTS = "google_workspace_reports"
 
 def test_audit_method_name():
     sql = _sql(AUDIT, "gcp.audit", _sel("gcp.audit.method_name"))
-    assert "lower(try_variant_get(protoPayload, '$.methodName', 'string')) = lower('x')" in sql
+    assert "lower(try_variant_get(protoPayload, '$.methodName', 'string')) = 'x'" in sql
 
 
 def test_audit_method_name_wildcard():
     sql = _sql(AUDIT, "gcp.audit", _sel("gcp.audit.method_name", "storage.*"))
-    assert "startswith(lower(try_variant_get(protoPayload, '$.methodName', 'string')), lower('storage.'))" in sql
+    assert "startswith(lower(try_variant_get(protoPayload, '$.methodName', 'string')), 'storage.')" in sql
 
 
 @pytest.mark.parametrize("leaf", ["serviceName", "methodName"])
 def test_audit_data_protopayload_aliases(leaf):
     sql = _sql(AUDIT, "gcp.audit", _sel(f"data.protoPayload.{leaf}"))
-    assert f"lower(try_variant_get(protoPayload, '$.{leaf}', 'string')) = lower('x')" in sql
+    assert f"lower(try_variant_get(protoPayload, '$.{leaf}', 'string')) = 'x'" in sql
 
 
 def test_audit_data_protopayload_top_level_aliases():
     log = _sql(AUDIT, "gcp.audit", _sel("data.protoPayload.logName"))
-    assert "AND (lower(logName) = lower('x'))" in log
+    assert "AND (lower(logName) = 'x')" in log
     typ = _sql(AUDIT, "gcp.audit", _sel("data.protoPayload.resource.type"))
-    assert "AND (lower(try_variant_get(resource, '$.type', 'string')) = lower('x'))" in typ
+    assert "AND (lower(try_variant_get(resource, '$.type', 'string')) = 'x')" in typ
 
 
 AUTH = "exists(try_variant_get(protoPayload, '$.authorizationInfo', 'ARRAY<VARIANT>'), "
@@ -85,8 +85,8 @@ AUTH = "exists(try_variant_get(protoPayload, '$.authorizationInfo', 'ARRAY<VARIA
 @pytest.mark.parametrize(
     "leaf, value, expected",
     [
-        ("permission", "x", "x0 -> lower(try_variant_get(x0, '$.permission', 'string')) = lower('x')"),
-        ("granted", "true", "x0 -> lower(try_variant_get(x0, '$.granted', 'boolean')) = lower('true')"),
+        ("permission", "x", "x0 -> lower(try_variant_get(x0, '$.permission', 'string')) = 'x'"),
+        ("granted", "true", "x0 -> lower(try_variant_get(x0, '$.granted', 'boolean')) = 'true'"),
     ],
 )
 @pytest.mark.parametrize("prefix", ["data.protoPayload", "protoPayload"])
@@ -99,25 +99,25 @@ def test_audit_array_identity_paths():
     loc = _sql(AUDIT, "gcp.audit", _sel("protoPayload.resourceLocation.currentLocations", "us"))
     assert (
         "AND (exists(try_variant_get(protoPayload, '$.resourceLocation.currentLocations', 'ARRAY<STRING>'), "
-        "x0 -> lower(x0) = lower('us')))"
+        "x0 -> lower(x0) = 'us'))"
     ) in loc
     deleg_field = "protoPayload.authenticationInfo.serviceAccountDelegationInfo.principalSubject"
     deleg = _sql(AUDIT, "gcp.audit", _sel(deleg_field))
     assert (
         "AND (exists(try_variant_get(protoPayload, '$.authenticationInfo.serviceAccountDelegationInfo', "
-        "'ARRAY<VARIANT>'), x0 -> lower(try_variant_get(x0, '$.principalSubject', 'string')) = lower('x')))"
+        "'ARRAY<VARIANT>'), x0 -> lower(try_variant_get(x0, '$.principalSubject', 'string')) = 'x'))"
     ) in deleg
 
 
 @pytest.mark.parametrize(
     "field,expected",
     [
-        ("logName", "lower(logName) = lower('x')"),
-        ("severity", "lower(severity) = lower('x')"),
-        ("insertId", "lower(insertId) = lower('x')"),
+        ("logName", "lower(logName) = 'x'"),
+        ("severity", "lower(severity) = 'x'"),
+        ("insertId", "lower(insertId) = 'x'"),
         (
             "protoPayload.methodName",
-            "lower(try_variant_get(protoPayload, '$.methodName', 'string')) = lower('x')",
+            "lower(try_variant_get(protoPayload, '$.methodName', 'string')) = 'x'",
         ),
     ],
 )
@@ -153,8 +153,8 @@ def test_audit_snapshot():
         "AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(try_variant_get(protoPayload, '$.methodName', 'string')) = lower('storage.buckets.list') "
-        "OR lower(try_variant_get(protoPayload, '$.methodName', 'string')) = lower('storage.buckets.listChannels'))"
+        "  AND (lower(try_variant_get(protoPayload, '$.methodName', 'string')) = 'storage.buckets.list' "
+        "OR lower(try_variant_get(protoPayload, '$.methodName', 'string')) = 'storage.buckets.listchannels')"
     )
 
 # --- google_workspace_reports ---------------------------------------------------------------
@@ -166,7 +166,7 @@ WS_SERVICES = ["google_workspace.admin", "google_workspace.login"]
 @pytest.mark.parametrize("field", ["eventName", "protoPayload.metadata.event.eventName"])
 def test_workspace_event_name(service, field):
     sql = _sql(REPORTS, service, _sel(field))
-    assert "AND (lower(name) = lower('x'))" in sql
+    assert "AND (lower(name) = 'x')" in sql
 
 
 @pytest.mark.parametrize(
@@ -178,7 +178,7 @@ def test_workspace_event_name(service, field):
 )
 def test_workspace_service_value_map(field, value, mapped):
     sql = _sql(REPORTS, "google_workspace.admin", _sel(field, value))
-    assert f"AND (lower(application) = lower('{mapped}'))" in sql
+    assert f"AND (lower(application) = '{mapped}')" in sql
 
 
 @pytest.mark.parametrize("field", ["eventService", "protoPayload.serviceName"])
@@ -205,23 +205,23 @@ def test_workspace_parameters_converts():
         "SELECT *, actor.email AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        f"  AND (startswith(lower({_param('SETTING_NAME')}), lower('ContextAwareAccess')) "
-        f"AND lower({_param('NEW_VALUE')}) = lower('false'))"
+        f"  AND (startswith(lower({_param('SETTING_NAME')}), 'contextawareaccess') "
+        f"AND lower({_param('NEW_VALUE')}) = 'false')"
     )
 
 
 @pytest.mark.parametrize("field, name", [("setting_name", "SETTING_NAME"), ("new_value", "NEW_VALUE")])
 def test_workspace_parameters_equality(field, name):
-    assert f"AND (lower({_param(name)}) = lower('x'))" in _sql(REPORTS, "google_workspace.admin", _sel(field))
+    assert f"AND (lower({_param(name)}) = 'x')" in _sql(REPORTS, "google_workspace.admin", _sel(field))
 
 
 @pytest.mark.parametrize(
     "field,expected",
     [
-        ("name", "lower(name) = lower('x')"),
-        ("application", "lower(application) = lower('x')"),
-        ("ipAddress", "lower(ipAddress) = lower('x')"),
-        ("actor.email", "lower(actor.email) = lower('x')"),
+        ("name", "lower(name) = 'x'"),
+        ("application", "lower(application) = 'x'"),
+        ("ipAddress", "lower(ipAddress) = 'x'"),
+        ("actor.email", "lower(actor.email) = 'x'"),
     ],
 )
 def test_workspace_identity_columns(field, expected):
@@ -251,7 +251,7 @@ def test_workspace_snapshot():
         "SELECT *, actor.email AS sigma_entity\n"
         "FROM t\n"
         "WHERE IN_TIMERANGE(time)\n"
-        "  AND (lower(application) = lower('login') AND lower(name) = lower('suspicious_login'))"
+        "  AND (lower(application) = 'login' AND lower(name) = 'suspicious_login')"
     )
 
 
@@ -261,7 +261,7 @@ def test_workspace_snapshot():
 )
 def test_whole_variant_contains(parser, column, service):
     sql = _sql(parser, service, _sel(f"{column}|contains"))
-    assert f"AND (contains(lower(to_json({column})), lower('x')))" in sql
+    assert f"AND (contains(lower(to_json({column})), 'x'))" in sql
 
 
 @pytest.mark.parametrize("field", ["parameters.SETTING_NAME", "resourceDetails.id"])
