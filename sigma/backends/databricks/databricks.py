@@ -1698,7 +1698,7 @@ class DatabricksBackend(TextQueryBackend):
         try:
             with self._recording_warnings(result):
                 converted = super().convert_rule(rule_copy, *args, **kwargs)
-                if self._current_pruned:
+                if self._current_pruned and len(self.errors) == first_error:
                     self._warn(
                         f"unsupported field(s) {', '.join(self._current_pruned)} dropped; the rule is narrower "
                         "than written (-O prune_unsupported=false to fail instead)",

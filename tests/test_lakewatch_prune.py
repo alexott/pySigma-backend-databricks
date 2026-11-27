@@ -303,3 +303,38 @@ def test_pruned_snapshot():
         },
         "output": {"summary": "T on {sigma_entity}", "event_time_column": "time", "default_context": True},
     }
+
+
+FAILS_AFTER_PRUNE = """
+    sel1:
+        - Image|endswith: '\\a.exe'
+        - OriginalFileName: 'a.exe'
+    sel2:
+        CommandLine|contains: 'x'
+    filter:
+        OriginalFileName: 'b.exe'
+    condition:
+        - sel1
+        - sel2 and not filter
+"""
+
+
+def test_no_pruned_warning_when_conversion_fails():
+    backend = _backend(collect_errors=True)
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("always")
+        backend.convert(SigmaCollection.from_yaml(_collection(FAILS_AFTER_PRUNE)), "lakewatch")
+    assert not [w for w in shown if issubclass(w.category, LakewatchPrunedWarning)]
+    result = backend.last_report["rules"][0]["results"][0]
+    assert result["status"] == "failed"
+    assert result["pruned"] == []
+    assert not any("dropped" in m for m in result["warnings"])
+
+
+def test_no_pruned_warning_when_conversion_raises():
+    backend = _backend()
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("always")
+        with pytest.raises(SigmaError):
+            backend.convert(SigmaCollection.from_yaml(_collection(FAILS_AFTER_PRUNE)), "lakewatch")
+    assert not [w for w in shown if issubclass(w.category, LakewatchPrunedWarning)]
