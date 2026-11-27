@@ -41,6 +41,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- **Documentation:** the README now covers installation, a Lakewatch quick start, the main options
+  and deployment. The details moved to `docs/`: `lakewatch-output.md`, `discovery-and-reports.md`,
+  `built-in-profiles.md`, `writing-profiles.md`, `deploying.md` and `ocsf.md`.
 - **Profiles adopt the new features:** `akamai_waf` and `aws_waf_web_acl` map `cs-uri-query` through `join`
   (path and query joined with `?`, exact instead of the former OR and `?` reject), which takes the rules from
   47 to 60 and from 31 to 51 of 86. A rule with `cs-uri-query: null` (one corpus rule, CVE-2026-63030) now

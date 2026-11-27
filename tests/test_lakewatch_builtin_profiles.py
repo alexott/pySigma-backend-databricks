@@ -145,7 +145,7 @@ def test_readme_profile_example_validates():
 
     from sigma.pipelines.databricks.lakewatch.profile import parse_profile
 
-    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+    readme = (Path(__file__).parent.parent / "docs" / "writing-profiles.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```yaml\n(profile: my_cloudtrail.*?)```", readme, re.S)
     assert len(blocks) == 1
     profile = parse_profile(yaml.safe_load(blocks[0]), "README")
