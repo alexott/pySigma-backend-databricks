@@ -81,6 +81,7 @@ from .lakewatch_report import (
     write_report,
 )
 from .ocsf_fields import split_ocsf_path
+from .prune import PruneFailure, prune_condition, unmarked
 from .schema_catalog import ParserSchema, SchemaCatalog
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -360,6 +361,7 @@ class DatabricksBackend(TextQueryBackend):
                  default_fidelity: Optional[str] = None,
                  default_category: str = "Static Signature", cidr_expression: Optional[str] = None,
                  ocsf: Optional[Union[bool, str]] = None,
+                 prune_unsupported: Optional[Union[bool, str]] = None,
                  catalog_name: Optional[str] = None, schema_name: Optional[str] = None,
                  warehouse_id: Optional[str] = None, extend_lookback: Optional[str] = None,
                  enabled: Optional[Union[bool, str]] = None,
@@ -406,6 +408,11 @@ class DatabricksBackend(TextQueryBackend):
         # None: render OCSF fields only for rules processed by an OCSF pipeline (for lakewatch: an
         # ocsf_ pipeline selects OCSF mode); True/False force it on/off.
         self.ocsf = self._parse_bool_option("ocsf", ocsf)
+        # Drop fields a profile lists as unsupported from OR/AND trees (on unless disabled).
+        parsed_prune = self._parse_bool_option("prune_unsupported", prune_unsupported)
+        self.prune_unsupported: bool = True if parsed_prune is None else parsed_prune
+        self._condition_depth = 0
+        self._current_pruned: List[str] = []
         self._current_rule: Optional[SigmaRule] = None
         self._current_format: Optional[str] = None
         self._field_overrides: Dict[str, str] = {}
@@ -662,6 +669,9 @@ class DatabricksBackend(TextQueryBackend):
             if field in self._field_overrides:
                 # An expression rendered already (an inner placeholder): use it as it is.
                 return None
+            original = unmarked(field)
+            if original is not None:
+                raise self._parsed_error(f"internal error: unpruned unsupported field {original}")
             return self._resolve_parsed_field(field)
         if not self._ocsf_enabled():
             return None
@@ -1304,6 +1314,26 @@ class DatabricksBackend(TextQueryBackend):
     # from the parser schema (STRUCT dot access, try_variant_get() for VARIANT keys, exists()
     # over arrays).
 
+    def convert_condition(self, cond, state: ConversionState):
+        """Prune unsupported fields at the root of each condition (parsed mode), then convert."""
+        if self._condition_depth == 0 and self._current_profile is not None and self.prune_unsupported:
+            try:
+                cond, dropped = prune_condition(cond)
+            except PruneFailure as failure:
+                pid = self._current_profile[0].profile
+                why = ("it is under a negation, so it can't be dropped" if failure.reason == "negation"
+                       else "nothing is left once it's dropped")
+                raise self._parsed_error(
+                    f"field {failure.field} is not supported by profile {pid} ({why})") from failure
+            for name in dropped:
+                if name not in self._current_pruned:
+                    self._current_pruned.append(name)
+        self._condition_depth += 1
+        try:
+            return super().convert_condition(cond, state)
+        finally:
+            self._condition_depth -= 1
+
     def _parsed_error(self, message: str) -> SigmaConversionError:
         """Conversion error for the current rule; ``str()`` starts with ``message``."""
         return LakewatchConversionError(self._current_rule, message)
@@ -1539,6 +1569,15 @@ class DatabricksBackend(TextQueryBackend):
                 setattr(self, name, value)
         return {"rules": entries, "summary": discovery_summary(entries)}
 
+    @staticmethod
+    def _discovery_reason(error: Exception) -> str:
+        """Failure reason for discovery.
+
+        Lakewatch errors are used without the per-rule title suffix, so the same failure of
+        different rules groups together.
+        """
+        return error.reason if isinstance(error, LakewatchConversionError) else str(error)
+
     def _discover_one(self, rule: SigmaRule, selected: Tuple["Profile", ParserSchema, str],
                       block: Any) -> Optional[str]:
         """Try one profile on a rule; None when convertible, else the reason."""
@@ -1550,11 +1589,11 @@ class DatabricksBackend(TextQueryBackend):
                 warnings.simplefilter("always")
                 queries = self._convert_one_profile(rule, "lakewatch", selected, block, ("lakewatch",), {})
         except SigmaError as error:
-            return str(error)
+            return self._discovery_reason(error)
         finally:
             self._current_profile = None
         if self.errors:
-            return str(self.errors[0][1])
+            return self._discovery_reason(self.errors[0][1])
         if not any(json.loads(q)["sql"] for q in queries):
             return "no query was produced"
         return None
@@ -1627,7 +1666,8 @@ class DatabricksBackend(TextQueryBackend):
             + (self.processing_pipeline if self.processing_pipeline is not None else ProcessingPipeline())
             + self.output_format_processing_pipeline[output_format]
             + build_profile_pipeline(selected[0], block, rule.logsource,
-                                     keywords=True if self._raw_log_field_set else None)
+                                     keywords=True if self._raw_log_field_set else None,
+                                     prune_unsupported=self.prune_unsupported)
         )
         # Same variables as Backend.init_processing_pipeline().
         pipeline.vars.update({"backend_" + key: value for key, value in self.backend_options.items()})
@@ -1635,6 +1675,8 @@ class DatabricksBackend(TextQueryBackend):
         pipeline.vars["output_format"] = output_format
         self.last_processing_pipeline = pipeline
         self._current_profile = selected
+        self._current_pruned = []
+        self._condition_depth = 0
         self._current_block = block
         self._current_raw = (
             RawSource("column", self.raw_log_field, "text") if self._raw_log_field_set else selected[0].raw

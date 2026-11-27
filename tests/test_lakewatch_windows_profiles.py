@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from sigma.collection import SigmaCollection
-from sigma.exceptions import SigmaTransformationError
+from sigma.exceptions import SigmaError, SigmaTransformationError
 
 from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.schema_catalog import SchemaCatalog
@@ -137,7 +137,7 @@ SEC_TABLES = ",".join(f"windows_security_{n}:t_{n}" for n in (
 def _failure(parsers, logsource, detection):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        with pytest.raises(SigmaTransformationError) as exc:
+        with pytest.raises(SigmaError) as exc:
             _convert(parsers, logsource, detection, table_name="t")
     return str(exc.value)
 
@@ -197,6 +197,7 @@ def test_security_4688_unsupported():
         SEC_PROC, _cat("process_creation"), "    sel:\n        OriginalFileName: x\n    condition: sel"
     )
     assert "field OriginalFileName is not supported by profile windows_security_process" in reason
+    assert "(nothing is left once it's dropped)" in reason
 
 
 def _security_queries(eventid_detection, **options):

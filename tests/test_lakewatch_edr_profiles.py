@@ -6,7 +6,7 @@ import warnings
 
 import pytest
 from sigma.collection import SigmaCollection
-from sigma.exceptions import SigmaTransformationError
+from sigma.exceptions import SigmaError, SigmaTransformationError
 
 from sigma.backends.databricks import DatabricksBackend
 from sigma.backends.databricks.databricks import LakewatchConversionError
@@ -149,7 +149,7 @@ def test_cs_registry_join():
 
 
 def test_cs_unsupported_user():
-    with pytest.raises(SigmaTransformationError, match=f"field User is not supported by profile {CS}"):
+    with pytest.raises(SigmaError, match=f"field User is not supported by profile {CS}"):
         _sql(
             CS,
             "windows",
@@ -431,7 +431,7 @@ def test_s1_registry_set_and_dns_event_types():
 def test_s1_network_hostname_unsupported():
     for category in ("network_connection", "firewall"):
         msg = f"field DestinationHostname is not supported by profile {S1}"
-        with pytest.raises(SigmaTransformationError, match=msg):
+        with pytest.raises(SigmaError, match=msg):
             _sql(S1, "windows", category, "    sel:\n        DestinationHostname: x.test\n    condition: sel")
 
 
@@ -457,7 +457,7 @@ def test_s1_hashes():
 
 
 def test_s1_unsupported_current_directory():
-    with pytest.raises(SigmaTransformationError, match=f"field CurrentDirectory is not supported by profile {S1}"):
+    with pytest.raises(SigmaError, match=f"field CurrentDirectory is not supported by profile {S1}"):
         _sql(
             S1,
             "windows",
@@ -621,7 +621,7 @@ def test_cb_file_event_and_products():
 
 
 def test_cb_unsupported_original_file_name():
-    with pytest.raises(SigmaTransformationError, match=f"field OriginalFileName is not supported by profile {CB}"):
+    with pytest.raises(SigmaError, match=f"field OriginalFileName is not supported by profile {CB}"):
         _sql(
             CB,
             "windows",
