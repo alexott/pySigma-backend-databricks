@@ -2131,7 +2131,8 @@ class DatabricksBackend(TextQueryBackend):
         if runbook:
             doc["runbook"] = runbook
         annotations = build_v2_annotations(
-            rule, profile_ref, converter_version=not pack, pruned_fields=self._current_pruned)
+            rule, profile_ref, converter_version=not pack,
+            pruned_fields=self._current_pruned if self._current_profile else ())
         if annotations:
             doc["annotations"] = annotations
         # schedule.compute_group was removed from the v2 API (rules run on dedicated compute).

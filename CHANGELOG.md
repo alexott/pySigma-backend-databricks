@@ -23,7 +23,11 @@ All notable changes to this project are documented in this file. The format is b
 - Rules that used to fail on an unsupported field, mostly `OriginalFileName`, now convert in a
   narrower form by default. They miss what only the dropped field would catch (renamed binaries,
   for `OriginalFileName`). Parser discovery counts such rules as convertible. Pass
-  `-O prune_unsupported=false` for the old behavior.
+  `-O prune_unsupported=false` for the old behavior. On SigmaHQ `rules/`, the number of rules each
+  profile converts went from 932 to 1432 on `carbonblack_endpoint_event`, 1201 to 1764 on
+  `sentinelone_deep_visibility`, 486 to 1078 on `windows_security_process` (4688) and 1306 to 1394
+  on `crowdstrike_fdr_event`. The rule-level total is unchanged at 2850 of 3164, because those rules
+  already converted on Sysmon.
 
 ## [0.2.0] - 2026-11-27
 

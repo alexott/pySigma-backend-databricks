@@ -30,8 +30,10 @@ follows:
   converter release doesn't change the content hash of every rule in a pack.
 * `sigma_pruned_fields` is the last annotation, after `converter_version`. It lists the unsupported
   fields that were dropped from the rule, comma-separated, for example `"OriginalFileName"`, and it's
-  only present when a field was dropped. Both targets have it. It depends only on the rule, so
-  content hashes stay stable between runs. See
+  only present when a field was dropped. Both targets have it. It depends on the rule and the
+  profile, so content hashes stay stable between runs. Each result in `conversion_report.yaml` also
+  has a `pruned` key with the same list (see
+  [Conversion report](discovery-and-reports.md#conversion-report)). See
   [Pruning unsupported fields](writing-profiles.md#pruning-unsupported-fields).
 
 ## Output files

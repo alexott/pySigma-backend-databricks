@@ -85,7 +85,7 @@ class StrictFieldsTransformation(DetectionItemTransformation):
         """Check the item's field and field-reference values.
 
         The item is left unchanged, except when pruning: an unsupported field, or a reference to
-        one, marks the item's field and skips the remaining checks.
+        one, marks the item with the unsupported field's name and skips the remaining checks.
         """
         field = detection_item.field
         if field is None:
@@ -99,7 +99,7 @@ class StrictFieldsTransformation(DetectionItemTransformation):
             return None
         for value in detection_item.value:
             if isinstance(value, SigmaFieldReference) and self._check(value.field):
-                detection_item.field = mark(field)
+                detection_item.field = mark(value.field)
                 return None
         return None
 
@@ -178,6 +178,8 @@ class ProfileFieldMapping(FieldMappingTransformation):
 
     def apply_detection_item(self, detection_item):
         """Replace items of special fields; defer to the plain field mapping otherwise."""
+        if unmarked(detection_item.field) is not None:
+            return None  # marked for pruning: leave the item (and its fieldref values) unchanged
         field = self._canonical(detection_item.field)
         if field != detection_item.field:
             detection_item.field = field

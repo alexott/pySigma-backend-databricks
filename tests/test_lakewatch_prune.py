@@ -109,6 +109,49 @@ def test_unsupported_in_filter_fails_negation():
     ) in str(exc.value)
 
 
+FIELDREF = """
+    selection:
+        - Image|fieldref: OriginalFileName
+        - CommandLine|contains: 'x'
+    condition: selection
+"""
+
+FIELDREF_NEGATED = """
+    selection:
+        CommandLine|contains: 'x'
+    filter:
+        Image|fieldref: OriginalFileName
+    condition: selection and not filter
+"""
+
+
+def test_fieldref_reports_referenced_field_in_warning():
+    backend = DatabricksBackend(
+        parsers=CB, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w"
+    )
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("always")
+        backend.convert_rule(_rule(FIELDREF), "lakewatch")
+    pruned = [w for w in shown if issubclass(w.category, LakewatchPrunedWarning)]
+    assert len(pruned) == 1
+    assert "unsupported field(s) OriginalFileName dropped" in str(pruned[0].message)
+
+
+def test_fieldref_reports_referenced_field_in_report_key():
+    backend = _backend()
+    _documents(backend, _collection(FIELDREF), mode="always")
+    assert backend.last_report["rules"][0]["results"][0]["pruned"] == ["OriginalFileName"]
+
+
+def test_fieldref_negation_failure_names_referenced_field():
+    with pytest.raises(SigmaError) as exc:
+        _sql(CB, FIELDREF_NEGATED)
+    assert (
+        "field OriginalFileName is not supported by profile carbonblack_endpoint_event "
+        "(it is under a negation, so it can't be dropped)"
+    ) in str(exc.value)
+
+
 def test_option_off_keeps_old_error():
     with pytest.raises(SigmaTransformationError, match="field OriginalFileName is not supported by profile "
                        "carbonblack_endpoint_event"):

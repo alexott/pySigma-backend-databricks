@@ -99,7 +99,7 @@ Such a rule still makes sense without that alternative.
 
 So by default the converter drops the unsupported field when that can't make the rule match more
 than it was written to, and fails the rule otherwise. Silently dropping a field in any context
-changes the meaning of a rule, which is why the rule below is strict, and why every pruned rule is
+changes the meaning of a rule, which is why the simplification rules below are strict, and why every pruned rule is
 reported (see [Seeing which rules were pruned](#seeing-which-rules-were-pruned)).
 
 Pruning covers a detection item whose field is unsupported, and a detection item whose `fieldref`
@@ -120,15 +120,17 @@ The converter simplifies the parsed condition of the rule before it renders it:
 
 Steps 1 to 3 can only make the rule narrower: they replace a term with FALSE in a context where
 FALSE means fewer matches. `1 of selection*` and `all of selection*` are an OR and an AND in the
-parsed condition, so they follow the same steps. The conditions that the profile adds (`conditions`
-of the block) are ANDed in and never contain unsupported fields.
+parsed condition, so they follow the same steps. The conditions that the profile adds (the
+product and block `conditions`) are ANDed in and never contain unsupported fields.
 
 A rule that fails keeps the usual prefix and says why:
 
 * `field X is not supported by profile P (it is under a negation, so it can't be dropped)`
 * `field X is not supported by profile P (nothing is left once it's dropped)`
 
-If several unsupported fields block a rule, the message names the first one in rule order.
+If several unsupported fields block a rule, the message names the first one in rule order. For a
+`fieldref` the name is the referenced unsupported field. A rule with several conditions
+(`condition: [a, b]`) fails as a whole if any one of its conditions can't be pruned.
 
 Examples from SigmaHQ, with `OriginalFileName` unsupported:
 

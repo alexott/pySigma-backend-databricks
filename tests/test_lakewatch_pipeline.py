@@ -617,7 +617,18 @@ def test_fieldref_unsupported_marked_when_pruning():
     _, r = run(
         profile, block, "    sel:\n        A|fieldref: Bad\n    condition: sel", prune_unsupported=True
     )
-    assert r.detection.detections["sel"].detection_items[0].field == mark("A")
+    assert r.detection.detections["sel"].detection_items[0].field == mark("Bad")
+
+
+def test_marked_fieldref_value_not_mapped_by_any_fallback():
+    import warnings
+
+    profile, block = make_top(block_extra={"event_data": "any", "unsupported": ["Bad"]})
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _, r = run(profile, block, "    sel:\n        Image|fieldref: Bad\n    condition: sel", prune_unsupported=True)
+    assert r.detection.detections["sel"].detection_items[0].field == mark("Bad")
+    assert not [x for x in w if "not in a field list" in str(x.message)]
 
 
 def test_unmapped_still_fails_when_pruning():
