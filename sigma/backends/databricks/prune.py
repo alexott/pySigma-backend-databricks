@@ -12,6 +12,8 @@ as FALSE and simplifies the tree:
 
 Dropping only ever narrows the rule: the result matches a subset of what the
 original would have matched had the field been available.
+
+:func:`prune_condition` works in place: it mutates the tree it is given.
 """
 
 from typing import Any, Iterator, List, Literal, Optional, Tuple
@@ -89,7 +91,10 @@ def _prune(node: Any, dropped: List[str]) -> Any:
 
 
 def prune_condition(node: Any) -> Tuple[Any, List[str]]:
-    """Prune marked fields; return (tree, dropped original field names in tree order)."""
+    """Prune marked fields; return (tree, dropped original field names in tree order).
+
+    The input tree is modified in place (``args`` and ``parent``); use the returned tree.
+    """
     dropped: List[str] = []
     result = _prune(node, dropped)
     if result is None:

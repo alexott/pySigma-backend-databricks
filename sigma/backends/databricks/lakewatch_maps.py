@@ -3,7 +3,7 @@ import json
 import os
 import re
 from importlib.metadata import PackageNotFoundError, version
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from sigma.rule import SigmaDetection, SigmaDetectionItem, SigmaRule
 
@@ -211,13 +211,15 @@ def build_v2_runbook(rule: SigmaRule) -> Optional[str]:
 
 
 def build_v2_annotations(
-    rule: SigmaRule, profile: Optional[str] = None, converter_version: bool = True
+    rule: SigmaRule, profile: Optional[str] = None, converter_version: bool = True,
+    pruned_fields: Sequence[str] = (),
 ) -> Dict[str, str]:
     """Provenance annotations of a converted rule (Sigma id, status, author, tags, profile, converter).
 
     ``profile`` is the parser profile reference ``<id>@<version>`` (parsed mode only).
     ``converter_version=False`` leaves out the converter version (content packs: a converter
     release must not change the content hash of every rule).
+    ``pruned_fields`` are the unsupported fields dropped from the rule; they are listed last.
     """
     tags = [f"{tag.namespace}.{tag.name}" for tag in rule.tags if tag.namespace != "attack"]
     candidates = {
@@ -227,6 +229,7 @@ def build_v2_annotations(
         "sigma_tags": ", ".join(tags),
         "sigma_profile": profile or "",
         "converter_version": _converter_version() if converter_version else "",
+        "sigma_pruned_fields": ", ".join(pruned_fields),
     }
     return {
         key: truncate(value, V2_ANNOTATION_VALUE_MAX_LEN)

@@ -17,6 +17,10 @@ class LakewatchApproximateWarning(UserWarning):
     """A conversion that only approximates the rule (raw keyword search, JSON text of a VARIANT)."""
 
 
+class LakewatchPrunedWarning(UserWarning):
+    """Unsupported fields were dropped from the rule, so the converted rule is narrower than written."""
+
+
 def _collect_fields(detection: Any, found: List[str]) -> None:
     if isinstance(detection, SigmaDetection):
         for item in detection.detection_items:
@@ -136,6 +140,7 @@ class ConversionReport:
             "rule_names": [],
             "reason": None,
             "approximate": False,
+            "pruned": [],
             "fields": {},
             "warnings": [],
             "lint": [],

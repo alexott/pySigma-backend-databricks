@@ -75,6 +75,7 @@ from .lakewatch_pack import content_resource_id, write_pack
 from .lakewatch_report import (
     ConversionReport,
     LakewatchApproximateWarning,
+    LakewatchPrunedWarning,
     describe_fields,
     discovery_summary,
     rule_fields,
@@ -1520,7 +1521,7 @@ class DatabricksBackend(TextQueryBackend):
             "errors", "collect_errors", "_selected", "_converted_ids", "_report", "last_report",
             "_current_profile", "_current_block", "_current_raw", "_current_undeclared",
             "_current_rule", "_current_format", "_current_report_key", "_raw_warned", "_errors_start",
-            "_overrides_file", "_discovering")}
+            "_overrides_file", "_discovering", "_current_pruned")}
         saved["last_processing_pipeline"] = getattr(self, "last_processing_pipeline", None)
         entries: List[Dict[str, Any]] = []
         try:
@@ -1697,6 +1698,12 @@ class DatabricksBackend(TextQueryBackend):
         try:
             with self._recording_warnings(result):
                 converted = super().convert_rule(rule_copy, *args, **kwargs)
+                if self._current_pruned:
+                    self._warn(
+                        f"unsupported field(s) {', '.join(self._current_pruned)} dropped; the rule is narrower "
+                        "than written (-O prune_unsupported=false to fail instead)",
+                        LakewatchPrunedWarning)
+                    result["pruned"] = list(self._current_pruned)
             self._mark_referenced(key, rule, converted)
             return converted
         except LakewatchConversionError as error:
@@ -2123,7 +2130,8 @@ class DatabricksBackend(TextQueryBackend):
         runbook = build_v2_runbook(rule)
         if runbook:
             doc["runbook"] = runbook
-        annotations = build_v2_annotations(rule, profile_ref, converter_version=not pack)
+        annotations = build_v2_annotations(
+            rule, profile_ref, converter_version=not pack, pruned_fields=self._current_pruned)
         if annotations:
             doc["annotations"] = annotations
         # schedule.compute_group was removed from the v2 API (rules run on dedicated compute).
