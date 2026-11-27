@@ -437,7 +437,7 @@ def test_zscaler_aliases(field, expected):
     [
         ("c-useragent", "lower(userAgent) = lower('x')"),
         ("cs-method", "lower(requestMethod) = lower('x')"),
-        ("cs-host", "lower(hostName) = lower('x')"),
+        ("cs-host", "lower(serverName) = lower('x')"),
         ("dst_ip", "lower(destinationIp) = lower('x')"),
     ],
 )
@@ -478,3 +478,15 @@ def test_umbrella_snapshot():
         "AND lower(requestMethod) = lower('GET') "
         "AND contains(lower(userAgent), lower('curl')))"
     )
+
+
+def test_zscaler_keyword_searches_event_json():
+    det = "    keywords:\n        - 'C:\\\\evil'\n    condition: keywords"
+    with pytest.warns(UserWarning):
+        sql = _convert(ZSCALER, "proxy", det)
+    assert "AND (contains(lower((to_json(event))), lower('C:\\\\\\\\evil')))" in sql
+
+
+def test_umbrella_keyword_has_no_raw_event():
+    det = "    keywords:\n        - evil\n    condition: keywords"
+    assert "no raw event for keyword search" in _convert_error(UMBRELLA, "proxy", det)

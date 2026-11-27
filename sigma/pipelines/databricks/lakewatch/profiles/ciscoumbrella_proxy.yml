@@ -11,12 +11,11 @@
 #   wildcard-only equality such as '*foo*' included, fail the rule. endswith matches a URL that ends
 #   with the value; a trailing query string makes it miss. A |re anchored at the start (^/admin) converts
 #   but never matches on a whole URL.
-# - c-useragent, cs-method, cs-host and dst_ip map to userAgent, requestMethod, hostName and
+# - c-useragent, cs-method, cs-host and dst_ip map to userAgent, requestMethod, serverName and
 #   destinationIp. Only spellings that SigmaHQ proxy rules use get aliases; there are no referrer or
 #   src_ip aliases (referrer and internalIp work under their own names).
-# - RISK: cs-host maps to hostName by decision, but the parser comment says only "Host name". If it is
-#   the client host rather than the destination, cs-host rules match the wrong thing. There is no live
-#   data to confirm it.
+# - cs-host maps to serverName, the destination server (user decision, 2026-11-27). hostName is left
+#   under its own name.
 # - sc-status maps to statusCode, an INT column, so a number is compared numerically.
 # - c-uri-query, cs-uri-stem, c-uri-extension and cs-cookie are unmapped: the log has only the whole
 #   URL and no cookie.
@@ -83,7 +82,7 @@ fields:
     modifiers: [contains, endswith, re, all]
   c-useragent: userAgent
   cs-method: requestMethod
-  cs-host: hostName
+  cs-host: serverName
   sc-status: statusCode
   dst_ip: destinationIp
 logsources:

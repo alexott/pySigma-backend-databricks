@@ -16,13 +16,17 @@
 # - sc-status maps to status, a STRING column, so a number is compared as a string.
 # - c-uri-query, cs-uri-stem, c-uri-extension and cs-cookie are unmapped: the log has only the whole
 #   URL and no cookie.
-# - event is a VARIANT column with no declared children. It holds the vendor event record (contents
-#   unverified), is matched only as a whole value with |contains, and is not known to be free of
-#   arrays, so it gets a bare line only and no prefix line.
+# - event is a VARIANT column with no declared children. It holds the complete vendor event payload
+#   (user confirmation, 2026-11-27), is matched only as a whole value with |contains, and is not known
+#   to be free of arrays, so it gets a bare line only and no prefix line.
+# - Keyword (unbound) searches run over to_json(event), JSON-escaped; they are approximate and warn.
 profile: zscaler_zia_web_log
 version: 1
 parser: zscaler_zia_web_log
 entity: user
+raw:
+  expr: "to_json(event)"
+  encoding: json
 fields:
   ClientIP: ClientIP
   action: action

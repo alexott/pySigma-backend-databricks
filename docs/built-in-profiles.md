@@ -98,7 +98,7 @@ The web profiles cover the `category: webserver` rules (Cloudflare, GCP load bal
 and the `category: proxy` rules (Zscaler ZIA and Cisco Umbrella). A rule converts per profile, so use
 `sigma convert -s` (collect errors) to get a query for every profile that has all the rule's fields; without it, the
 first profile that lacks a field aborts the rule. Keyword searches (a detection with no field) fail on every web
-profile, because no raw event is configured to search. The mappings follow the vendors' log field references and
+profile except Zscaler, because no raw event is configured to search. The mappings follow the vendors' log field references and
 haven't been checked against live data.
 
 - **URI semantics.** `cs-uri-query` (webserver) and `c-uri`/`cs-uri` (proxy) hold the whole URL or URI in SigmaHQ
@@ -126,14 +126,15 @@ haven't been checked against live data.
   entries of `httpRequest.headers`, an array inside the `httpRequest` VARIANT, through `entries` with
   `ignore_case: true`. `labels` and `requestHeadersInserted` aren't declared as arrays in the schema, so they map as
   whole columns and support only `|contains`; members such as `labels.name` aren't mapped.
-- **Zscaler.** `event` is a VARIANT that holds the vendor event record. Its contents are unverified, so only the
-  whole column is mapped, member access isn't, and it is matched only as a whole value with `|contains`.
+- **Zscaler.** `event` is a VARIANT that holds the complete vendor event payload. Only the whole column is mapped,
+  member access isn't, and it is matched only as a whole value with `|contains`. Keyword searches run over
+  `to_json(event)`; they are approximate and raise a `UserWarning` (see
+  [Keyword search and routing](writing-profiles.md#keyword-search-and-routing)).
 - **Akamai caveats.** `httpMessage.query` is logged URL-encoded, so values with raw special characters may not
   match, and many SigmaHQ rules list both forms. Akamai logs only requests that triggered a security rule, so rules
   see a subset of the traffic. `httpMessage.status` is a STRING column.
-- **Umbrella `hostName`.** `cs-host` maps to `hostName` by decision, but the parser describes it only as "Host name".
-  If it is the client host rather than the destination, `cs-host` rules match the wrong thing, and there is no live
-  data to confirm it.
+- **Umbrella `cs-host`.** `cs-host` maps to `serverName`, the destination server. `hostName` is mapped only under
+  its own name.
 
 ## Windows event logs
 
