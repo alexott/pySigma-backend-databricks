@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-27
+
+### Breaking changes
+
+- **Parsed tables are the default for `-f lakewatch`.** Rules are converted against the columns
+  of a Lakewatch parser's table instead of OCSF gold tables, so `-f lakewatch` without `-p ocsf`
+  needs `-O parsers=...`. Without it, no rules are converted: parser discovery runs and reports
+  which profiles can convert the rules. To keep the OCSF behavior, pass `-O ocsf=true`, or
+  `-p ocsf`, which still selects OCSF.
+- The Lakewatch v1 rule format (`kind: Rule` YAML) was removed.
+- The `lakewatch_v2` format was renamed to `lakewatch`, with no alias: `-f lakewatch_v2` fails
+  with the unknown-format error.
+- The `compute_group` and `lookback` options were removed. Passing either is now a configuration
+  error. To widen the time window, use `-O extend_lookback=...`.
+- The failure message for unbound keywords changed.
+- `fieldref|startswith`, `fieldref|endswith` and `fieldref|contains` now convert in every output
+  format.
+- The SQL for named entries (`Field[Name]`) has a fallback for single-object values.
+
 ### Added
 
 - **Implied `eq` in the `modifiers` allowlist:** a field with no comparison modifier
@@ -36,43 +55,8 @@ All notable changes to this project are documented in this file. The format is b
 - **Web Lakewatch profiles:** built-in `cloudflare_http_request`, `gcp_http_load_balancer`, `akamai_waf` and
   `aws_waf_web_acl` profiles for `category: webserver`, and `zscaler_zia_web_log` and `ciscoumbrella_proxy`
   profiles for `category: proxy`. The SigmaHQ `webserver` and `proxy` rules convert on 51 to 72 of 86 and 47 of 56
-  rules per profile. Keyword searches and unmapped fields fail, and the GCP, Zscaler and Umbrella whole-URL fields allow only
+  rules per profile. Keyword searches fail except on Zscaler (approximate, over `to_json(event)`), unmapped fields fail, and the GCP, Zscaler and Umbrella whole-URL fields allow only
   the modifiers `contains`, `endswith`, `re` and `all` (`all` in combination with them).
-
-### Changed
-
-- **Documentation:** the README now covers installation, a Lakewatch quick start, the main options
-  and deployment. The details moved to `docs/`: `lakewatch-output.md`, `discovery-and-reports.md`,
-  `built-in-profiles.md`, `writing-profiles.md`, `deploying.md` and `ocsf.md`.
-- **Profiles adopt the new features:** `akamai_waf` and `aws_waf_web_acl` map `cs-uri-query` through `join`
-  (path and query joined with `?`, exact instead of the former OR and `?` reject), which takes the rules from
-  47 to 60 and from 31 to 51 of 86. A rule with `cs-uri-query: null` (one corpus rule, CVE-2026-63030) now
-  fails to convert on these two profiles, because a joined field is never NULL. `aws_waf_web_acl` maps `cs-user-agent`, `cs-referer` and `cs-host` to the
-  `httpRequest.headers` entries (`entries`, case-insensitive). `gcp_audit_log` matches the
-  `authorizationInfo` array any-element, and `google_workspace_reports` maps `setting_name` and `new_value` to the
-  `parameters` entries (`value` or `boolValue`).
-
-## [0.2.0] - 2026-11-26
-
-### Breaking changes
-
-- **Parsed tables are the default for `-f lakewatch`.** Rules are converted against the columns
-  of a Lakewatch parser's table instead of OCSF gold tables, so `-f lakewatch` without `-p ocsf`
-  needs `-O parsers=...`. Without it, no rules are converted: parser discovery runs and reports
-  which profiles can convert the rules. To keep the OCSF behavior, pass `-O ocsf=true`, or
-  `-p ocsf`, which still selects OCSF.
-- The Lakewatch v1 rule format (`kind: Rule` YAML) was removed.
-- The `lakewatch_v2` format was renamed to `lakewatch`, with no alias: `-f lakewatch_v2` fails
-  with the unknown-format error.
-- The `compute_group` and `lookback` options were removed. Passing either is now a configuration
-  error. To widen the time window, use `-O extend_lookback=...`.
-- The failure message for unbound keywords changed.
-- `fieldref|startswith`, `fieldref|endswith` and `fieldref|contains` now convert in every output
-  format.
-- The SQL for named entries (`Field[Name]`) has a fallback for single-object values.
-
-### Added
-
 - `lakewatch-rule-deploy` command (installed with the `deploy` extra: `pip install
   "pySigma-backend-databricks[deploy]"`). It creates or updates the workspace rules written by
   `-f lakewatch` in a Databricks workspace, with `--dry-run`, `--validate-only` and `--force`.
@@ -123,6 +107,19 @@ All notable changes to this project are documented in this file. The format is b
   - the `warehouse_id`, `extend_lookback` and `enabled` options;
   - `runbook` and provenance `annotations`.
 - OCSF array and free-form fields are rendered with `exists()` and the JSON path syntax (#128).
+
+### Changed
+
+- **Documentation:** the README now covers installation, a Lakewatch quick start, the main options
+  and deployment. The details moved to `docs/`: `lakewatch-output.md`, `discovery-and-reports.md`,
+  `built-in-profiles.md`, `writing-profiles.md`, `deploying.md` and `ocsf.md`.
+- **Profiles use the new features:** `akamai_waf` and `aws_waf_web_acl` map `cs-uri-query` through `join`
+  (path and query joined with `?`), converting 60 and 51 of the 86 SigmaHQ `webserver` rules. A rule with
+  `cs-uri-query: null` (one corpus rule, CVE-2026-63030) fails to convert on these two profiles, because a
+  joined field is never NULL. `aws_waf_web_acl` maps `cs-user-agent`, `cs-referer` and `cs-host` to the
+  `httpRequest.headers` entries (`entries`, case-insensitive). `gcp_audit_log` matches the
+  `authorizationInfo` array any-element, and `google_workspace_reports` maps `setting_name` and `new_value` to the
+  `parameters` entries (`value` or `boolValue`).
 
 ### Fixed
 
