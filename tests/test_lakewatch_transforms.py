@@ -480,7 +480,7 @@ def _join_sql(tmp_path, detection, join=_JOIN):
         parsers="joinp",
         table_name="t",
         catalog_name="c",
-        schema_name="s",
+        schema_name="s", warehouse_id="w",
         lakewatch_profiles_dir=_join_profile(tmp_path, join),
     )
     with warnings.catch_warnings():

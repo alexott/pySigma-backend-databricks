@@ -14,7 +14,7 @@ from sigma.pipelines.databricks.lakewatch.profile import load_profiles, validate
 
 def _sql(parser, product, service, detection, title="T"):
     backend = DatabricksBackend(
-        parsers=parser, table_name="t", catalog_name="c", schema_name="s"
+        parsers=parser, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w"
     )
     rule = SigmaCollection.from_yaml(
         f"""

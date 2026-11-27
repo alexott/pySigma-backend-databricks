@@ -1379,6 +1379,11 @@ class DatabricksBackend(TextQueryBackend):
                 "Lakewatch v2 rules require the target Unity Catalog location: "
                 "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
             )
+        if not pack and not (self.warehouse_id or "").strip():
+            raise SigmaConfigurationError(
+                "Lakewatch rules require a SQL warehouse: set -O warehouse_id=... "
+                "(the server rejects batch rules without one: RULE_BATCH_PYSPARK_DISABLED)"
+            )
 
         catalog = SchemaCatalog.load(self.lakewatch_schemas)
         profiles = load_profiles(self.lakewatch_profiles_dir)
@@ -2100,14 +2105,18 @@ class DatabricksBackend(TextQueryBackend):
                 "Lakewatch v2 rules require the target Unity Catalog location: "
                 "set the catalog_name and schema_name options (-O catalog_name=... -O schema_name=...)."
             )
+        if not (self.warehouse_id or "").strip():
+            raise SigmaConfigurationError(
+                "Lakewatch rules require a SQL warehouse: set -O warehouse_id=... "
+                "(the server rejects batch rules without one: RULE_BATCH_PYSPARK_DISABLED)"
+            )
         doc: Dict[str, Any] = {"catalog_name": catalog_name, "schema_name": schema_name}
         for key, value in core.items():
             if key == "schedule":
                 value = {**value, "enabled": self.enabled}
             elif key == "batch":
                 batch: Dict[str, Any] = {}
-                if self.warehouse_id:
-                    batch["warehouse_id"] = self.warehouse_id
+                batch["warehouse_id"] = self.warehouse_id.strip()
                 # Unqualified table names resolve against the catalog and schema of the rule.
                 batch["sql"] = {
                     "query": value["sql"]["query"],
@@ -2271,12 +2280,6 @@ class DatabricksBackend(TextQueryBackend):
                 warnings.warn(f"ignored with -O target=content_pack: {', '.join(ignored)}",
                               UserWarning, stacklevel=2)
             return
-        if not self.warehouse_id:
-            warnings.warn(
-                "Lakewatch v2 rules have no warehouse_id: the server rejects enabled batch rules "
-                "without one (RULE_BATCH_PYSPARK_DISABLED). Set -O warehouse_id=...",
-                UserWarning, stacklevel=2,
-            )
 
     @staticmethod
     def finalize_query_dbsql(rule: SigmaRule, query: str, index: int, state: ConversionState) -> Any:

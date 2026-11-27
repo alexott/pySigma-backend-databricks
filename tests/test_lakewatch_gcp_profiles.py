@@ -26,7 +26,7 @@ detection:
 
 
 def _convert(parser, service, detection):
-    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s")
+    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w")
     queries = backend.convert_rule(_rule(service, detection), "lakewatch")
     assert len(queries) == 1
     return json.loads(queries[0])["sql"]

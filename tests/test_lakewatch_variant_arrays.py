@@ -38,7 +38,7 @@ def _backend(tmp_path, parser, service, fields):
     }
     (profiles / "inline.yml").write_text(yaml.safe_dump(data), encoding="utf-8")
     return DatabricksBackend(
-        parsers=parser, table_name="t", catalog_name="c", schema_name="s",
+        parsers=parser, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w",
         lakewatch_profiles_dir=str(profiles),
     )
 

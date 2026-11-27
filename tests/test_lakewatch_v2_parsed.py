@@ -118,6 +118,7 @@ def env(tmp_path):
         if extra_fields:
             write_profiles(extra_fields)
         kwargs.setdefault("catalog_name", "cat")
+        kwargs.setdefault("warehouse_id", "w")
         kwargs.setdefault("schema_name", "sch")
         kwargs.setdefault("lakewatch_schemas", str(schema_file))
         kwargs.setdefault("lakewatch_profiles_dir", str(profiles))
@@ -747,7 +748,7 @@ def test_ocsf_mode_unchanged_with_ocsf_option(env):
 
 
 def test_lakewatch_auto_without_ocsf_pipeline_is_parsed_mode():
-    backend = DatabricksBackend(catalog_name="c", schema_name="s")
+    backend = DatabricksBackend(catalog_name="c", schema_name="s", warehouse_id="w")
     rule = SigmaCollection.from_yaml(OCSF_RULE).rules[0]
     with pytest.raises(SigmaConfigurationError, match=r"-O parsers=\.\.\. is required for lakewatch parsed tables"):
         backend.convert_rule(rule, "lakewatch")
@@ -786,7 +787,8 @@ detection:
     condition: sel
 """).rules[0]
     sql = json.loads(
-        DatabricksBackend(ocsf=True, catalog_name="c", schema_name="s").convert_rule(rule, "lakewatch")[0]
+        DatabricksBackend(ocsf=True, catalog_name="c", schema_name="s",
+                          warehouse_id="w").convert_rule(rule, "lakewatch")[0]
     )["sql"]
     assert "ip_cidr_contains('10.0.0.0/8', try_ip_as_binary(unmapped:ip::string))" in sql
 
@@ -1023,6 +1025,13 @@ def test_parsed_missing_catalog_or_schema_is_configuration_error(env, options):
     with pytest.raises(SigmaConfigurationError, match="catalog_name and schema_name"):
         backend.convert(SigmaCollection([_rule(SEL)]), "lakewatch")
     assert backend.errors == []
+
+
+@pytest.mark.parametrize("warehouse_id", [None, "  "])
+def test_parsed_workspace_requires_warehouse(env, warehouse_id):
+    backend = env(parsers="p_ct", table_name="t", warehouse_id=warehouse_id)
+    with pytest.raises(SigmaConfigurationError, match="require a SQL warehouse"):
+        backend.convert(SigmaCollection([_rule(SEL)]), "lakewatch")
 
 
 # --- joins, undeclared VARIANT keys, allowed values -----------------------------------------
@@ -1285,6 +1294,7 @@ def renv(tmp_path):
         for pid, route, extra in profile_specs:
             _write(profiles, pid, route, extra)
         kwargs.setdefault("catalog_name", "cat")
+        kwargs.setdefault("warehouse_id", "w")
         kwargs.setdefault("schema_name", "sch")
         kwargs.setdefault("lakewatch_schemas", str(schema_file))
         kwargs.setdefault("lakewatch_profiles_dir", str(profiles))

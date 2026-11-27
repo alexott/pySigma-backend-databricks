@@ -119,6 +119,7 @@ def test_discovery_is_isolated():
     backend.table_name = "t"
     backend.catalog_name = "c"
     backend.schema_name = "s"
+    backend.warehouse_id = "w"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         out = backend.convert(_rules(_rule()), "lakewatch")
@@ -175,11 +176,11 @@ def test_convert_rule_without_parsers_still_errors():
     from sigma.exceptions import SigmaConfigurationError
     rule = _rules(_rule()).rules[0]
     with pytest.raises(SigmaConfigurationError, match=r"-O parsers=\.\.\. is required for lakewatch parsed tables"):
-        DatabricksBackend(catalog_name="c", schema_name="s").convert_rule(rule, "lakewatch")
+        DatabricksBackend(catalog_name="c", schema_name="s", warehouse_id="w").convert_rule(rule, "lakewatch")
 
 
 def test_ocsf_mode_not_discovery():
-    backend = DatabricksBackend(catalog_name="c", schema_name="s", table_name="t", ocsf=True)
+    backend = DatabricksBackend(catalog_name="c", schema_name="s", warehouse_id="w", table_name="t", ocsf=True)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         out = backend.convert(_rules(_rule()), output_format="lakewatch")
@@ -194,6 +195,7 @@ def test_discovery_after_conversion_resets_last_report():
     backend.table_name = "t"
     backend.catalog_name = "c"
     backend.schema_name = "s"
+    backend.warehouse_id = "w"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         backend.convert(_rules(_rule()), "lakewatch")
@@ -238,3 +240,8 @@ correlation:
     assert base["note"] == "referenced by a correlation rule"
     assert base["convertible"] == []
     assert base["not_convertible"] == {}
+
+
+def test_discovery_does_not_require_warehouse():
+    backend = DatabricksBackend()
+    assert backend.discover_parsers(_rules(_rule()))

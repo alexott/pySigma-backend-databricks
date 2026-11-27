@@ -108,7 +108,7 @@ Options are passed as `-O key=value`.
 | `table_map` | *(none)* | `profile:table,profile:table` for several parsers. Every selected profile needs a table. |
 | `catalog_name` | *(required)* | `catalog_name` of the rule, also used as `batch.sql.default_catalog_name` to resolve unqualified tables. Conversion fails if it's unset. |
 | `schema_name` | *(required)* | `schema_name` of the rule, also used as `batch.sql.default_schema_name`. Conversion fails if it's unset. |
-| `warehouse_id` | *(none)* | `batch.warehouse_id`: the SQL warehouse that runs the rule. The server rejects enabled batch rules without one, so conversion warns if it's unset. |
+| `warehouse_id` | *(required)* | `batch.warehouse_id`: the SQL warehouse that runs the rule. Conversion fails if it's unset (the server rejects batch rules without one). |
 | `schedule` | `24h` | Rule schedule (Lakewatch duration). |
 | `extend_lookback` | *(none)* | `timerange.extend_lookback`: widens the time window beyond the schedule. |
 | `enabled` | `false` | `schedule.enabled`. Set `-O enabled=true` to schedule the rules immediately. |

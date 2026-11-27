@@ -41,7 +41,7 @@ def _backend(tmp_path=None, overrides=None, parsers=SYSMON, **options):
         path.write_text(overrides if isinstance(overrides, str) else yaml.safe_dump(overrides))
         options["overrides"] = str(path)
     return DatabricksBackend(parsers=parsers, table_name=None if "," in parsers else "t",
-                             catalog_name="c", schema_name="s",
+                             catalog_name="c", schema_name="s", warehouse_id="w",
                              **({"table_map": ",".join(f"{p}:t_{p}" for p in parsers.split(","))}
                                 if "," in parsers else {}), **options)
 
@@ -140,7 +140,7 @@ def test_overrides_file_errors(tmp_path, content):
 
 
 def test_overrides_file_unreadable(tmp_path):
-    backend = DatabricksBackend(parsers=SYSMON, table_name="t", catalog_name="c", schema_name="s",
+    backend = DatabricksBackend(parsers=SYSMON, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w",
                                 overrides=str(tmp_path / "missing.yml"))
     with pytest.raises(SigmaConfigurationError, match="overrides file .*missing.yml"):
         _convert(backend)
@@ -162,7 +162,7 @@ def test_overrides_unknown_ids_and_profiles_warn(tmp_path):
 def test_overrides_ignored_in_ocsf_mode(tmp_path):
     path = tmp_path / "o.yml"
     path.write_text(yaml.safe_dump({RULE_ID: {"summary": "x"}}))
-    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", ocsf=True,
+    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", warehouse_id="w", ocsf=True,
                                 overrides=str(path))
     with pytest.warns(UserWarning) as record:
         out = backend.convert(_collection(), "lakewatch")
@@ -209,7 +209,7 @@ def test_empty_summary_and_context_rejected(tmp_path, content):
 
 
 def test_failed_overrides_load_fails_every_convert(tmp_path):
-    backend = DatabricksBackend(parsers=SYSMON, table_name="t", catalog_name="c", schema_name="s",
+    backend = DatabricksBackend(parsers=SYSMON, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w",
                                 overrides=str(tmp_path / "missing.yml"))
     for _ in range(2):
         with pytest.raises(SigmaConfigurationError, match="overrides file .*missing.yml"):

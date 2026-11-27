@@ -32,7 +32,7 @@ detection:
 
 
 def _convert(parsers, logsource, detection, **options):
-    backend = DatabricksBackend(parsers=parsers, catalog_name="c", schema_name="s", **options)
+    backend = DatabricksBackend(parsers=parsers, catalog_name="c", schema_name="s", warehouse_id="w", **options)
     queries = backend.convert_rule(_rule(logsource, detection), "lakewatch")
     return queries
 

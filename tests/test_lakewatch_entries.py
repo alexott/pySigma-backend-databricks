@@ -25,7 +25,7 @@ def _backend(tmp_path, parser, fields, entries=None):
         data["entries"] = entries
     (profiles / "inline.yml").write_text(yaml.safe_dump(data), encoding="utf-8")
     return DatabricksBackend(
-        parsers=parser, table_name="t", catalog_name="c", schema_name="s",
+        parsers=parser, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w",
         lakewatch_profiles_dir=str(profiles),
     )
 
@@ -128,7 +128,7 @@ def test_entries_array_struct(tmp_path):
     }
     (profiles / "p.yml").write_text(yaml.safe_dump(data), encoding="utf-8")
     backend = DatabricksBackend(
-        parsers="fx_kv", table_name="t", catalog_name="c", schema_name="s",
+        parsers="fx_kv", table_name="t", catalog_name="c", schema_name="s", warehouse_id="w",
         lakewatch_schemas=str(schema_file), lakewatch_profiles_dir=str(profiles),
     )
     rule = SigmaCollection.from_yaml("""
@@ -240,7 +240,7 @@ def test_entries_entity_renders_through_declared_entry(tmp_path):
     }
     (profiles / "p.yml").write_text(yaml.safe_dump(data), encoding="utf-8")
     backend = DatabricksBackend(
-        parsers="aws_waf_web_acl", table_name="t", catalog_name="c", schema_name="s",
+        parsers="aws_waf_web_acl", table_name="t", catalog_name="c", schema_name="s", warehouse_id="w",
         lakewatch_profiles_dir=str(profiles),
     )
     rule = SigmaCollection.from_yaml("""

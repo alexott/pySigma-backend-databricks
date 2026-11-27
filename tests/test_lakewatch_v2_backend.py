@@ -22,6 +22,7 @@ from sigma.backends.databricks.lakewatch_maps import (
 def _backend(**kwargs):
     """Backend with the required v2 catalog/schema options set."""
     kwargs.setdefault("catalog_name", "cat")
+    kwargs.setdefault("warehouse_id", "w")
     kwargs.setdefault("schema_name", "sch")
     kwargs.setdefault("ocsf", True)
     return DatabricksBackend(**kwargs)
@@ -101,7 +102,7 @@ def test_v2_sql_uses_in_timerange():
 
 def test_v2_optional_fields_omitted_by_default():
     doc = _doc(_backend(), BASE)
-    assert "warehouse_id" not in doc["batch"]
+    assert doc["batch"]["warehouse_id"] == "w"
     assert "timerange" not in doc
     assert "runbook" not in doc
     assert "continuous" not in doc["schedule"]
@@ -302,10 +303,16 @@ def _convert(backend, rule_yaml=BASE):
     return backend.convert(SigmaCollection.from_yaml(rule_yaml), output_format="lakewatch")
 
 
-def test_v2_warns_without_warehouse_id():
-    with pytest.warns(UserWarning, match="warehouse_id") as record:
-        _convert(_backend(), BASE + "---\n" + BASE.replace("Suspicious", "Other"))
-    assert len([w for w in record if "warehouse_id" in str(w.message)]) == 1
+def test_ocsf_workspace_requires_warehouse():
+    for wh in (None, "  "):
+        with pytest.raises(SigmaConfigurationError, match="require a SQL warehouse"):
+            _doc(_backend(warehouse_id=wh), BASE)
+
+
+def test_no_missing_warehouse_warning():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _convert(_backend())
 
 
 def test_v2_no_warnings_with_defaults_and_warehouse():

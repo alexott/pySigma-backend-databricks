@@ -27,7 +27,7 @@ detection:
 
 
 def _convert(parser, service, detection):
-    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s")
+    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w")
     queries = backend.convert_rule(_rule(service, detection), "lakewatch")
     assert len(queries) == 1
     return json.loads(queries[0])["sql"]
@@ -130,7 +130,7 @@ def test_audit_target_resources_contains_approximate():
 
 
 def report_approximate(detection, service, parser):
-    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s")
+    backend = DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         backend.convert(SigmaCollection([_rule(service, detection)]), "lakewatch")

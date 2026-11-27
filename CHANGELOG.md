@@ -20,6 +20,7 @@ All notable changes to this project are documented in this file. The format is b
 - The `compute_group` and `lookback` options were removed. Passing either is now a configuration
   error. To widen the time window, use `-O extend_lookback=...`.
 - The failure message for unbound keywords changed.
+- `warehouse_id` is required for workspace rules; conversion fails without it.
 - `fieldref|startswith`, `fieldref|endswith` and `fieldref|contains` now convert in every output
   format.
 - The SQL for named entries (`Field[Name]`) has a fallback for single-object values.

@@ -62,7 +62,7 @@ def test_namespace_and_id():
 
 
 def test_target_default_is_workspace():
-    backend = DatabricksBackend(parsers=CS, table_name="t", catalog_name="c", schema_name="s")
+    backend = DatabricksBackend(parsers=CS, table_name="t", catalog_name="c", schema_name="s", warehouse_id="w")
     assert backend.target == "workspace"
     doc = _docs(backend, _collection(_rule()))[0]
     assert doc["catalog_name"] == "c"
@@ -255,7 +255,7 @@ def test_malformed_revisions_not_overwritten(tmp_path):
 
 def test_workspace_output_dir_unchanged(tmp_path):
     backend = DatabricksBackend(parsers=CS, output_dir=str(tmp_path), catalog_name="c", schema_name="s",
-                                 table_name="t")
+                                warehouse_id="w", table_name="t")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         msg = backend.convert(_collection(_rule()), "lakewatch")
@@ -394,3 +394,8 @@ def test_content_pack_annotations_have_no_converter_version(uuid_schema):
 def test_workspace_annotations_keep_converter_version():
     backend = DatabricksBackend(parsers=SYSMON, catalog_name="c", schema_name="s", warehouse_id="w", table_name="c.s.t")
     assert "converter_version" in _docs(backend, _collection(_rule()))[0]["annotations"]
+
+
+def test_content_pack_does_not_require_warehouse():
+    backend = DatabricksBackend(target="content_pack", parsers=CS)
+    assert backend.convert(_collection(_rule()), "lakewatch")

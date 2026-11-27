@@ -67,7 +67,7 @@ run and no report is written.
 sigma convert -s -t databricks -f lakewatch \
   -O parsers=windows_sysmon_process,windows_security_process \
   -O table_map=windows_sysmon_process:main.sec.sysmon,windows_security_process:main.sec.winsec \
-  -O catalog_name=main -O schema_name=sec -O output_dir=out rules/windows/
+  -O catalog_name=main -O schema_name=sec -O warehouse_id=1234567890abcdef -O output_dir=out rules/windows/
 ```
 
 ```yaml

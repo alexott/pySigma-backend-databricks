@@ -45,7 +45,8 @@ detection:
 
 
 def _backend(parser, **options):
-    return DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s", **options)
+    return DatabricksBackend(parsers=parser, table_name="t", catalog_name="c", schema_name="s",
+                           warehouse_id="w", **options)
 
 
 def _convert(parser, title="Encoded PowerShell", **options):
@@ -130,7 +131,7 @@ def test_title_braces_escaped_in_summary():
 
 
 def test_ocsf_summary_unchanged():
-    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", ocsf=True)
+    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", warehouse_id="w", ocsf=True)
     rule = SigmaCollection.from_yaml(
         """
 title: Plain Title

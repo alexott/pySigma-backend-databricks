@@ -44,7 +44,8 @@ SYSMON_RULE = _rule_yaml(SYSMON_LS, "sel:\n    Image|endswith: '\\powershell.exe
 
 
 def _backend(parsers, **options):
-    return DatabricksBackend(parsers=parsers, table_name="t", catalog_name="c", schema_name="s", **options)
+    return DatabricksBackend(parsers=parsers, table_name="t", catalog_name="c", schema_name="s",
+                           warehouse_id="w", **options)
 
 
 def _resolve(backend, parser, rule):
@@ -135,7 +136,7 @@ def test_warnings_still_emitted(tmp_path):
 
 
 def test_ocsf_result_has_no_profile():
-    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", ocsf=True)
+    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", warehouse_id="w", ocsf=True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         backend.convert(_rules(SYSMON_RULE), "lakewatch")
@@ -153,7 +154,7 @@ def test_last_report_is_plain_yaml_data():
 def test_ocsf_errors_are_per_result():
     bad = _rule_yaml(SYSMON_LS, "sel:\n    Image|expand: '%foo%'", title="Bad Rule")
     good = _rule_yaml(SYSMON_LS, "sel:\n    Image: x", title="Good Rule").replace("000000000001", "000000000002")
-    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", ocsf=True,
+    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", warehouse_id="w", ocsf=True,
                                 collect_errors=True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -211,7 +212,7 @@ def test_report_mixed_profile_results():
     rule = _rule_yaml({"product": "windows", "category": "process_creation"},
                       "sel:\n    OriginalFileName: 'x.exe'")
     backend = DatabricksBackend(
-        parsers=f"{SYSMON},windows_security_process", catalog_name="c", schema_name="s",
+        parsers=f"{SYSMON},windows_security_process", catalog_name="c", schema_name="s", warehouse_id="w",
         table_map=f"{SYSMON}:t1,windows_security_process:t2", collect_errors=True)
     _convert_lw(backend, rule)
     record = backend.last_report["rules"][0]
@@ -394,7 +395,7 @@ def test_last_report_is_none_after_aborted_run():
 
 def test_report_file_does_not_overwrite_rule_named_conversion_report(tmp_path):
     rule = _rule_yaml(SYSMON_LS, "sel:\n    Image: x", title="Conversion Report")
-    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", ocsf=True,
+    backend = DatabricksBackend(table_name="t", catalog_name="c", schema_name="s", warehouse_id="w", ocsf=True,
                                 output_dir=str(tmp_path))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
